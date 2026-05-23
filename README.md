@@ -16,6 +16,188 @@ AuraSafety takes an audio file, transcribes it, and runs it through a layered de
 
 ---
 
+## Architecture
+
+```mermaid
+flowchart TD
+    %% ─────────────────────────────────────────────
+    %% LAYER 0 — INPUT
+    %% ─────────────────────────────────────────────
+    subgraph INPUT["🎙️  INPUT"]
+        direction TB
+        A([Audio File\n.mp3 · .wav · .m4a · .aac · .ogg])
+    end
+
+    %% ─────────────────────────────────────────────
+    %% LAYER 1 — TRANSCRIPTION
+    %% ─────────────────────────────────────────────
+    subgraph TRANSCRIPTION["① TRANSCRIPTION  —  transcriber.py"]
+        direction TB
+        T1["faster-whisper\nWhisper Base · CPU · int8"]
+        T2[("Transcript\nfull text")]
+        T3[("Timeline\nstart / end / text / speaker")]
+        T1 --> T2 & T3
+    end
+
+    %% ─────────────────────────────────────────────
+    %% LAYER 2 — DETECTION PIPELINE
+    %% ─────────────────────────────────────────────
+    subgraph DETECTION["② GROOMING DETECTION PIPELINE  —  grooming_detector.py"]
+        direction TB
+
+        SP["Sentence Splitter\nSpeaker Label Parser"]
+
+        subgraph PATTERNS["patterns.py — 12 compiled regex categories"]
+            direction LR
+            P1["🔴 explicit_content\nweight 1.00 · conf 0.98"]
+            P2["🔴 meeting\nweight 0.95 · conf 0.95"]
+            P3["🔴 address\nweight 0.90 · conf 0.90"]
+            P4["🔴 secrecy\nweight 0.95 · conf 0.95"]
+            P5["🔴 manipulation\nweight 0.90 · conf 0.90"]
+            P6["🟠 parent_monitoring\nweight 0.85 · conf 0.85"]
+            P7["🟠 school\nweight 0.75 · conf 0.75"]
+            P8["🟠 routine\nweight 0.80 · conf 0.80"]
+            P9["🟠 video_call\nweight 0.80 · conf 0.80"]
+            P10["🟠 relationship_building\nweight 0.75 · conf 0.75"]
+            P11["🟡 bad_language\nweight 0.60 · conf 0.85"]
+            P12["🟡 trust_building\nweight 0.20 · conf 0.80"]
+        end
+
+        subgraph CONTEXT["context_analyzer.py — ContextType multipliers"]
+            direction LR
+            C1["EXPLICIT_CONTENT  +0.50"]
+            C2["SECRECY           +0.40"]
+            C3["ESCALATION        +0.35"]
+            C4["MEETING           +0.35"]
+            C5["PERSONAL_INFO     +0.30"]
+            C6["MANIPULATION      +0.30"]
+            C7["VIDEO_CALL        +0.25"]
+            C8["TRUST_BUILDING    +0.20"]
+            C9["BAD_LANGUAGE      +0.20"]
+            C10["INFO_GATHERING   +0.15"]
+            C11["REL_BUILDING     +0.15"]
+            C12["NEUTRAL           0.00"]
+            C13["ADMINISTRATIVE   −0.40"]
+        end
+
+        subgraph FILTERS["filters.py"]
+            direction LR
+            F1["NegationFilter\ntoken-scoped ±5 tokens\npenalty up to −0.40\nsecrecy phrases exempt"]
+            F2["JokeFilter\n±2 sentence window\npenalty up to −0.50"]
+        end
+
+        subgraph CONFIDENCE["confidence.py — scoring formula"]
+            direction TB
+            CF1["base pattern strength"]
+            CF2["+ exact phrase bonus  +0.15"]
+            CF3["+ keyword bonus       +0.10"]
+            CF4["± context multiplier"]
+            CF5["− negation penalty"]
+            CF6["− joke penalty"]
+            CF7["→ clamp 0.0 – 1.0"]
+            CF1 --> CF2 --> CF3 --> CF4 --> CF5 --> CF6 --> CF7
+        end
+
+        subgraph ML["ml_classifier.py — Zero-Shot NLI"]
+            direction TB
+            ML1["typeform/distilbert-base-uncased-mnli"]
+            ML2["13 labels · comparative softmax"]
+            ML3["temperature calibration  T = 1.3"]
+            ML4["multi-label detection  ≥ 0.15"]
+            ML5["agreement / disagreement signal"]
+            ML6["fuse_with_regex  25% weight"]
+            ML7["LRU cache  512 entries"]
+            ML1 --> ML2 --> ML3 --> ML4 --> ML5 --> ML6
+        end
+
+        EG["evidence_grouping.py\nDeduplication · Category Merge\nmax / avg confidence · severity rollup"]
+
+        SP --> PATTERNS --> CONTEXT --> FILTERS --> CONFIDENCE
+        CONFIDENCE --> ML
+        CONFIDENCE --> EG
+        ML --> EG
+    end
+
+    %% ─────────────────────────────────────────────
+    %% LAYER 3 — RISK SCORING
+    %% ─────────────────────────────────────────────
+    subgraph RISK["③ RISK SCORING  —  risk_scorer.py"]
+        direction TB
+        RS1["effective = weight × confidence × DR_factor"]
+        RS2["Diminishing Returns per category\n1st 100% · 2nd 50% · 3rd 25% · …"]
+        RS3["score = Σ effective  ·  cap 100"]
+        RS4{"Risk Level"}
+        RS4A(["🟢 Safe      0 – 20"])
+        RS4B(["🔵 Low      21 – 40"])
+        RS4C(["🟡 Moderate 41 – 60"])
+        RS4D(["🟠 High     61 – 80"])
+        RS4E(["🔴 Critical 81 – 100"])
+        RS1 --> RS2 --> RS3 --> RS4
+        RS4 --> RS4A & RS4B & RS4C & RS4D & RS4E
+    end
+
+    %% ─────────────────────────────────────────────
+    %% LAYER 4 — OUTPUT GENERATION
+    %% ─────────────────────────────────────────────
+    subgraph OUTPUT["④ OUTPUT GENERATION"]
+        direction LR
+        SV["severity_classifier.py\nSafe / Low / Moderate / High / Critical"]
+        ST["stats.py\nword count · categories · risk"]
+        SUM["summarizer.py\nrule-based summary"]
+        LLM["llm_summarizer.py\nOllama · Llama 3.1\nexecutive summary"]
+        PDF["report_generator.py\nPDF report  →  reports/"]
+        DB[("SQLite\nanalysis.db")]
+        VEC[("ChromaDB\nvectors/")]
+        BOT["chatbot.py\nRAG · SentenceTransformers\nall-MiniLM-L6-v2 + Ollama"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% LAYER 5 — API
+    %% ─────────────────────────────────────────────
+    subgraph API["⑤ REST API  —  FastAPI  :8000"]
+        direction LR
+        EP1["POST /analyze"]
+        EP2["GET  /history"]
+        EP3["GET  /report/{id}"]
+        EP4["GET  /report/{id}/status"]
+        EP5["GET  /report/{id}/pdf"]
+        EP6["POST /chat"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% LAYER 6 — FRONTEND
+    %% ─────────────────────────────────────────────
+    subgraph FRONTEND["⑥ FRONTEND  —  React 19 + Vite  :5173"]
+        direction LR
+        FE1["Dashboard\nUpload · History"]
+        FE2["Report\nRisk Ring · Findings Debugger\nEvidence Log · Timeline\nAnalytics · Raw JSON"]
+        FE3["Chatbot Sidebar\nAsk AI about any report"]
+    end
+
+    %% ─────────────────────────────────────────────
+    %% EDGES
+    %% ─────────────────────────────────────────────
+    A --> TRANSCRIPTION
+    T2 --> SP
+    T3 --> DB
+
+    EG --> RISK
+    RS3 --> SV & ST & SUM & LLM
+    SV & ST & SUM & LLM --> PDF
+    PDF --> DB
+    EG --> DB
+    T2 --> VEC
+    VEC --> BOT
+
+    DB --> EP2 & EP3 & EP4 & EP5
+    BOT --> EP6
+    EP1 --> A
+
+    EP1 & EP2 & EP3 & EP4 & EP5 & EP6 --> FRONTEND
+```
+
+---
+
 ## Screenshots
 
 | Dashboard | Analysis Report | Evidence Log |
