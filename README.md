@@ -246,9 +246,10 @@ AuraSafety/
 │   │   └── models.py
 │   │
 │   └── examples/
-│       ├── test_script_bad.txt   # High-risk grooming transcript (test)
-│       ├── test_script_good.txt  # Safe classroom transcript (test)
-│       └── run_test_scripts.py   # Pipeline test runner
+│       ├── test_script_bad.txt    # High-risk grooming transcript (CRITICAL)
+│       ├── test_script_medium.txt # Ambiguous online chat transcript (MODERATE)
+│       ├── test_script_good.txt   # Safe classroom transcript (LOW)
+│       └── run_test_scripts.py    # Pipeline test runner (all 3 scripts)
 │
 └── frontend/                 # React + Vite dashboard
     ├── src/
@@ -366,7 +367,7 @@ If Ollama is not running, the system falls back to the rule-based summary. All o
 
 ## Running the Test Scripts
 
-Two test transcripts are included to verify the pipeline end-to-end without needing an audio file:
+Three test transcripts are included to verify the pipeline end-to-end without needing an audio file:
 
 ```bash
 cd backend
@@ -376,14 +377,18 @@ python examples/run_test_scripts.py
 Expected output:
 
 ```
-[PASS]  BAD  (high-risk grooming)    score=100.0  sev=CRITICAL   findings=23
-[PASS]  GOOD (safe classroom)        score=  0.0  sev=LOW        findings=0
+[PASS]  BAD    (high-risk grooming)    score=100.0  sev=CRITICAL   findings=23
+[PASS]  MEDIUM (ambiguous online chat) score= 53.5  sev=MEDIUM     findings=8
+[PASS]  GOOD   (safe classroom)        score=  0.0  sev=LOW        findings=0
 
 All tests passed ✓
 ```
 
-- `test_script_bad.txt` — a realistic grooming conversation that triggers all 12 detection categories
-- `test_script_good.txt` — a normal teacher-student classroom exchange that produces zero findings
+| Script | Risk Score | Severity | What it tests |
+|---|---|---|---|
+| `test_script_bad.txt` | 100 | CRITICAL | Grooming conversation triggering all 12 categories |
+| `test_script_medium.txt` | ~53 | MODERATE | Ambiguous online gaming chat — trust-building, routine probing, video call |
+| `test_script_good.txt` | 0 | LOW | Normal teacher-student classroom exchange, zero findings |
 
 Set `ENABLE_ML = True` in `run_test_scripts.py` to include the ML classifier layer (requires the model to be cached, ~400 MB).
 

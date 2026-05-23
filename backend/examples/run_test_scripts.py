@@ -29,10 +29,13 @@ from modules.stats import generate_stats
 # ── Config ──────────────────────────────────────────────────────────────────
 
 SCRIPTS = {
-    "BAD  (high-risk grooming)": os.path.join(
+    "BAD    (high-risk grooming)": os.path.join(
         os.path.dirname(__file__), "test_script_bad.txt"
     ),
-    "GOOD (safe classroom)": os.path.join(
+    "MEDIUM (ambiguous online chat)": os.path.join(
+        os.path.dirname(__file__), "test_script_medium.txt"
+    ),
+    "GOOD   (safe classroom)": os.path.join(
         os.path.dirname(__file__), "test_script_good.txt"
     ),
 }
@@ -174,6 +177,12 @@ def run_analysis(label, filepath):
         print(f"  Test assertion (score ≥ 60, findings ≥ 5): {verdict}")
         if not passed:
             print(f"    Got score={risk['score']:.1f}, findings={len(grouped)}")
+    elif "MEDIUM" in label:
+        passed = 41 <= risk["score"] <= 60 and 4 <= len(grouped) <= 12
+        verdict = f"{GREEN}✓ PASS{RESET}" if passed else f"{RED}✗ FAIL{RESET}"
+        print(f"  Test assertion (41 ≤ score ≤ 60, 4 ≤ findings ≤ 12): {verdict}")
+        if not passed:
+            print(f"    Got score={risk['score']:.1f}, findings={len(grouped)}")
     else:
         passed = risk["score"] <= 20 and len(grouped) <= 2
         verdict = f"{GREEN}✓ PASS{RESET}" if passed else f"{RED}✗ FAIL{RESET}"
@@ -208,7 +217,6 @@ if __name__ == "__main__":
             print(f"\n{RED}ERROR running '{label}': {e}{RESET}")
             import traceback
             traceback.print_exc()
-
     # ── Final Summary ─────────────────────────────────────────────────────────
     section("FINAL TEST SUMMARY")
     all_passed = True

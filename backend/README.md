@@ -69,7 +69,7 @@ flowchart TD
         end
 
         subgraph ML["ML Classifier — ml_classifier.py"]
-            ML1[facebook/bart-large-mnli\nZero-Shot NLI]
+            ML1[typeform/distilbert-base-uncased-mnli\nZero-Shot NLI]
             ML2[13 Labels → Comparative Softmax]
             ML3[Temperature Calibration T=1.3]
             ML4[Multi-Label Detection ≥0.15]
@@ -231,7 +231,7 @@ backend/
 │   ├── context_analyzer.py        # ContextType enum + multipliers
 │   ├── confidence.py              # Confidence scoring engine
 │   ├── filters.py                 # NegationFilter + JokeFilter
-│   ├── ml_classifier.py           # Zero-shot NLI classifier (bart-large-mnli)
+│   ├── ml_classifier.py           # Zero-shot NLI classifier (distilbert-base-uncased-mnli)
 │   ├── evidence_grouping.py       # Deduplication + category merging
 │   ├── grooming_detector.py       # Main detection pipeline orchestrator
 │   ├── risk_scorer.py             # Weighted risk scoring + diminishing returns
@@ -242,18 +242,24 @@ backend/
 │   ├── transcriber.py             # Faster-Whisper transcription
 │   ├── evidence_extractor.py      # Evidence list extraction
 │   ├── stats.py                   # Statistics generation
-│   ├── chatbot.py                 # RAG chatbot (ChromaDB + Ollama)
-│   └── analyzer.py                # Legacy analyzer
+│   └── chatbot.py                 # RAG chatbot (ChromaDB + Ollama)
 │
 ├── database/
 │   ├── db.py                      # SQLAlchemy engine + session
 │   └── models.py                  # AudioAnalysis ORM model
 │
-├── uploads/                        # Uploaded audio files
-├── reports/                        # Generated PDF reports
-├── vectors/                        # ChromaDB persistent vector store
-└── logs/
-    └── app.log                    # Application logs
+├── examples/
+│   ├── test_script_bad.txt        # High-risk grooming transcript (CRITICAL)
+│   ├── test_script_medium.txt     # Ambiguous online chat transcript (MODERATE)
+│   ├── test_script_good.txt       # Safe classroom transcript (LOW)
+│   └── run_test_scripts.py        # Pipeline test runner
+│
+└── (runtime — auto-created, git-ignored)
+    ├── uploads/                   # Uploaded audio files
+    ├── reports/                   # Generated PDF reports
+    ├── vectors/                   # ChromaDB persistent vector store
+    ├── analysis.db                # SQLite database
+    └── logs/app.log               # Application logs
 ```
 
 ---
@@ -624,16 +630,17 @@ uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 
 ## Test Scripts
 
-Two test transcripts are included to verify the full pipeline without needing an audio file:
+Three test transcripts are included to verify the full pipeline without needing an audio file:
 
 ```bash
 python examples/run_test_scripts.py
 ```
 
-| Script | Expected Result |
-|---|---|
-| `examples/test_script_bad.txt` | Score 100, CRITICAL, 23 findings across all 12 categories |
-| `examples/test_script_good.txt` | Score 0, LOW, 0 findings |
+| Script | Expected Score | Severity | Description |
+|---|---|---|---|
+| `examples/test_script_bad.txt` | 100 | CRITICAL | Grooming conversation — all 12 categories triggered |
+| `examples/test_script_medium.txt` | ~53 | MODERATE | Ambiguous online gaming chat — trust-building, routine probing, video call |
+| `examples/test_script_good.txt` | 0 | LOW | Safe classroom exchange — zero findings |
 
 Set `ENABLE_ML = True` in `run_test_scripts.py` to include the ML classifier layer (requires model cache, ~400 MB).
 
@@ -712,6 +719,7 @@ GroomingDetector(
     enable_context_analysis  = True,
     enable_filters           = True,
     enable_grouping          = True,
+    enable_ml_classifier     = False,  # set True once model is cached (~400 MB)
 )
 ```
 
