@@ -2,14 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
-  RadarChart, PolarGrid, PolarAngleAxis, Radar, PieChart, Pie, Legend
+  RadarChart, PolarGrid, PolarAngleAxis, Radar, PieChart, Pie, Legend,
+  ScatterChart, Scatter, ZAxis, LineChart, Line, CartesianGrid,
 } from 'recharts';
 import {
   Download, AlertTriangle, FileText, Activity, ShieldAlert,
   Brain, Clock, ChevronDown, ChevronUp, Code, MessageSquare,
-  ArrowLeft, Zap, Eye, TrendingUp, Database, BarChart2, Info, CheckCircle, XCircle
+  ArrowLeft, Zap, Eye, TrendingUp, Database, BarChart2, Info, CheckCircle, XCircle,
+  Users, Mail, Bell,
 } from 'lucide-react';
-import { getReport, downloadPdfUrl } from '../api';
+import { getReport, downloadPdfUrl, sendAlertEmail, sendSummaryEmail } from '../api';
 import Chatbot from '../components/Chatbot';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -232,10 +234,40 @@ const FindingCard = ({ finding, index }) => {
 const Report = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [report, setReport] = useState(null);
+  const [report, setReport]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen]   = useState(false);
+
+  // Email notification state
+  const [emailStatus, setEmailStatus] = useState(null); // null | 'sending' | 'sent' | 'error'
+  const [emailMsg, setEmailMsg]       = useState('');
+
+  const handleSendAlert = async () => {
+    setEmailStatus('sending');
+    try {
+      await sendAlertEmail(id);
+      setEmailStatus('sent');
+      setEmailMsg('Alert email sent');
+    } catch (e) {
+      setEmailStatus('error');
+      setEmailMsg(e?.response?.data?.detail || 'Failed to send alert');
+    }
+    setTimeout(() => setEmailStatus(null), 4000);
+  };
+
+  const handleSendSummary = async () => {
+    setEmailStatus('sending');
+    try {
+      await sendSummaryEmail(id);
+      setEmailStatus('sent');
+      setEmailMsg('Summary email sent');
+    } catch (e) {
+      setEmailStatus('error');
+      setEmailMsg(e?.response?.data?.detail || 'Failed to send summary');
+    }
+    setTimeout(() => setEmailStatus(null), 4000);
+  };
 
   useEffect(() => {
     const fetchReport = async () => {
@@ -294,6 +326,69 @@ const Report = () => {
   const pieData = Object.entries(severityDist).map(([name, value]) => ({ name, value }));
   const PIE_COLORS = ['#b91c1c', '#ef4444', '#f59e0b', '#3b82f6', '#10b981'];
 
+  // ── New analytics derived data ───────────────────────────────────────────
+
+  // Context type distribution (from stored stats or computed from findings)
+  const ctxDistRaw = stats.context_type_distribution
+    || findings.reduce((acc, f) => {
+        const ctx = f.context_type || f.context?.primary;
+        if (ctx) acc[ctx] = (acc[ctx] || 0) + 1;
+        return acc;
+      }, {});
+  const CTX_PIE_COLORS = ['var(--status-critical)', 'var(--accent-primary)', 'var(--status-safe)', 'var(--text-tertiary)', 'var(--status-moderate)'];
+  const ctxDistData = Object.entries(ctxDistRaw).map(([name, count]) => ({ name: capitalize(name), count }));
+
+  // Confidence histogram (from stored stats or computed)
+  const confHistRaw = stats.confidence_histogram || (() => {
+    const h = { '0-25': 0, '25-50': 0, '50-75': 0, '75-100': 0 };
+    findings.forEach(f => {
+      const pct = ((f.confidence || f.max_confidence || 0)) * 100;
+      if (pct <= 25) h['0-25']++;
+      else if (pct <= 50) h['25-50']++;
+      else if (pct <= 75) h['50-75']++;
+      else h['75-100']++;
+    });
+    return h;
+  })();
+  const CONF_COLORS = ['var(--text-tertiary)', 'var(--status-low)', 'var(--status-moderate)', 'var(--status-high)'];
+  const confHistData = Object.entries(confHistRaw).map(([range, count]) => ({ range: range + '%', count }));
+
+  // Speaker breakdown
+  const speakerRaw = stats.speaker_distribution
+    || findings.reduce((acc, f) => {
+        if (f.speaker) acc[f.speaker] = (acc[f.speaker] || 0) + 1;
+        return acc;
+      }, {});
+  const speakerData = Object.entries(speakerRaw)
+    .map(([speaker, count]) => ({ speaker, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Findings timeline scatter (from stored stats or computed)
+  const timelineScatter = (stats.findings_timeline || findings
+    .filter(f => f.timestamp != null && (f.confidence || f.max_confidence) != null)
+    .map(f => ({
+      timestamp: Math.round(f.timestamp),
+      confidence: f.confidence || f.max_confidence || 0,
+      category: (f.categories?.[0] || f.category || 'unknown'),
+    }))
+  );
+
+  // ML agreement
+  const mlAgreed    = findings.filter(f => (f.ml || f.ml_result)?.agreement === true).length;
+  const mlDisagreed = findings.filter(f => (f.ml || f.ml_result)?.disagreement_flag === true).length;
+  const mlNoSignal  = findings.filter(f => {
+    const ml = f.ml || f.ml_result;
+    return ml && !ml.error && ml.agreement == null && !ml.disagreement_flag;
+  }).length;
+  const mlAgreementData = [
+    { name: 'Agreed', value: mlAgreed },
+    { name: 'Disagreed', value: mlDisagreed },
+    { name: 'No Signal', value: mlNoSignal },
+  ].filter(d => d.value > 0);
+  const mlAgreementRate = (mlAgreed + mlDisagreed) > 0
+    ? mlAgreed / (mlAgreed + mlDisagreed)
+    : null;
+
   // Timeline
   const timeline = Array.isArray(report.timeline) ? report.timeline : [];
   // Build a set of flagged text snippets for highlighting
@@ -321,9 +416,43 @@ const Report = () => {
           <a href={downloadPdfUrl(id)} target="_blank" rel="noreferrer" className="btn btn-primary">
             <Download size={16} /> PDF Report
           </a>
+          <button
+            className="btn btn-secondary"
+            onClick={handleSendAlert}
+            disabled={emailStatus === 'sending'}
+            title="Send red-alert email to configured recipients"
+          >
+            <Bell size={16} style={{ color: 'var(--status-high)' }} />
+            {emailStatus === 'sending' ? 'Sending…' : 'Send Alert'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleSendSummary}
+            disabled={emailStatus === 'sending'}
+            title="Send full analysis summary email"
+          >
+            <Mail size={16} />
+            {emailStatus === 'sending' ? 'Sending…' : 'Email Summary'}
+          </button>
           <button className="btn btn-secondary" onClick={() => setChatOpen(o => !o)}>
             <MessageSquare size={16} /> {chatOpen ? 'Close Chat' : 'Ask AI'}
           </button>
+
+          {/* Email toast */}
+          {emailStatus && emailStatus !== 'sending' && (
+            <div style={{
+              position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+              background: emailStatus === 'sent' ? 'var(--status-safe)' : 'var(--status-high)',
+              color: '#fff', padding: '10px 18px', borderRadius: 8,
+              fontSize: '0.85rem', fontWeight: 600,
+              boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+              display: 'flex', alignItems: 'center', gap: '0.5rem',
+              animation: 'fadeIn 0.2s ease',
+            }}>
+              {emailStatus === 'sent' ? <CheckCircle size={15} /> : <XCircle size={15} />}
+              {emailMsg}
+            </div>
+          )}
         </div>
       </div>
 
@@ -585,11 +714,13 @@ const Report = () => {
               <div className="analytics-stats-grid">
                 {[
                   { label: 'Risk Score', value: `${(report.risk_score || 0).toFixed(1)}`, color: scoreColor },
-                  { label: 'Total Words', value: stats.word_count || stats.total_sentences || '—' },
+                  { label: 'Total Words', value: stats.word_count || '—' },
                   { label: 'Flagged Sentences', value: stats.flagged_sentences || findings.length },
                   { label: 'Unique Categories', value: stats.unique_categories ?? categoryData.length },
-                  { label: 'High Conf Matches', value: findings.filter(f => (f.confidence || f.max_confidence || 0) >= 0.7).length, color: 'var(--status-high)' },
+                  { label: 'High Conf Matches', value: stats.high_confidence_count ?? findings.filter(f => (f.confidence || f.max_confidence || 0) >= 0.7).length, color: 'var(--status-high)' },
                   { label: 'ML Disagreements', value: findings.filter(f => (f.ml || f.ml_result)?.disagreement_flag).length, color: 'var(--status-moderate)' },
+                  { label: 'Avg Confidence', value: stats.confidence_stats?.average != null ? `${(stats.confidence_stats.average * 100).toFixed(1)}%` : '—', color: 'var(--accent-primary)' },
+                  { label: 'Unique Speakers', value: Object.keys(stats.speaker_distribution || {}).length || '—' },
                 ].map((s, i) => (
                   <div key={i} className="analytics-stat-card glass-panel">
                     <span className="analytics-stat-label">{s.label}</span>
@@ -618,7 +749,7 @@ const Report = () => {
                   </div>
                 )}
 
-                {/* Pie */}
+                {/* Severity Pie */}
                 {pieData.length > 0 && (
                   <div className="glass-panel chart-panel">
                     <div className="panel-heading-row">
@@ -640,22 +771,146 @@ const Report = () => {
                     </div>
                   </div>
                 )}
+
+                {/* Context Type Distribution */}
+                {ctxDistData.length > 0 && (
+                  <div className="glass-panel chart-panel">
+                    <div className="panel-heading-row">
+                      <Eye size={16} style={{ color: 'var(--accent-primary)' }} />
+                      <h3 className="panel-heading">Context Type Distribution</h3>
+                    </div>
+                    <div style={{ height: 300 }}>
+                      <ResponsiveContainer>
+                        <BarChart data={ctxDistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                          <XAxis dataKey="name" stroke="var(--text-tertiary)" fontSize={11} />
+                          <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                          <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
+                            {ctxDistData.map((entry, i) => (
+                              <Cell key={i} fill={CTX_PIE_COLORS[i % CTX_PIE_COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                {/* Confidence Histogram */}
+                {confHistData.some(d => d.count > 0) && (
+                  <div className="glass-panel chart-panel">
+                    <div className="panel-heading-row">
+                      <BarChart2 size={16} style={{ color: 'var(--accent-secondary)' }} />
+                      <h3 className="panel-heading">Confidence Distribution</h3>
+                    </div>
+                    <div style={{ height: 300 }}>
+                      <ResponsiveContainer>
+                        <BarChart data={confHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                          <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
+                          <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                          <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
+                            {confHistData.map((entry, i) => (
+                              <Cell key={i} fill={CONF_COLORS[i % CONF_COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                {/* Speaker Breakdown */}
+                {speakerData.length > 0 && (
+                  <div className="glass-panel chart-panel">
+                    <div className="panel-heading-row">
+                      <Users size={16} style={{ color: 'var(--accent-primary)' }} />
+                      <h3 className="panel-heading">Findings by Speaker</h3>
+                    </div>
+                    <div style={{ height: 300 }}>
+                      <ResponsiveContainer>
+                        <BarChart data={speakerData} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                          <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                          <YAxis dataKey="speaker" type="category" width={75} stroke="var(--text-secondary)" fontSize={11} tick={{ fill: 'var(--text-secondary)' }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                          <Bar dataKey="count" radius={[0, 4, 4, 0]} name="Findings" fill="var(--accent-secondary)" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                {/* ML Agreement Pie */}
+                {mlAgreementData.length > 0 && (
+                  <div className="glass-panel chart-panel">
+                    <div className="panel-heading-row">
+                      <Brain size={16} style={{ color: 'var(--accent-primary)' }} />
+                      <h3 className="panel-heading">ML vs Regex Agreement</h3>
+                    </div>
+                    <div style={{ height: 300 }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie data={mlAgreementData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
+                            <Cell fill="var(--status-safe)" />
+                            <Cell fill="var(--status-high)" />
+                            <Cell fill="var(--text-tertiary)" />
+                          </Pie>
+                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }} />
+                          <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    {mlAgreementRate != null && (
+                      <div style={{ textAlign: 'center', marginTop: '0.5rem', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
+                        Agreement rate: <strong style={{ color: 'var(--status-safe)' }}>{(mlAgreementRate * 100).toFixed(1)}%</strong>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {/* Findings Timeline Scatter */}
+              {timelineScatter.length > 0 && (
+                <div className="glass-panel chart-panel" style={{ marginTop: 'var(--spacing-lg)' }}>
+                  <div className="panel-heading-row">
+                    <Clock size={16} style={{ color: 'var(--accent-primary)' }} />
+                    <h3 className="panel-heading">Findings Over Time (Confidence vs Sentence Index)</h3>
+                  </div>
+                  <div style={{ height: 280 }}>
+                    <ResponsiveContainer>
+                      <ScatterChart margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                        <CartesianGrid stroke="var(--border-color)" strokeDasharray="3 3" />
+                        <XAxis dataKey="timestamp" name="Sentence" stroke="var(--text-tertiary)" fontSize={11} label={{ value: 'Sentence Index', position: 'insideBottom', offset: -5, fill: 'var(--text-tertiary)', fontSize: 11 }} />
+                        <YAxis dataKey="confidence" name="Confidence" domain={[0, 1]} stroke="var(--text-tertiary)" fontSize={11} tickFormatter={v => `${(v * 100).toFixed(0)}%`} />
+                        <ZAxis range={[40, 40]} />
+                        <Tooltip
+                          cursor={{ strokeDasharray: '3 3' }}
+                          contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)', fontSize: '0.82rem' }}
+                          formatter={(value, name) => [name === 'Confidence' ? `${(value * 100).toFixed(1)}%` : value, name]}
+                        />
+                        <Scatter data={timelineScatter} fill="var(--accent-primary)" fillOpacity={0.7} />
+                      </ScatterChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
 
               {/* Full stats object */}
               {Object.keys(stats).length > 0 && (
-                <div className="glass-panel chart-panel">
+                <div className="glass-panel chart-panel" style={{ marginTop: 'var(--spacing-lg)' }}>
                   <div className="panel-heading-row">
                     <Database size={16} style={{ color: 'var(--text-tertiary)' }} />
                     <h3 className="panel-heading">Full Stats Object</h3>
                   </div>
                   <div className="stats-kv-grid">
-                    {Object.entries(stats).filter(([k]) => k !== 'category_breakdown').map(([k, v]) => (
-                      <div key={k} className="debug-row">
-                        <span>{capitalize(k)}</span>
-                        <strong>{typeof v === 'number' ? v.toFixed(2) : String(v)}</strong>
-                      </div>
-                    ))}
+                    {Object.entries(stats)
+                      .filter(([k]) => !['category_breakdown', 'categories', 'severity_distribution', 'context_type_distribution', 'speaker_distribution', 'confidence_histogram', 'ml_stats', 'findings_timeline', 'confidence_stats'].includes(k))
+                      .map(([k, v]) => (
+                        <div key={k} className="debug-row">
+                          <span>{capitalize(k)}</span>
+                          <strong>{typeof v === 'number' ? v.toFixed(2) : String(v)}</strong>
+                        </div>
+                      ))}
                   </div>
                 </div>
               )}

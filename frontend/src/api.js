@@ -38,4 +38,19 @@ export const getChatbotAnswer = async (reportId, question) => {
   return response.data;
 };
 
+export const getAnalyticsSummary = async () => {
+  const response = await api.get('/analytics/summary');
+  return response.data;
+};
+
+export const sendAlertEmail = async (reportId, recipients = []) => {
+  const response = await api.post(`/notify/alert/${reportId}`, { recipients: recipients.length ? recipients : null });
+  return response.data;
+};
+
+export const sendSummaryEmail = async (reportId, recipients = []) => {
+  const response = await api.post(`/notify/summary/${reportId}`, { recipients: recipients.length ? recipients : null });
+  return response.data;
+};
+
 export const downloadPdfUrl = (reportId) => `/api/v1/report/${reportId}/pdf`;

@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  PieChart, Pie, Legend,
+} from 'recharts';
+import {
   ShieldAlert, Activity, FileAudio, Search, TrendingUp,
-  CheckCircle, AlertTriangle, Clock, ChevronRight, RefreshCw
+  CheckCircle, AlertTriangle, Clock, ChevronRight, RefreshCw,
+  BarChart2, Brain,
 } from 'lucide-react';
-import { getHistory } from '../api';
+import { getHistory, getAnalyticsSummary } from '../api';
 
 const getBadgeClass = (severity) => {
   const s = (severity || '').toLowerCase();
@@ -23,6 +28,41 @@ const getRiskColor = (score) => {
   return 'var(--status-safe)';
 };
 
+const SEV_COLORS = {
+  critical: 'var(--status-critical)',
+  high:     'var(--status-high)',
+  moderate: 'var(--status-moderate)',
+  medium:   'var(--status-moderate)',
+  low:      'var(--status-low)',
+  safe:     'var(--status-safe)',
+  unknown:  'var(--text-tertiary)',
+};
+
+const HIST_COLORS = [
+  'var(--status-safe)',
+  'var(--status-low)',
+  'var(--status-moderate)',
+  'var(--status-high)',
+  'var(--status-critical)',
+];
+
+const CONF_COLORS = [
+  'var(--text-tertiary)',
+  'var(--status-low)',
+  'var(--status-moderate)',
+  'var(--status-high)',
+];
+
+const CTX_COLORS = [
+  'var(--status-critical)',
+  'var(--accent-primary)',
+  'var(--status-safe)',
+  'var(--text-tertiary)',
+  'var(--status-moderate)',
+];
+
+const capitalize = (s) => (s || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
 const MiniRiskBar = ({ score }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
     <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 99 }}>
@@ -37,32 +77,48 @@ const MiniRiskBar = ({ score }) => (
   </div>
 );
 
+const ChartTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+      <div style={{ fontWeight: 600, marginBottom: 2 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ color: p.fill || p.color }}>{p.name || 'Count'}: <strong>{p.value}</strong></div>
+      ))}
+    </div>
+  );
+};
+
 const Dashboard = () => {
-  const [history, setHistory]   = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [search, setSearch]     = useState('');
-  const [sortKey, setSortKey]   = useState('id');
-  const [sortDir, setSortDir]   = useState('desc');
+  const [history, setHistory]     = useState([]);
+  const [analytics, setAnalytics] = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState('');
+  const [sortKey, setSortKey]     = useState('id');
+  const [sortDir, setSortDir]     = useState('desc');
   const navigate = useNavigate();
 
-  const fetchHistory = async () => {
+  const fetchAll = async () => {
     setLoading(true);
     try {
-      const data = await getHistory();
-      // Backend returns a plain array
-      setHistory(Array.isArray(data) ? data : (data.reports || []));
+      const [histData, analyticsData] = await Promise.all([
+        getHistory(),
+        getAnalyticsSummary().catch(() => null),
+      ]);
+      setHistory(Array.isArray(histData) ? histData : (histData.reports || []));
+      setAnalytics(analyticsData);
     } catch (err) {
-      console.error('Failed to fetch history', err);
+      console.error('Failed to fetch dashboard data', err);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchHistory(); }, []);
+  useEffect(() => { fetchAll(); }, []);
 
-  const highRisk    = history.filter(h => ['high','critical'].includes((h.severity || '').toLowerCase()));
-  const safeCount   = history.filter(h => ['safe','low'].includes((h.severity || '').toLowerCase())).length;
-  const avgScore    = history.length ? (history.reduce((s, h) => s + (h.risk_score || 0), 0) / history.length) : 0;
+  const highRisk  = history.filter(h => ['high','critical'].includes((h.severity || '').toLowerCase()));
+  const safeCount = history.filter(h => ['safe','low'].includes((h.severity || '').toLowerCase())).length;
+  const avgScore  = history.length ? (history.reduce((s, h) => s + (h.risk_score || 0), 0) / history.length) : 0;
 
   const filtered = history
     .filter(h => (h.filename || '').toLowerCase().includes(search.toLowerCase()))
@@ -82,6 +138,34 @@ const Dashboard = () => {
     ? <span style={{ fontSize: '0.7rem', marginLeft: 3 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
     : null;
 
+  // ── Derived chart data from analytics summary ──────────────────────────────
+  const severityPieData = analytics
+    ? Object.entries(analytics.severity_distribution || {}).map(([name, value]) => ({ name: capitalize(name), value }))
+    : [];
+
+  const riskHistData = analytics
+    ? Object.entries(analytics.risk_score_histogram || {}).map(([range, count], i) => ({ range, count, fill: HIST_COLORS[i] }))
+    : [];
+
+  const topCatData = (analytics?.top_categories || []).slice(0, 8).map(d => ({
+    name: capitalize(d.category),
+    count: d.count,
+  }));
+
+  const ctxData = analytics
+    ? Object.entries(analytics.context_type_totals || {}).map(([name, value], i) => ({
+        name: capitalize(name), value, fill: CTX_COLORS[i % CTX_COLORS.length],
+      }))
+    : [];
+
+  const confHistData = analytics
+    ? Object.entries(analytics.confidence_histogram || {}).map(([range, count], i) => ({
+        range: range + '%', count, fill: CONF_COLORS[i],
+      }))
+    : [];
+
+  const mlStats = analytics?.ml_agreement_totals || {};
+
   return (
     <div className="animate-fade-in" style={{ padding: 'var(--spacing-xl)', maxWidth: 1400, margin: '0 auto' }}>
 
@@ -92,7 +176,7 @@ const Dashboard = () => {
           <p className="page-subtitle">All audio analyses — click any row to open the full report.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button className="btn btn-secondary" onClick={fetchHistory} disabled={loading}>
+          <button className="btn btn-secondary" onClick={fetchAll} disabled={loading}>
             <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
             Refresh
           </button>
@@ -141,7 +225,221 @@ const Dashboard = () => {
           <span className="stat-value" style={{ color: 'var(--status-safe)' }}>{safeCount}</span>
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>clean recordings</span>
         </div>
+
+        {analytics && (
+          <>
+            <div className="stat-card glass-panel">
+              <div className="flex-between">
+                <span className="stat-title">Total Findings</span>
+                <Activity size={20} style={{ color: 'var(--accent-secondary)' }} />
+              </div>
+              <span className="stat-value" style={{ color: 'var(--accent-secondary)' }}>{analytics.total_findings}</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>across all reports</span>
+            </div>
+
+            <div className="stat-card glass-panel">
+              <div className="flex-between">
+                <span className="stat-title">ML Agreement Rate</span>
+                <Brain size={20} style={{ color: 'var(--accent-primary)' }} />
+              </div>
+              <span className="stat-value" style={{ color: 'var(--accent-primary)' }}>
+                {mlStats.rate != null ? `${(mlStats.rate * 100).toFixed(0)}%` : '—'}
+              </span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                {mlStats.total ? `${mlStats.agreed}/${mlStats.total} detections` : 'no ML data yet'}
+              </span>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* ── Analytics Charts Row ─────────────────────────────────────────────── */}
+      {analytics && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--spacing-lg)', marginBottom: 'var(--spacing-xl)' }}>
+
+          {/* Severity Distribution Pie */}
+          {severityPieData.length > 0 && (
+            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
+                <ShieldAlert size={16} style={{ color: 'var(--status-high)' }} />
+                <h3 className="heading-3" style={{ margin: 0 }}>Severity Distribution</h3>
+              </div>
+              <div style={{ height: 280 }}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie
+                      data={severityPieData}
+                      cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={95}
+                      dataKey="value"
+                    >
+                      {severityPieData.map((entry, i) => (
+                        <Cell key={i} fill={SEV_COLORS[entry.name.toLowerCase()] || 'var(--text-tertiary)'} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend
+                      layout="horizontal"
+                      verticalAlign="bottom"
+                      align="center"
+                      wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 11, paddingTop: 8 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Risk Score Histogram */}
+          {riskHistData.length > 0 && (
+            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
+                <BarChart2 size={16} style={{ color: 'var(--accent-primary)' }} />
+                <h3 className="heading-3" style={{ margin: 0 }}>Risk Score Distribution</h3>
+              </div>
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer>
+                  <BarChart data={riskHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                    <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
+                    <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Reports">
+                      {riskHistData.map((entry, i) => (
+                        <Cell key={i} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Top Categories Bar */}
+          {topCatData.length > 0 && (
+            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
+                <TrendingUp size={16} style={{ color: 'var(--accent-secondary)' }} />
+                <h3 className="heading-3" style={{ margin: 0 }}>Top Risk Categories</h3>
+              </div>
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer>
+                  <BarChart data={topCatData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
+                    <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                    <YAxis dataKey="name" type="category" width={95} stroke="var(--text-secondary)" fontSize={11} tick={{ fill: 'var(--text-secondary)' }} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                    <Bar dataKey="count" radius={[0, 4, 4, 0]} name="Occurrences">
+                      {topCatData.map((_, i) => (
+                        <Cell key={i} fill={i < 2 ? 'var(--status-critical)' : i < 4 ? 'var(--status-high)' : 'var(--status-moderate)'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Context Type Distribution */}
+          {ctxData.length > 0 && (
+            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
+                <Activity size={16} style={{ color: 'var(--accent-primary)' }} />
+                <h3 className="heading-3" style={{ margin: 0 }}>Context Type Breakdown</h3>
+              </div>
+              <div style={{ height: 280 }}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie
+                      data={ctxData}
+                      cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={95}
+                      dataKey="value"
+                    >
+                      {ctxData.map((entry, i) => (
+                        <Cell key={i} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend
+                      layout="horizontal"
+                      verticalAlign="bottom"
+                      align="center"
+                      wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 11, paddingTop: 8 }}
+                      formatter={(value) => value.length > 14 ? value.slice(0, 13) + '…' : value}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Confidence Histogram */}
+          {confHistData.some(d => d.count > 0) && (
+            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
+                <BarChart2 size={16} style={{ color: 'var(--accent-secondary)' }} />
+                <h3 className="heading-3" style={{ margin: 0 }}>Detection Confidence</h3>
+              </div>
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer>
+                  <BarChart data={confHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                    <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
+                    <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
+                      {confHistData.map((entry, i) => (
+                        <Cell key={i} fill={entry.fill} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* ML Agreement Card */}
+          {mlStats.total > 0 && (
+            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
+                <Brain size={16} style={{ color: 'var(--accent-primary)' }} />
+                <h3 className="heading-3" style={{ margin: 0 }}>ML vs Regex Agreement</h3>
+              </div>
+              <div style={{ height: 280 }}>
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: 'Agreed', value: mlStats.agreed },
+                        { name: 'Disagreed', value: mlStats.disagreed },
+                        { name: 'No Signal', value: mlStats.total - mlStats.agreed - mlStats.disagreed },
+                      ].filter(d => d.value > 0)}
+                      cx="50%" cy="45%"
+                      innerRadius={60} outerRadius={95}
+                      dataKey="value"
+                    >
+                      <Cell fill="var(--status-safe)" />
+                      <Cell fill="var(--status-high)" />
+                      <Cell fill="var(--text-tertiary)" />
+                    </Pie>
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend
+                      layout="horizontal"
+                      verticalAlign="bottom"
+                      align="center"
+                      wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 11, paddingTop: 8 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ textAlign: 'center', marginTop: '0.25rem', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
+                Agreement rate: <strong style={{ color: 'var(--status-safe)' }}>
+                  {mlStats.rate != null ? `${(mlStats.rate * 100).toFixed(1)}%` : '—'}
+                </strong>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
 
       {/* Table Panel */}
       <div className="glass-panel">

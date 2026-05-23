@@ -42,8 +42,8 @@
 
 /* ── Dashboard ───────────────────────────────────────────────────── */
 .stats-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--spacing-xl); margin-bottom: var(--spacing-2xl);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--spacing-lg); margin-bottom: var(--spacing-2xl);
 }
 .stat-card { padding: var(--spacing-xl); display: flex; flex-direction: column; gap: var(--spacing-sm); }
 .stat-title { color: var(--text-secondary); font-size: 0.875rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
