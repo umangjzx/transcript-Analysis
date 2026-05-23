@@ -1,0 +1,84 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / typecheck / lint caches
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# ── App-generated files ───────────────────────────────────────────────────────
+# Uploaded audio files
+uploads/
+backend/uploads/
+
+# Generated PDF reports
+reports/
+backend/reports/
+
+# SQLite database
+*.db
+*.sqlite3
+*.sqlite
+
+# ChromaDB vector store
+vectors/
+backend/vectors/
+
+# Logs
+logs/
+*.log
+backend/logs/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+
+# ── HuggingFace model cache (large, don't commit) ────────────────────────────
+.cache/
+~/.cache/huggingface/
+
+# ── Editor / OS ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.swp
