@@ -45,6 +45,11 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 # Set to "true" once the ~400 MB distilbert-mnli model has been downloaded.
 ENABLE_ML_CLASSIFIER = os.getenv("ENABLE_ML_CLASSIFIER", "false").lower() == "true"
 
+# ── Speaker Diarization ───────────────────────────────────────────────────────
+# Set to "true" to enable pyannote speaker diarization.
+# Adds ~90 s per 3-min file on CPU — keep false for fast analysis.
+ENABLE_DIARIZATION = os.getenv("ENABLE_DIARIZATION", "false").lower() == "true"
+
 # ── Upload limits ─────────────────────────────────────────────────────────────
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 

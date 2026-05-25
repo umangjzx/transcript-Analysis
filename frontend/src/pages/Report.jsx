@@ -1024,6 +1024,106 @@ const Report = () => {
           </div>
         )}
       </div>
+
+      {/* ── Delete confirmation modal ─────────────────────────────────────── */}
+      {showDeleteConfirm && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '1rem',
+          }}
+          onClick={() => !isDeleting && setShowDeleteConfirm(false)}
+        >
+          <div
+            className="glass-panel"
+            style={{ maxWidth: 420, width: '100%', padding: '1.75rem', borderRadius: 'var(--radius-lg)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <Trash2 size={20} style={{ color: 'var(--status-high)' }} />
+                <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>
+                  Delete Report
+                </span>
+              </div>
+              {!isDeleting && (
+                <button
+                  className="btn-icon"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  style={{ color: 'var(--text-tertiary)' }}
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+
+            {/* Body */}
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
+              Are you sure you want to permanently delete this report?
+            </p>
+            <div style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-md)',
+              padding: '0.75rem 1rem',
+              marginBottom: '1rem',
+              fontSize: '0.85rem',
+            }}>
+              <div style={{ color: 'var(--text-tertiary)', marginBottom: '0.2rem' }}>#{report.id}</div>
+              <div style={{ color: 'var(--text-primary)', fontWeight: 500, wordBreak: 'break-all' }}>
+                {report.filename}
+              </div>
+              <div style={{ marginTop: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className={`badge badge-${(report.severity || 'safe').toLowerCase()}`}>
+                  {report.severity}
+                </span>
+                <span style={{ color: scoreColor, fontWeight: 600, fontSize: '0.82rem' }}>
+                  Score: {(report.risk_score || 0).toFixed(0)}
+                </span>
+              </div>
+            </div>
+            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', marginBottom: '1.5rem' }}>
+              This will permanently delete the database record and the PDF report from disk. This action cannot be undone.
+            </p>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                style={{
+                  background: 'var(--status-high)',
+                  color: '#fff',
+                  border: 'none',
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
+                  opacity: isDeleting ? 0.7 : 1,
+                  cursor: isDeleting ? 'not-allowed' : 'pointer',
+                }}
+                onClick={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <>
+                    <div style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    Deleting…
+                  </>
+                ) : (
+                  <><Trash2 size={14} /> Delete</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
