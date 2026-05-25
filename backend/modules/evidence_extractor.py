@@ -18,7 +18,15 @@ SEVERITY_MAP = {
     "routine": "MEDIUM",
     "relationship_building": "MEDIUM",
     "manipulation": "MEDIUM",
-    "trust_building": "LOW"
+    "trust_building": "LOW",
+    "personal_information": "HIGH",
+    "gift_bribery": "HIGH",
+    "isolation": "HIGH",
+    "desensitization": "HIGH",
+    "emotional_exploitation": "CRITICAL",
+    "threats_coercion": "CRITICAL",
+    "gaming_luring": "MEDIUM",
+    "age_deception": "HIGH",
 }
 
 

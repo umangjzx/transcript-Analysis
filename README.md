@@ -14,7 +14,7 @@
 
 ## What it does
 
-AuraSafety takes an audio file, transcribes it, and runs it through a layered detection pipeline that identifies 12 categories of harmful behaviour — from grooming tactics and manipulation to explicit content and threats. Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. All data is persisted to SQLite, MongoDB (7 collections), and AWS S3.
+AuraSafety takes an audio file, transcribes it, and runs it through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception. Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. All data is persisted to SQLite, MongoDB (7 collections), and AWS S3.
 
 ---
 
@@ -34,7 +34,7 @@ flowchart TD
 
     subgraph DETECTION["② GROOMING DETECTION PIPELINE"]
         SP[Sentence Splitter · Speaker Label Parser]
-        PAT[patterns.py · 12 compiled regex categories]
+        PAT[patterns.py · 20 compiled regex categories]
         CTX[context_analyzer.py · ContextType multipliers]
         FIL[filters.py · Negation ±5 tokens · Joke ±2 sentences]
         CONF[confidence.py · base + bonuses ± multipliers − penalties]
@@ -113,7 +113,7 @@ AuraSafety/
 │   │   └── audio_analysis_schemas.py   # Pydantic request/response models
 │   │
 │   ├── modules/
-│   │   ├── patterns.py             # 12-category compiled regex library
+│   │   ├── patterns.py             # 20-category compiled regex library
 │   │   ├── context_analyzer.py     # ContextType enum + multipliers
 │   │   ├── confidence.py           # Confidence scoring engine
 │   │   ├── filters.py              # NegationFilter + JokeFilter
@@ -138,7 +138,7 @@ AuraSafety/
 │   │   └── mongo.py                # MongoDB client — 7-collection schema
 │   │
 │   └── examples/
-│       ├── test_script_bad.txt     # CRITICAL — all 12 categories triggered
+│       ├── test_script_bad.txt     # CRITICAL — all categories triggered
 │       ├── test_script_medium.txt  # MODERATE — ambiguous online chat
 │       ├── test_script_good.txt    # LOW — safe classroom exchange
 │       └── run_test_scripts.py     # Pipeline test runner
@@ -159,20 +159,64 @@ AuraSafety/
 
 ## Detection Categories
 
-| Category | Severity | Description |
+The pipeline detects **20 categories** across the full grooming lifecycle — from initial contact and trust-building through to escalation, coercion, and explicit harm.
+
+### Core Grooming Tactics
+
+| Category | Severity | Weight | Description |
+|---|---|---|---|
+| `explicit_content` | **Critical** | 25 | Sexual solicitation, nude requests, sexting, CSAM references |
+| `threats_coercion` | **Critical** | 22 | Blackmail, photo threats, reputation threats, "do it or else" |
+| `meeting` | **Critical** | 20 | Arranging in-person contact, "sneak out", "come to my place" |
+| `address` | **Critical** | 20 | Requesting physical location, home address, zip code |
+| `secrecy` | **Critical** | 15 | "Don't tell anyone", "delete these messages", "our secret" |
+| `manipulation` | **Critical** | 10 | Coercion, conditional threats, peer pressure, proof demands |
+| `emotional_exploitation` | **Critical** | 18 | Guilt-tripping, "you're all I have", self-harm threats as control |
+| `isolation` | **Critical** | 16 | Discrediting friends/family, "you only need me", encouraging withdrawal |
+
+### Information Gathering
+
+| Category | Severity | Weight | Description |
+|---|---|---|---|
+| `personal_information` | **High** | 18 | Phone numbers, email, social handles, real name, age, passwords |
+| `parent_monitoring` | **High** | 15 | Questions about parental supervision of messages/phone |
+| `school` | **High** | 10 | School name, grade, dismissal time, teacher names |
+| `routine` | **High** | 10 | Daily schedule, walk-home route, when alone at home |
+
+### Relationship & Trust Building
+
+| Category | Severity | Weight | Description |
+|---|---|---|---|
+| `relationship_building` | **High** | 5 | Building personal dependency, "you're special to me" |
+| `video_call` | **High** | 10 | Video call requests, camera requests, selfie demands |
+| `age_deception` | **High** | 14 | "I'm the same age", "age is just a number", "you're mature for your age" |
+| `desensitization` | **High** | 14 | "It's normal", "everyone does it", minimising inappropriate behaviour |
+| `gift_bribery` | **High** | 12 | Gift offers, money, gaming currency, "I'll buy you anything" |
+| `gaming_luring` | **Medium** | 10 | Roblox/Fortnite contact, "join my private server", moving to DMs |
+| `trust_building` | **Medium** | 5 | "Trust me", "I'm here for you", "you can tell me anything" |
+| `bad_language` | **Medium** | 8 | Profanity, slurs, hate speech, aggressive/threatening language |
+
+---
+
+## Risk Scoring
+
+Risk scores are calculated on a **0–100 scale** using a weighted, diminishing-returns formula:
+
+```
+effective_score = weight × confidence          (1st occurrence)
+effective_score = weight × confidence × DR     (repeated occurrences)
+total_score     = Σ effective_scores, capped at 100
+```
+
+**Diminishing returns** — repeated occurrences of the same category are progressively down-weighted (100% → 50% → 25% → 12.5% → …) so a single repeated phrase cannot dominate the score.
+
+| Risk Level | Score Range | Meaning |
 |---|---|---|
-| `explicit_content` | **Critical** | Sexual solicitation, nude requests, sexting, CSAM references |
-| `meeting` | Critical | Arranging in-person contact |
-| `address` | Critical | Requesting physical location or home address |
-| `secrecy` | Critical | "Don't tell anyone", "delete these messages", "our secret" |
-| `manipulation` | Critical | Coercion, conditional threats, peer pressure |
-| `parent_monitoring` | High | Questions about parental supervision of messages |
-| `school` | High | School name, grade, dismissal time |
-| `routine` | High | Daily schedule, walk home route, when alone |
-| `video_call` | High | Video call requests, camera requests, selfie demands |
-| `relationship_building` | High | Building personal dependency, "you're special to me" |
-| `bad_language` | Medium | Profanity, slurs, threats, harassment |
-| `trust_building` | Medium | "Trust me", "I'm here for you", "you can tell me anything" |
+| Safe | 0–20 | No significant indicators |
+| Low | 21–40 | Minor concerns, may warrant monitoring |
+| Moderate | 41–60 | Multiple indicators, increased monitoring recommended |
+| High | 61–80 | Significant patterns, immediate review recommended |
+| Critical | 81–100 | Severe behaviour, urgent intervention required |
 
 ---
 
@@ -182,7 +226,7 @@ AuraSafety/
 |---|---|
 | API | FastAPI + Uvicorn |
 | Transcription | Faster-Whisper (base model, CPU, int8) |
-| Pattern Detection | Python `re` — compiled regex, 12 categories |
+| Pattern Detection | Python `re` — compiled regex, 20 categories |
 | ML Classifier | `typeform/distilbert-base-uncased-mnli` — Zero-Shot NLI |
 | LLM Summary | Ollama — Llama 3.1 |
 | Vector Store | ChromaDB (persistent) |
@@ -396,7 +440,7 @@ curl -X POST http://localhost:8000/notify/alert/12 \
 Audio File
   └─► Faster-Whisper transcription
         └─► Sentence splitting + speaker label parsing
-              └─► Regex pattern matching (12 categories)
+              └─► Regex pattern matching (20 categories)
                     └─► Context classification (ContextType multiplier)
                           └─► Negation filter (token-scoped ±5 tokens)
                                 └─► Joke filter (±2 sentence window)
@@ -435,7 +479,7 @@ python examples/run_test_scripts.py
 
 | Script | Risk Score | Severity | What it tests |
 |---|---|---|---|
-| `test_script_bad.txt` | 100 | CRITICAL | Grooming conversation — all 12 categories triggered |
+| `test_script_bad.txt` | 100 | CRITICAL | Grooming conversation — all categories triggered |
 | `test_script_medium.txt` | ~53 | MODERATE | Ambiguous online gaming chat — trust-building, routine probing, video call |
 | `test_script_good.txt` | 0 | LOW | Normal classroom exchange — zero findings |
 
@@ -457,6 +501,9 @@ pipeline> keep this between us, nobody needs to know
 pipeline> what time does the science exhibition finish?
 pipeline> send me your nudes right now
 pipeline> haha just kidding, lets meet up lol
+pipeline> I'll buy you whatever you want
+pipeline> age is just a number
+pipeline> your friends don't really care about you
 ```
 
 Each input prints context classification, filter results, per-category confidence, and the full risk breakdown.

@@ -99,6 +99,54 @@ CATEGORY_METADATA = {
         severity="medium",
         weight=0.60
     ),
+    "personal_information": PatternCategory(
+        name="Personal Information",
+        description="Requests for or disclosure of personal identifiers such as phone numbers, email addresses, social media handles, age, real name, or other PII",
+        severity="high",
+        weight=0.85
+    ),
+    "gift_bribery": PatternCategory(
+        name="Gift / Bribery",
+        description="Offers of gifts, money, game items, or other incentives to gain compliance or trust",
+        severity="high",
+        weight=0.80
+    ),
+    "isolation": PatternCategory(
+        name="Isolation",
+        description="Attempts to isolate the child from friends, family, or support networks",
+        severity="critical",
+        weight=0.90
+    ),
+    "desensitization": PatternCategory(
+        name="Desensitization / Normalizing",
+        description="Attempts to normalize inappropriate behaviour or make the child feel it is acceptable",
+        severity="high",
+        weight=0.85
+    ),
+    "emotional_exploitation": PatternCategory(
+        name="Emotional Exploitation",
+        description="Using emotional dependency, guilt, or self-harm threats to control the child",
+        severity="critical",
+        weight=0.95
+    ),
+    "threats_coercion": PatternCategory(
+        name="Threats / Coercion",
+        description="Explicit threats, blackmail, or coercive language to force compliance",
+        severity="critical",
+        weight=1.0
+    ),
+    "gaming_luring": PatternCategory(
+        name="Gaming / Platform Luring",
+        description="Using online games or platforms to initiate contact or move to private channels",
+        severity="high",
+        weight=0.75
+    ),
+    "age_deception": PatternCategory(
+        name="Age Deception",
+        description="Misrepresenting age or minimising age differences to appear non-threatening",
+        severity="high",
+        weight=0.85
+    ),
 }
 
 
@@ -116,6 +164,14 @@ PATTERN_CONFIDENCE = {
     "routine":               0.80,
     "explicit_content":      0.98,   # near-certain when matched
     "bad_language":          0.85,
+    "personal_information":  0.90,
+    "gift_bribery":          0.85,
+    "isolation":             0.88,
+    "desensitization":       0.82,
+    "emotional_exploitation": 0.90,
+    "threats_coercion":      0.95,
+    "gaming_luring":         0.78,
+    "age_deception":         0.85,
 }
 
 
@@ -782,9 +838,406 @@ BAD_LANGUAGE_PATTERNS = compile_patterns([
 ])
 
 
+# ---------------------------------------------------------------------------
+# Gift / Bribery Patterns
+# Covers: offers of gifts, money, game currency, items, or other incentives
+# used to gain trust, compliance, or reciprocal behaviour from a child.
+# ---------------------------------------------------------------------------
+GIFT_BRIBERY_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # Direct gift/present offers
+    # ----------------------------------------------------------------
+    r'\bI\'?(?:ll|will|can|could|want\s+to)\s+(?:buy|get|send|give|bring|purchase)\s+(?:you|u)\s+(?:a\s+)?(?:gift|present|surprise|treat|reward)\b',
+    r'\bI\'?(?:ll|will|can|could)\s+(?:buy|get|send|give)\s+(?:you|u)\s+(?:anything|whatever\s+you\s+want|something\s+nice|something\s+special)\b',
+    r'\b(?:want|wanna|would\s+like)\s+to\s+(?:send|give|buy|get)\s+(?:you|u)\s+(?:a\s+)?(?:gift|present|surprise|treat)\b',
+    r'\bI\s+(?:have|got)\s+(?:a\s+)?(?:gift|present|surprise|treat)\s+for\s+(?:you|u)\b',
+
+    # ----------------------------------------------------------------
+    # Money / financial offers
+    # ----------------------------------------------------------------
+    r'\bI\'?(?:ll|will|can|could)\s+(?:give|send|pay|transfer)\s+(?:you|u)\s+(?:money|cash|funds|dollars?|pounds?|euros?|rupees?)\b',
+    r'\bI\'?(?:ll|will)\s+pay\s+(?:you|u|for\s+it|for\s+that)\b',
+    r'\b(?:here\'?s|take)\s+(?:some\s+)?(?:money|cash)\b',
+    r'\bI\'?(?:ll|will|can)\s+(?:send|transfer)\s+(?:you|u)\s+(?:money|cash|funds)\b',
+
+    # ----------------------------------------------------------------
+    # Gift cards / vouchers
+    # ----------------------------------------------------------------
+    r'\bI\'?(?:ll|will|can|could)\s+(?:send|give|buy|get)\s+(?:you|u)\s+(?:a\s+)?(?:gift\s+card|voucher|coupon|promo\s+code|discount\s+code)\b',
+    r'\b(?:gift\s+card|amazon\s+card|itunes\s+card|google\s+play\s+card|steam\s+card|roblox\s+card)\s+for\s+(?:you|u)\b',
+    r'\b(?:can|could|I\'?(?:ll|will))\s+(?:send|get)\s+(?:you|u)\s+(?:a\s+)?(?:gift\s+card|voucher|code)\b',
+
+    # ----------------------------------------------------------------
+    # Gaming currency / in-game items
+    # ----------------------------------------------------------------
+    r'\bI\'?(?:ll|will|can|could)\s+(?:give|send|buy|get)\s+(?:you|u)\s+(?:robux|v-bucks|vbucks|gems?|coins?|credits?|skins?|items?|loot)\b',
+    r'\b(?:free\s+)?(?:robux|v-bucks|vbucks|gems?|coins?|credits?)\s+for\s+(?:you|u)\b',
+    r'\bI\'?(?:ll|will|can)\s+(?:buy|get)\s+(?:you|u)\s+(?:that\s+)?(?:game|skin|item|weapon|character|pass|membership|subscription)\b',
+
+    # ----------------------------------------------------------------
+    # Specific desirable items
+    # ----------------------------------------------------------------
+    r'\bI\'?(?:ll|will|can|could)\s+(?:buy|get)\s+(?:you|u)\s+(?:a\s+)?(?:phone|iphone|laptop|tablet|console|playstation|xbox|nintendo|airpods|headphones)\b',
+    r'\bI\'?(?:ll|will|can)\s+(?:buy|get)\s+(?:you|u)\s+(?:whatever|anything)\s+(?:you\s+want|you\s+need|you\s+like)\b',
+    r'\bI\'?(?:ll|will|can|could)\s+get\s+(?:you|u)\s+(?:that|the)\s+(?:phone|game|item|thing)\s+(?:you\s+wanted|you\s+like)\b',
+
+    # ----------------------------------------------------------------
+    # Conditional / transactional framing
+    # ----------------------------------------------------------------
+    r'\bif\s+you\s+(?:do\s+this|send\s+me|share|help\s+me|be\s+nice)\s+I\'?(?:ll|will)\s+(?:give|buy|send|pay|get)\b',
+    r'\bI\'?(?:ll|will)\s+(?:give|buy|send|pay|get)\s+(?:you|u)\s+.{0,30}\s+if\s+you\b',
+    r'\b(?:as\s+a\s+)?(?:reward|payment|thank\s+you\s+gift|bonus)\s+for\s+(?:you|u|doing\s+this|being\s+good)\b',
+    r'\bI\s+(?:want\s+to|wanna)\s+(?:spoil|treat|reward)\s+(?:you|u)\b',
+])
+
+# ---------------------------------------------------------------------------
+# Isolation Patterns
+# Covers: attempts to separate the child from friends, family, or support
+# networks; discrediting people in the child's life.
+# ---------------------------------------------------------------------------
+ISOLATION_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # Discrediting friends
+    # ----------------------------------------------------------------
+    r'\byour\s+(?:friends?|mates?|classmates?|peers?)\s+(?:don\'?t|do\s+not|doesn\'?t|does\s+not)\s+(?:really\s+)?(?:care|like|love|understand|appreciate)\s+(?:you|u)\b',
+    # "Your friends don't really care about you" — with "about"
+    r'\byour\s+(?:friends?|mates?|classmates?|peers?)\s+(?:don\'?t|do\s+not|doesn\'?t|does\s+not)\s+(?:really\s+)?(?:care\s+about|care\s+for)\s+(?:you|u)\b',
+    r'\byour\s+(?:friends?|mates?)\s+(?:are|were)\s+(?:just\s+)?(?:using|taking\s+advantage\s+of|manipulating|lying\s+to)\s+(?:you|u)\b',
+    r'\b(?:those|your)\s+(?:friends?|mates?)\s+(?:are|aren\'?t)\s+(?:real|true|good|genuine)\s+(?:friends?|people)\b',
+    r'\b(?:they|your\s+friends?)\s+(?:don\'?t|do\s+not)\s+(?:really\s+)?(?:care|understand|appreciate)\s+(?:you|u)\b',
+    # "they are just using you" — bare form
+    r'\b(?:they|your\s+(?:friends?|mates?))\s+(?:are|were)\s+(?:just\s+)?(?:using|using\s+you|taking\s+advantage)\b',
+    r'\byou\s+(?:don\'?t|do\s+not)\s+need\s+(?:them|those\s+friends?|anyone\s+else)\b',
+    r'\b(?:stay\s+away|keep\s+away|distance\s+yourself)\s+from\s+(?:them|your\s+friends?|those\s+people)\b',
+    r'\b(?:those|your)\s+(?:friends?|people)\s+(?:are\s+)?(?:bad|toxic|fake|not\s+good)\s+(?:for\s+you|influences?)\b',
+
+    # ----------------------------------------------------------------
+    # Discrediting family
+    # ----------------------------------------------------------------
+    r'\byour\s+(?:family|parents?|mom|dad|mother|father)\s+(?:don\'?t|do\s+not|doesn\'?t|does\s+not)\s+(?:really\s+)?(?:care|love|understand|appreciate|support)\s+(?:you|u)\b',
+    r'\byour\s+(?:family|parents?|mom|dad)\s+(?:don\'?t|do\s+not)\s+(?:deserve|get)\s+(?:you|u)\b',
+    r'\byour\s+(?:family|parents?)\s+(?:are|were)\s+(?:holding\s+you\s+back|controlling\s+you|too\s+strict|toxic)\b',
+
+    # ----------------------------------------------------------------
+    # "You only need me"
+    # ----------------------------------------------------------------
+    r'\byou\s+(?:only\s+)?(?:have|need)\s+me\b',
+    r'\bI\'?m\s+(?:all\s+you\s+need|the\s+only\s+one\s+(?:who\s+)?(?:cares?|loves?|understands?)\s+(?:you|u))\b',
+    # "I'm the only one who truly cares" — bare form
+    r'\bI\'?m\s+the\s+only\s+one\s+(?:who\s+)?(?:truly\s+|really\s+)?(?:cares?|loves?|understands?|gets?\s+(?:you|u))\b',
+    r'\byou\s+(?:don\'?t|do\s+not)\s+need\s+(?:anyone|anybody)\s+(?:else|but\s+me)\b',
+    r'\bI\'?m\s+(?:here|always\s+here)\s+(?:for\s+you|when\s+they\'?re\s+not)\b',
+    r'\b(?:they|everyone\s+else)\s+(?:will\s+)?(?:leave|abandon|hurt|betray)\s+(?:you|u)\b',
+
+    # ----------------------------------------------------------------
+    # Encouraging withdrawal
+    # ----------------------------------------------------------------
+    r'\b(?:stop\s+talking|don\'?t\s+talk)\s+to\s+(?:them|your\s+friends?|those\s+people)\b',
+    r'\b(?:ignore|avoid|cut\s+off|block)\s+(?:them|your\s+friends?|those\s+people|everyone\s+else)\b',
+    r'\byou\s+(?:should|need\s+to)\s+(?:focus\s+on|spend\s+time\s+with)\s+(?:me|us)\s+(?:instead|more)\b',
+])
+
+# ---------------------------------------------------------------------------
+# Desensitization / Normalizing Patterns
+# Covers: attempts to make inappropriate behaviour seem normal, acceptable,
+# or common — a key grooming tactic before escalation.
+# ---------------------------------------------------------------------------
+DESENSITIZATION_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # "It's normal / natural"
+    # ----------------------------------------------------------------
+    r'\bit\'?s\s+(?:totally|completely|perfectly|absolutely|quite|very)?\s*(?:normal|natural|okay|ok|fine|common|acceptable|harmless)\s+(?:to|for)\b',
+    r'\bthis\s+is\s+(?:totally|completely|perfectly|absolutely|quite)?\s*(?:normal|natural|okay|ok|fine|common|acceptable|harmless)\b',
+    r'\b(?:nothing|not)\s+(?:wrong|bad|weird|strange|unusual|inappropriate)\s+(?:with|about)\s+(?:this|it|that|doing\s+this)\b',
+    r'\bthere\'?s\s+nothing\s+(?:wrong|bad|weird|strange|unusual)\s+(?:with|about)\s+(?:this|it|that)\b',
+
+    # ----------------------------------------------------------------
+    # "Everyone does it"
+    # ----------------------------------------------------------------
+    r'\b(?:everyone|everybody|all\s+(?:kids?|teens?|people|boys?|girls?))\s+(?:does?|is\s+doing|has\s+done|talks?\s+about)\s+(?:this|it|these\s+things?)\b',
+    r'\b(?:lots\s+of|many|most)\s+(?:kids?|teens?|people|boys?|girls?)\s+(?:your\s+age\s+)?(?:do|does|have\s+done|talk\s+about)\s+(?:this|it)\b',
+    r'\bkids?\s+(?:your\s+age\s+)?(?:do|does|are\s+doing)\s+(?:this|it)\s+all\s+the\s+time\b',
+
+    # ----------------------------------------------------------------
+    # "It's not a big deal"
+    # ----------------------------------------------------------------
+    r'\bit\'?s\s+(?:not\s+a\s+big\s+deal|no\s+big\s+deal|just\s+a\s+(?:joke|game|bit\s+of\s+fun|laugh))\b',
+    r'\b(?:don\'?t|do\s+not)\s+(?:be|get)\s+(?:embarrassed|shy|scared|worried|upset|weird)\s+(?:about\s+(?:this|it))?\b',
+    # "Don't be embarrassed, it's natural" — bare form
+    r'\b(?:don\'?t|do\s+not)\s+(?:be|feel)\s+(?:embarrassed|ashamed|shy)\b',
+    r'\b(?:don\'?t|do\s+not)\s+(?:overthink|worry\s+about|stress\s+about)\s+(?:this|it)\b',
+    r'\brelax\b.{0,20}\b(?:it\'?s\s+fine|it\'?s\s+okay|no\s+big\s+deal)\b',
+
+    # ----------------------------------------------------------------
+    # "This is what friends do"
+    # ----------------------------------------------------------------
+    r'\bthis\s+is\s+(?:what|how)\s+(?:friends?|people|we|couples?)\s+(?:do|talk|act|behave|communicate)\b',
+    r'\b(?:friends?|people\s+who\s+care)\s+(?:do|share|talk\s+about)\s+(?:this|these\s+things?|stuff\s+like\s+this)\b',
+    r'\bwe\'?re\s+(?:just\s+)?(?:friends?|having\s+fun|playing|joking|messing\s+around)\b',
+
+    # ----------------------------------------------------------------
+    # Minimising / dismissing concern
+    # ----------------------------------------------------------------
+    r'\byou\'?re\s+(?:overreacting|being\s+dramatic|too\s+sensitive|making\s+a\s+big\s+deal)\b',
+    r'\b(?:calm\s+down|chill\s+out|relax)\s*,?\s*(?:it\'?s\s+(?:fine|okay|nothing|just\s+a\s+joke))?\b',
+    r'\bI\s+(?:was\s+)?(?:just|only)\s+(?:joking|kidding|messing\s+around|playing|having\s+fun)\b',
+    r'\b(?:it\'?s\s+)?(?:just\s+a\s+)?(?:joke|game|bit\s+of\s+fun|laugh|banter)\b',
+])
+
+# ---------------------------------------------------------------------------
+# Emotional Exploitation Patterns
+# Covers: emotional dependency, guilt-tripping, self-harm threats, and
+# using the child's empathy to maintain control.
+# ---------------------------------------------------------------------------
+EMOTIONAL_EXPLOITATION_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # Emotional dependency / "you're all I have"
+    # ----------------------------------------------------------------
+    r'\byou\'?re\s+(?:all\s+I\s+have|the\s+only\s+(?:one|person|thing)\s+(?:I\s+have|that\s+matters|in\s+my\s+life))\b',
+    r'\bI\s+(?:have|got)\s+(?:nobody|no\s+one|nothing)\s+(?:else|but\s+you)\b',
+    r'\bwithout\s+(?:you|u)\s+I\s+(?:have|got)\s+(?:nothing|nobody|no\s+one)\b',
+    r'\byou\'?re\s+(?:my\s+)?(?:everything|the\s+only\s+reason\s+I\'?m\s+(?:okay|happy|alive|going))\b',
+
+    # ----------------------------------------------------------------
+    # Guilt-tripping about leaving / stopping contact
+    # ----------------------------------------------------------------
+    r'\bI\s+(?:would\s+be|will\s+be|am|\'m)\s+(?:so\s+)?(?:sad|devastated|heartbroken|destroyed|lost|broken)\s+(?:if\s+you|without\s+you)\b',
+    # "I'll be devastated if you go" — bare form
+    r'\bI\'?(?:ll|will|would)\s+be\s+(?:so\s+)?(?:devastated|heartbroken|destroyed|crushed|lost|broken)\s+if\s+you\b',
+    r'\bif\s+you\s+(?:leave|go|stop\s+talking|block|ignore)\s+(?:me|us)\s+I\s+(?:will|would|might|could)\b',
+    r'\bdon\'?t\s+(?:leave|go|stop\s+talking\s+to\s+me|block\s+me|ignore\s+me)\b',
+    r'\bplease\s+don\'?t\s+(?:leave|go|stop|block|ignore)\s+(?:me|us)\b',
+    r'\byou\'?re\s+(?:the\s+only\s+reason\s+I\'?m\s+(?:okay|happy|still\s+here|alive))\b',
+    r'\bI\s+(?:need|can\'?t\s+live\s+without)\s+(?:you|u)\b',
+
+    # ----------------------------------------------------------------
+    # Self-harm / suicide threats as manipulation
+    # ----------------------------------------------------------------
+    r'\bI\s+(?:might|will|could|would)\s+(?:hurt|harm|kill)\s+myself\s+if\s+(?:you|u)\b',
+    r'\bI\'?(?:ll|will)\s+(?:hurt|harm|kill)\s+myself\s+(?:if\s+you|without\s+you)\b',
+    r'\bI\s+(?:don\'?t\s+want\s+to\s+(?:live|be\s+here)|want\s+to\s+die)\s+(?:if\s+you|without\s+you)\b',
+    r'\bif\s+you\s+(?:leave|go|stop)\s+I\s+(?:don\'?t\s+know\s+what\s+I\'?(?:ll|will)\s+do|might\s+do\s+something\s+stupid)\b',
+
+    # ----------------------------------------------------------------
+    # Emotional blackmail / guilt
+    # ----------------------------------------------------------------
+    r'\bafter\s+everything\s+I\'?(?:ve|have)\s+(?:done|given|shared)\s+for\s+(?:you|u)\b',
+    r'\bI\s+(?:thought|expected)\s+(?:you|u)\s+(?:cared|loved\s+me|were\s+my\s+friend)\b',
+    r'\byou\'?re\s+(?:breaking|hurting|destroying)\s+my\s+(?:heart|feelings?)\b',
+    r'\bhow\s+could\s+you\s+(?:do\s+this|say\s+that|treat\s+me\s+like\s+this)\b',
+    r'\bI\s+(?:gave|shared|did)\s+(?:so\s+much|everything)\s+for\s+(?:you|u)\s+and\s+(?:this|now)\b',
+])
+
+# ---------------------------------------------------------------------------
+# Threats / Coercion Patterns
+# Covers: explicit threats, blackmail, intimidation, and coercive language
+# used to force compliance or silence.
+# ---------------------------------------------------------------------------
+THREATS_COERCION_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # Blackmail — sharing content / information
+    # ----------------------------------------------------------------
+    r'\bI\'?(?:ll|will)\s+(?:share|send|post|upload|show|tell|expose|leak)\s+(?:those|your|the)\s+(?:photos?|pictures?|pics?|videos?|messages?|screenshots?|chats?)\b',
+    r'\bI\'?(?:ll|will)\s+(?:tell|show|inform)\s+(?:everyone|your\s+(?:parents?|friends?|school|teacher))\s+(?:about|what)\b',
+    r'\bI\s+(?:have|got|saved)\s+(?:your\s+)?(?:photos?|pictures?|pics?|videos?|screenshots?|messages?)\s+and\s+I\'?(?:ll|will)\b',
+    r'\bif\s+you\s+(?:don\'?t|do\s+not|refuse|stop)\s+.{0,40}\s+I\'?(?:ll|will)\s+(?:share|post|tell|show|expose|leak)\b',
+
+    # ----------------------------------------------------------------
+    # Direct threats
+    # ----------------------------------------------------------------
+    r'\byou\'?(?:d|will)\s+(?:better|regret\s+(?:this|it)|be\s+sorry)\b',
+    r'\bdon\'?t\s+(?:make\s+me|force\s+me|push\s+me)\b',
+    r'\byou\'?ll\s+regret\s+(?:this|it|not\s+doing\s+this)\b',
+    r'\bI\s+(?:know|found\s+out)\s+where\s+you\s+(?:live|go\s+to\s+school|hang\s+out)\b',
+    r'\bI\s+can\s+(?:find|track|locate)\s+(?:you|u)\b',
+    r'\bwatch\s+(?:yourself|your\s+back)\b',
+
+    # ----------------------------------------------------------------
+    # Reputation threats
+    # ----------------------------------------------------------------
+    r'\bI\'?(?:ll|will)\s+(?:ruin|destroy|damage)\s+(?:your|ur)\s+(?:reputation|life|friendships?|relationships?)\b',
+    r'\bI\'?(?:ll|will)\s+(?:make\s+sure\s+)?(?:everyone|your\s+(?:friends?|school|parents?))\s+(?:knows?|finds?\s+out|hears?)\b',
+    r'\bI\'?(?:ll|will)\s+(?:spread|tell)\s+(?:rumors?|lies?|stories?)\s+about\s+(?:you|u)\b',
+
+    # ----------------------------------------------------------------
+    # Compliance demands
+    # ----------------------------------------------------------------
+    r'\byou\s+(?:have\s+to|must|need\s+to|better)\s+(?:do\s+(?:this|it|what\s+I\s+say)|send|share|comply)\b',
+    r'\bdo\s+(?:it|this|what\s+I\s+say)\s+or\s+(?:else|I\'?(?:ll|will))\b',
+    r'\bno\s+(?:choice|option|way\s+out)\b',
+    r'\byou\s+(?:can\'?t|cannot)\s+(?:say\s+no|refuse|stop\s+me|escape)\b',
+])
+
+# ---------------------------------------------------------------------------
+# Gaming / Platform Luring Patterns
+# Covers: using online games, gaming platforms, or social apps to initiate
+# contact, build rapport, or move to private/unmonitored channels.
+# ---------------------------------------------------------------------------
+GAMING_LURING_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # Gaming platform contact requests
+    # ----------------------------------------------------------------
+    r'\b(?:add|friend|follow)\s+me\s+(?:on|in)\s+(?:roblox|fortnite|minecraft|among\s+us|valorant|apex|cod|call\s+of\s+duty|gta|pubg|league\s+of\s+legends|lol|overwatch|fifa|nba\s+2k|warzone)\b',
+    r'\bwhat\'?s\s+(?:your|ur)\s+(?:roblox|fortnite|minecraft|steam|epic\s+games?|psn|xbox|gamertag|gamer\s+tag|gaming)\s+(?:username|user\s*name|id|name|handle|tag)?\b',
+    r'\b(?:let\'?s|can\s+we|want\s+to|wanna)\s+(?:play|game|game\s+together)\s+(?:on|in)?\s*(?:roblox|fortnite|minecraft|among\s+us|valorant|apex|cod|gta|pubg|overwatch)\b',
+    # "Let's play together on Roblox" — bare form (play + platform)
+    r'\b(?:let\'?s|can\s+we|want\s+to|wanna)\s+play\s+(?:together\s+)?(?:on\s+)?(?:roblox|fortnite|minecraft|among\s+us|valorant|apex|cod|gta|pubg|overwatch|a\s+game)\b',
+    r'\b(?:join|come\s+to)\s+(?:my|our)\s+(?:server|game|lobby|world|realm|party|squad|team)\b',
+    r'\b(?:private|secret)\s+(?:server|game|lobby|world|realm|channel)\b',
+
+    # ----------------------------------------------------------------
+    # Moving to private / unmonitored channels
+    # ----------------------------------------------------------------
+    r'\b(?:let\'?s|can\s+we|switch\s+to|move\s+to|talk\s+on|chat\s+on)\s+(?:discord|telegram|signal|whatsapp|kik|snapchat|instagram\s+dms?|twitter\s+dms?)\b',
+    r'\b(?:switch|move|go)\s+(?:to|over\s+to)\s+(?:dms?|direct\s+messages?|private\s+messages?|pms?)\b',
+    r'\b(?:let\'?s|can\s+we)\s+(?:talk|chat|message)\s+(?:somewhere\s+(?:else|more\s+private)|privately|in\s+private|on\s+another\s+app)\b',
+    r'\b(?:this\s+app|here)\s+(?:isn\'?t|is\s+not)\s+(?:safe|private|secure|good)\s+(?:to\s+talk|for\s+us)\b',
+    r'\b(?:they|people)\s+(?:can|could|might)\s+(?:see|read|monitor|track)\s+(?:this|our\s+messages?|what\s+we\s+say)\b',
+
+    # ----------------------------------------------------------------
+    # Gaming as a pretext for meeting
+    # ----------------------------------------------------------------
+    r'\bwe\s+(?:could|should|can)\s+(?:play|game)\s+(?:together|in\s+person|at\s+my\s+place|at\s+your\s+place)\b',
+    r'\bI\'?(?:ll|will)\s+(?:teach|show|help)\s+(?:you|u)\s+(?:how\s+to\s+play|get\s+better|level\s+up|win)\b',
+    r'\bcome\s+(?:over|to\s+my\s+place)\s+(?:and\s+we\s+can\s+)?(?:play|game|hang\s+out)\b',
+])
+
+# ---------------------------------------------------------------------------
+# Age Deception Patterns
+# Covers: misrepresenting age, minimising age gaps, or using age-related
+# language to appear non-threatening or peer-like.
+# ---------------------------------------------------------------------------
+AGE_DECEPTION_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # Claiming to be the same age / young
+    # ----------------------------------------------------------------
+    r'\bI\'?m\s+(?:actually|also|only|just)\s+\d{1,2}\b',
+    r'\bI\'?m\s+(?:the\s+same\s+age|your\s+age|close\s+to\s+your\s+age)\b',
+    r'\bI\'?m\s+(?:only\s+)?(?:a\s+few\s+years?|not\s+much)\s+older\s+than\s+(?:you|u)\b',
+    r'\bdon\'?t\s+worry\s+I\'?m\s+(?:young|not\s+that\s+old|close\s+to\s+your\s+age)\b',
+    r'\bwe\'?re\s+(?:basically|almost|practically)\s+the\s+same\s+age\b',
+    r'\bI\s+(?:look|seem|act)\s+(?:young|younger\s+than\s+I\s+am|your\s+age)\b',
+
+    # ----------------------------------------------------------------
+    # Minimising age gap / "age doesn't matter"
+    # ----------------------------------------------------------------
+    r'\bage\s+(?:is\s+just\s+a\s+number|doesn\'?t\s+matter|shouldn\'?t\s+matter|isn\'?t\s+important)\b',
+    r'\b(?:age\s+gap|age\s+difference)\s+(?:doesn\'?t|don\'?t|shouldn\'?t)\s+(?:matter|bother|stop\s+us)\b',
+    r'\bwhat\s+(?:does|do)\s+(?:age|numbers?)\s+(?:matter|have\s+to\s+do\s+with\s+(?:it|this|us))\b',
+    r'\b(?:it\'?s\s+)?(?:just\s+a\s+number|only\s+a\s+number)\b',
+
+    # ----------------------------------------------------------------
+    # Flattering maturity to lower guard
+    # ----------------------------------------------------------------
+    r'\byou\'?re\s+(?:so\s+)?(?:mature|grown\s+up|wise|smart)\s+for\s+(?:your\s+age|someone\s+your\s+age)\b',
+    r'\byou\s+(?:seem|act|sound|look)\s+(?:so\s+)?(?:mature|older|grown\s+up)\s+(?:for\s+your\s+age|than\s+you\s+are)\b',
+    r'\byou\'?re\s+(?:not\s+like\s+other\s+kids?|more\s+mature\s+than\s+most)\b',
+    r'\byou\s+(?:think|talk|act)\s+like\s+(?:an\s+adult|someone\s+much\s+older)\b',
+
+    # ----------------------------------------------------------------
+    # Asking about / probing age
+    # ----------------------------------------------------------------
+    r'\b(?:does\s+(?:age|it)\s+matter\s+to\s+you|do\s+you\s+care\s+about\s+(?:age|how\s+old\s+I\s+am))\b',
+    r'\bwould\s+(?:you|u)\s+(?:still\s+)?(?:talk|chat|be\s+friends?|like\s+me)\s+if\s+I\s+(?:was|were|am)\s+older\b',
+    r'\bdoes\s+(?:my\s+age|how\s+old\s+I\s+am)\s+(?:bother|matter|change\s+things?)\b',
+])
+
+# ---------------------------------------------------------------------------
+# Personal Information (PII) Patterns
+# Covers: phone numbers, email addresses, social media handles/usernames,
+# real names, age/date-of-birth, and other personal identifiers.
+# ---------------------------------------------------------------------------
+PERSONAL_INFORMATION_PATTERNS = compile_patterns([
+    # ----------------------------------------------------------------
+    # Phone number — requests
+    # ----------------------------------------------------------------
+    r'\b(?:what\'?s|give\s+me|send\s+me|share|tell\s+me)\s+(?:your|ur)\s+(?:phone|cell|mobile|contact)\s+(?:number|num|no\.?|#)\b',
+    r'\b(?:your|ur)\s+(?:phone|cell|mobile|contact)\s+(?:number|num|no\.?|#)\b',
+    r'\bwhat\'?s\s+(?:your|ur)\s+(?:number|num|no\.?)\b',
+    r'\b(?:can\s+I|could\s+I|may\s+I)\s+(?:have|get)\s+(?:your|ur)\s+(?:number|phone|cell|mobile)\b',
+    r'\b(?:give|send|share|drop)\s+(?:me\s+)?(?:your|ur)\s+(?:number|digits|phone|cell|mobile)\b',
+    r'\b(?:text|call|ring|WhatsApp|whatsapp|telegram|signal)\s+me\s+(?:on|at)?\s*(?:your|ur)?\s*(?:number|phone)?\b',
+    r'\b(?:text|call|ring)\s+me\b',
+    r'\bmy\s+(?:number|phone|cell|mobile)\s+is\b',
+
+    # ----------------------------------------------------------------
+    # Phone number — actual number patterns (spoken/typed)
+    # ----------------------------------------------------------------
+    # International format: +1 (555) 123-4567 / +44 7911 123456
+    r'\+\d{1,3}[\s\-.]?\(?\d{1,4}\)?[\s\-.]?\d{3,5}[\s\-.]?\d{3,5}',
+    # US/CA: (555) 123-4567 or 555-123-4567 or 555.123.4567
+    r'\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}\b',
+    # Compact 10-digit: 5551234567
+    r'\b\d{10}\b',
+    # Spoken-style: "my number is 9876543210"
+    r'\b(?:number|phone|cell|mobile)\s+(?:is|:)\s*[\d\s\-\.\(\)]{7,15}\b',
+
+    # ----------------------------------------------------------------
+    # Email address — requests
+    # ----------------------------------------------------------------
+    r'\b(?:what\'?s|give\s+me|send\s+me|share|tell\s+me)\s+(?:your|ur)\s+(?:email|e-mail|mail|gmail|yahoo|hotmail|outlook)\b',
+    r'\b(?:your|ur)\s+(?:email|e-mail|mail)\s+(?:address|id|account)?\b',
+    r'\b(?:email|e-mail|mail)\s+me\b',
+    r'\b(?:send|drop|share)\s+(?:me\s+)?(?:your|ur)\s+(?:email|e-mail|mail)\b',
+
+    # ----------------------------------------------------------------
+    # Email address — actual address pattern
+    # ----------------------------------------------------------------
+    r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b',
+
+    # ----------------------------------------------------------------
+    # Social media handles / usernames — requests
+    # ----------------------------------------------------------------
+    r'\b(?:what\'?s|give\s+me|send\s+me|share|tell\s+me)\s+(?:your|ur)\s+(?:instagram|insta|snapchat|snap|tiktok|twitter|facebook|fb|discord|telegram|whatsapp|kik|wechat|line|viber)\s*(?:handle|username|user\s*name|id|account|@|name)?\b',
+    r'\b(?:your|ur)\s+(?:instagram|insta|snapchat|snap|tiktok|twitter|facebook|fb|discord|telegram|whatsapp|kik|wechat|line|viber)\s*(?:handle|username|user\s*name|id|account|@|name)?\b',
+    r'\b(?:add|follow|dm|message|contact)\s+me\s+(?:on|at)\s+(?:instagram|insta|snapchat|snap|tiktok|twitter|facebook|fb|discord|telegram|whatsapp|kik|wechat|line|viber)\b',
+    r'\b(?:find|search|look\s+up)\s+(?:me|you)\s+on\s+(?:instagram|insta|snapchat|snap|tiktok|twitter|facebook|fb|discord|telegram|whatsapp|kik|wechat|line|viber)\b',
+    r'\b(?:my|your|ur)\s+(?:snap|insta|discord|kik|tiktok|twitter)\s+(?:is|:)\b',
+    # "@username" handle pattern
+    r'(?<!\w)@[A-Za-z0-9_\.]{2,30}\b',
+
+    # ----------------------------------------------------------------
+    # Real name — requests
+    # ----------------------------------------------------------------
+    r'\bwhat\'?s\s+(?:your|ur)\s+(?:real|full|actual|last|first|given|family|surname)\s+name\b',
+    r'\b(?:tell\s+me|give\s+me|share)\s+(?:your|ur)\s+(?:real|full|actual|last|first|given|family|surname)\s+name\b',
+    r'\bwhat\'?s\s+(?:your|ur)\s+(?:real\s+name|full\s+name|last\s+name|surname|family\s+name)\b',
+    r'\b(?:real|full|actual)\s+name\b',
+
+    # ----------------------------------------------------------------
+    # Age / date of birth — requests
+    # ----------------------------------------------------------------
+    r'\bhow\s+old\s+are\s+you\b',
+    r'\bwhat\'?s\s+(?:your|ur)\s+age\b',
+    r'\b(?:your|ur)\s+(?:age|dob|date\s+of\s+birth|birthday|birth\s+date)\b',
+    r'\bwhen\s+(?:is|was)\s+(?:your|ur)\s+(?:birthday|birth\s+date|dob)\b',
+    r'\bwhat\s+(?:year|month|day)\s+(?:were|was)\s+you\s+born\b',
+    r'\b(?:are\s+you|you\'?re)\s+(?:\d{1,2}|under\s+\d{1,2}|over\s+\d{1,2})\s*(?:years?\s+old)?\b',
+    r'\b(?:tell\s+me|share)\s+(?:your|ur)\s+(?:age|birthday|dob)\b',
+
+    # ----------------------------------------------------------------
+    # Password / PIN — requests (high-risk PII)
+    # ----------------------------------------------------------------
+    r'\b(?:what\'?s|give\s+me|send\s+me|share|tell\s+me)\s+(?:your|ur)\s+(?:password|passcode|pin|pass|login|credentials)\b',
+    r'\b(?:your|ur)\s+(?:password|passcode|pin|pass|login|credentials)\b',
+
+    # ----------------------------------------------------------------
+    # ID numbers — national ID, SSN, passport
+    # ----------------------------------------------------------------
+    r'\b(?:social\s+security|ssn|national\s+id|passport|id\s+number|aadhar|aadhaar|pan\s+card)\s*(?:number|no\.?|#)?\b',
+    r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b',  # SSN pattern: 123-45-6789
+
+    # ----------------------------------------------------------------
+    # Personal photo / selfie requests (PII-adjacent)
+    # ----------------------------------------------------------------
+    r'\b(?:send|share|post|upload)\s+(?:me\s+)?(?:a\s+)?(?:selfie|photo\s+of\s+yourself|picture\s+of\s+yourself|pic\s+of\s+yourself|photo\s+of\s+your\s+face|pic\s+of\s+your\s+face)\b',
+    r'\bwhat\s+do\s+you\s+look\s+like\b',
+    r'\b(?:show|send)\s+(?:me\s+)?(?:your|ur)\s+(?:face|photo|pic|picture|selfie)\b',
+])
+
+
 # Compile all patterns into main dictionary
-PATTERNS: Dict[str, List[Pattern]] = {
-    "parent_monitoring":     PARENT_MONITORING_PATTERNS,
+PATTERNS: Dict[str, List[Pattern]] = {    "parent_monitoring":     PARENT_MONITORING_PATTERNS,
     "secrecy":               SECRECY_PATTERNS,
     "trust_building":        TRUST_BUILDING_PATTERNS,
     "relationship_building": RELATIONSHIP_BUILDING_PATTERNS,
@@ -796,6 +1249,14 @@ PATTERNS: Dict[str, List[Pattern]] = {
     "routine":               ROUTINE_PATTERNS,
     "explicit_content":      EXPLICIT_CONTENT_PATTERNS,
     "bad_language":          BAD_LANGUAGE_PATTERNS,
+    "personal_information":  PERSONAL_INFORMATION_PATTERNS,
+    "gift_bribery":          GIFT_BRIBERY_PATTERNS,
+    "isolation":             ISOLATION_PATTERNS,
+    "desensitization":       DESENSITIZATION_PATTERNS,
+    "emotional_exploitation": EMOTIONAL_EXPLOITATION_PATTERNS,
+    "threats_coercion":      THREATS_COERCION_PATTERNS,
+    "gaming_luring":         GAMING_LURING_PATTERNS,
+    "age_deception":         AGE_DECEPTION_PATTERNS,
 }
 
 

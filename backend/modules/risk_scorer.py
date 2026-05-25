@@ -74,6 +74,14 @@ class WeightedRiskScorer:
         "relationship_building":  5,
         "explicit_content":      25,   # highest weight — direct harm signal
         "bad_language":           8,
+        "personal_information":  18,   # high-risk — PII disclosure/solicitation
+        "gift_bribery":          12,   # bribery/grooming incentive
+        "isolation":             16,   # isolating child from support network
+        "desensitization":       14,   # normalising inappropriate behaviour
+        "emotional_exploitation": 18,  # guilt/self-harm threats
+        "threats_coercion":      22,   # blackmail/explicit threats
+        "gaming_luring":         10,   # platform-based luring
+        "age_deception":         14,   # misrepresenting age
     }
 
     RISK_LEVELS: Dict[str, tuple] = {
