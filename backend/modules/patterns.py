@@ -528,10 +528,11 @@ MEETING_PATTERNS = compile_patterns([
     r'\bwhen\s+(?:are|can)\s+(?:we|you)\s+(?:meet(?:ing)?|hang(?:ing)?\s+out|get(?:ting)?\s+together)\b',
 
     # ----------------------------------------------------------------
-    # "hang out" — bare and prefixed forms
+    # "hang out" — bare and prefixed forms (physical meeting context)
     # ----------------------------------------------------------------
-    # "hang out" — bare phrase anchor
-    r'\bhang\s+out\b',
+    # "hang out" only when paired with physical/in-person context
+    r'\bhang\s+out\s+(?:in\s+person|irl|face\s+to\s+face|sometime|someday|soon|later|with\s+me|together)\b',
+    r'\bhang\s+out\s+(?:at|near|outside|by)\b',
     # "we should/could hang out"
     r'\b(?:we|you\s+and\s+I)\s+(?:should|could|can|will|would)\s+hang\s+out\b',
 
@@ -981,7 +982,9 @@ DESENSITIZATION_PATTERNS = compile_patterns([
     r'\byou\'?re\s+(?:overreacting|being\s+dramatic|too\s+sensitive|making\s+a\s+big\s+deal)\b',
     r'\b(?:calm\s+down|chill\s+out|relax)\s*,?\s*(?:it\'?s\s+(?:fine|okay|nothing|just\s+a\s+joke))?\b',
     r'\bI\s+(?:was\s+)?(?:just|only)\s+(?:joking|kidding|messing\s+around|playing|having\s+fun)\b',
-    r'\b(?:it\'?s\s+)?(?:just\s+a\s+)?(?:joke|game|bit\s+of\s+fun|laugh|banter)\b',
+    # "just a joke/bit of fun" — must have "just a" or "it's" prefix to avoid matching standalone "game"
+    r'\b(?:it\'?s\s+)?just\s+a\s+(?:joke|bit\s+of\s+fun|laugh|banter)\b',
+    r'\bit\'?s\s+(?:just\s+a\s+)?(?:joke|bit\s+of\s+fun|laugh|banter)\b',
 ])
 
 # ---------------------------------------------------------------------------
@@ -1177,7 +1180,8 @@ PERSONAL_INFORMATION_PATTERNS = compile_patterns([
     # ----------------------------------------------------------------
     r'\b(?:what\'?s|give\s+me|send\s+me|share|tell\s+me)\s+(?:your|ur)\s+(?:email|e-mail|mail|gmail|yahoo|hotmail|outlook)\b',
     r'\b(?:your|ur)\s+(?:email|e-mail|mail)\s+(?:address|id|account)?\b',
-    r'\b(?:email|e-mail|mail)\s+me\b',
+    # "email me" only when asking someone to contact the speaker privately (not institutional)
+    r'\b(?:you\s+can\s+)?(?:always\s+)?email\s+me\s+(?:at|on|directly|privately|anytime|whenever)\b',
     r'\b(?:send|drop|share)\s+(?:me\s+)?(?:your|ur)\s+(?:email|e-mail|mail)\b',
 
     # ----------------------------------------------------------------

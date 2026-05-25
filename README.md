@@ -103,10 +103,12 @@ AuraSafety/
 │   ├── config.py                   # Paths, DB URL, SMTP, S3, MongoDB config
 │   ├── requirements.txt
 │   ├── test_pipeline.py            # Interactive CLI pipeline tester
+│   ├── test_email.py               # 4-step SMTP integration test
+│   ├── debug_env.py                # Low-level SMTP credential debugger
 │   ├── .env.example                # Environment variable template
 │   │
 │   ├── api/
-│   │   └── audio_analysis_routes.py    # Versioned router /api/v1/*
+│   │   └── audio_analysis_routes.py    # Versioned router /api/v1/* (synchronous, Pydantic)
 │   ├── services/
 │   │   └── audio_safety_service.py     # Async pipeline orchestration
 │   ├── schemas/
@@ -127,7 +129,7 @@ AuraSafety/
 │   │   ├── report_generator.py     # PDF report generation
 │   │   ├── transcriber.py          # Faster-Whisper transcription
 │   │   ├── evidence_extractor.py   # Evidence list extraction
-│   │   ├── stats.py                # Statistics generation
+│   │   ├── stats.py                # Statistics + timeline + ML agreement
 │   │   ├── chatbot.py              # RAG chatbot (ChromaDB + Ollama)
 │   │   ├── email_notifier.py       # SMTP alert + summary HTML emails
 │   │   └── s3_storage.py           # AWS S3 upload / presign / delete
@@ -137,20 +139,28 @@ AuraSafety/
 │   │   ├── models.py               # AudioAnalysis ORM model
 │   │   └── mongo.py                # MongoDB client — 7-collection schema
 │   │
-│   └── examples/
-│       ├── test_script_bad.txt     # CRITICAL — all categories triggered
-│       ├── test_script_medium.txt  # MODERATE — ambiguous online chat
-│       ├── test_script_good.txt    # LOW — safe classroom exchange
-│       └── run_test_scripts.py     # Pipeline test runner
+│   ├── examples/
+│   │   ├── test_script_bad.txt     # CRITICAL — all categories triggered
+│   │   ├── test_script_medium.txt  # MODERATE — ambiguous online chat
+│   │   ├── test_script_good.txt    # LOW — safe classroom exchange
+│   │   └── run_test_scripts.py     # Pipeline test runner
+│   │
+│   └── (auto-created on first run, git-ignored)
+│       ├── uploads/                # Uploaded audio files
+│       ├── reports/                # Generated PDF reports
+│       ├── vectors/                # ChromaDB persistent vector store
+│       ├── analysis.db             # SQLite database
+│       └── logs/app.log            # Application log (UTF-8, stdout + file)
 │
 └── frontend/                       # React 19 + Vite dashboard
     ├── src/
     │   ├── pages/
-    │   │   ├── Dashboard.jsx       # Upload + analysis history
-    │   │   ├── Report.jsx          # Risk ring, findings, evidence, analytics
-    │   │   └── Upload.jsx          # File upload with progress
+    │   │   ├── Dashboard.jsx       # History table — search, sort, stat cards
+    │   │   ├── Report.jsx          # 6-tab report — Overview, Findings, Evidence,
+    │   │   │                       #   Timeline, Analytics, Raw Data + Chatbot sidebar
+    │   │   └── Upload.jsx          # Drag-and-drop upload with progress bar
     │   ├── components/
-    │   │   └── Chatbot.jsx         # AI chatbot sidebar
+    │   │   └── Chatbot.jsx         # AI chatbot sidebar (RAG)
     │   └── api.js                  # Axios client — all API calls
     └── vite.config.js              # Dev proxy /api/v1/* → :8000
 ```
@@ -312,7 +322,7 @@ Copy `backend/.env.example` to `backend/.env`. All three integrations are option
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-16-char-app-password
+SMTP_PASSWORD=your-16-char-app-password   # Gmail: use an App Password, not your account password
 SMTP_FROM_NAME=AuraSafety
 ALERT_RECIPIENTS=analyst@yourorg.com,supervisor@yourorg.com
 ALERT_SEVERITY=High          # High or Critical — threshold for auto-alerts
@@ -326,8 +336,10 @@ MONGO_DB_NAME=audio_safety_db
 AWS_ACCESS_KEY_ID=your-access-key-id
 AWS_SECRET_ACCESS_KEY=your-secret-access-key
 AWS_REGION=us-east-1
-S3_BUCKET=your-bucket-name
+S3_BUCKET_NAME=your-bucket-name   # note: S3_BUCKET_NAME (not S3_BUCKET)
 ```
+
+> **Gmail tip:** Generate a 16-character App Password at https://myaccount.google.com/apppasswords — do not use your account password. 2FA must be enabled on the Google account first.
 
 ---
 
@@ -336,6 +348,23 @@ S3_BUCKET=your-bucket-name
 ### SQLite (`analysis.db`)
 
 Primary operational store — every analysis result is written here. Created automatically on first run.
+
+```
+audio_analysis
+├── id             INTEGER  PRIMARY KEY AUTOINCREMENT
+├── filename       TEXT
+├── transcript     TEXT
+├── findings       TEXT     JSON array of grouped findings
+├── evidence       TEXT     JSON array of evidence items
+├── stats          TEXT     JSON stats object
+├── summary        TEXT     Rule-based summary
+├── llm_summary    TEXT     Ollama LLM summary (or rule summary if Ollama unavailable)
+├── severity       TEXT     Safe / Low / Moderate / High / Critical
+├── risk_score     REAL     0.0 – 100.0
+├── pdf_path       TEXT     Local path to generated PDF
+├── status         TEXT     PENDING / PROCESSING / COMPLETED / FAILED
+└── error_message  TEXT     Populated only on FAILED status
+```
 
 ### MongoDB (7 collections)
 
@@ -378,19 +407,22 @@ Two email types are supported, both rendered as dark-themed HTML with a risk sco
 
 ## API Reference
 
+The app exposes two route sets. The root routes (`/analyze`, `/report/…`, etc.) run analysis as a **background task** and include MongoDB, S3, and email. The versioned routes (`/api/v1/…`) are used by the frontend and run analysis **synchronously** with Pydantic-validated responses and pagination on `/history`.
+
 ### Core
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | S3 + MongoDB + service health |
-| `POST` | `/analyze` | Upload audio, start background analysis |
-| `GET` | `/report/{id}/status` | Poll status: `PROCESSING` / `COMPLETED` / `FAILED` |
-| `GET` | `/history` | All reports — id, filename, severity, risk_score |
+| `GET` | `/health` | S3 + MongoDB + service health — returns `{status, service, s3, mongodb}` |
+| `POST` | `/analyze` | Upload audio — returns immediately, runs pipeline in background |
+| `GET` | `/report/{id}/status` | Poll status: `PROCESSING` / `COMPLETED` / `FAILED` + `error_message` |
+| `GET` | `/history` | All reports — `id`, `filename`, `severity`, `risk_score` |
 | `GET` | `/report/{id}` | Full report — transcript, findings, evidence, stats, summaries |
-| `GET` | `/report/{id}/evidence` | Evidence list only |
-| `GET` | `/report/{id}/stats` | Statistics only |
+| `GET` | `/report/{id}/evidence` | Evidence list with `severity`, `risk_score`, `context_type`, `speaker` |
+| `GET` | `/report/{id}/stats` | Full stats object — see Stats Object below |
 | `GET` | `/report/{id}/pdf` | Download PDF report |
-| `POST` | `/chat` | RAG chatbot — ask a question about a report |
+| `DELETE` | `/api/v1/report/{id}` | Delete report record and associated PDF file |
+| `POST` | `/chat` | RAG chatbot — returns `{answer, sources, confidence}` |
 
 ### Notifications
 
@@ -399,27 +431,52 @@ Two email types are supported, both rendered as dark-themed HTML with a risk sco
 | `POST` | `/notify/alert/{id}` | Send (or re-send) a red-alert email |
 | `POST` | `/notify/summary/{id}` | Send a full analysis summary email |
 
-Both accept `{"recipients": ["email@example.com"]}` to override `ALERT_RECIPIENTS`.
+Both accept `{"recipients": ["email@example.com"]}` to override `ALERT_RECIPIENTS`. Both return `{"success": bool, "message": str, "recipients": [...]}` and log to MongoDB `audit_logs`.
 
 ### Analytics
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/analytics/summary` | Cross-report aggregation — severity distribution, risk histogram, top categories, ML agreement, confidence histogram |
+| `GET` | `/analytics/summary` | Cross-report aggregation — severity distribution, risk histogram, top categories, ML agreement, confidence histogram, status distribution |
+
+### Stats Object
+
+`GET /report/{id}/stats` returns:
+
+```json
+{
+  "word_count": 312,
+  "character_count": 1840,
+  "finding_count": 8,
+  "unique_categories": 5,
+  "categories": { "secrecy": 2, "meeting": 1 },
+  "severity_distribution": { "critical": 2, "high": 3 },
+  "context_type_distribution": { "GROOMING": 4, "NEUTRAL": 2 },
+  "speaker_distribution": { "Speaker A": 5, "Speaker B": 3 },
+  "confidence_stats": { "average": 0.82, "maximum": 0.97, "minimum": 0.61 },
+  "confidence_histogram": { "0-25": 0, "25-50": 1, "50-75": 3, "75-100": 4 },
+  "ml_stats": { "total_with_ml": 8, "agreed": 6, "disagreed": 2, "agreement_rate": 0.75 },
+  "findings_timeline": [{ "timestamp": 4.0, "confidence": 0.91, "category": "secrecy", "severity": "critical" }],
+  "high_confidence_count": 5
+}
+```
 
 ### Examples
 
 ```bash
 # Upload and analyze
 curl -X POST http://localhost:8000/analyze -F "file=@conversation.mp3"
-# → {"id": 12, "status": "PROCESSING", ...}
+# → {"id": 12, "status": "PROCESSING", "message": "Analysis started in background"}
 
 # Poll until complete
 curl http://localhost:8000/report/12/status
-# → {"id": 12, "status": "COMPLETED"}
+# → {"id": 12, "status": "COMPLETED", "error_message": null}
 
 # Get full report
 curl http://localhost:8000/report/12
+
+# Get stats only
+curl http://localhost:8000/report/12/stats
 
 # Ask the chatbot
 curl -X POST http://localhost:8000/chat \
@@ -430,6 +487,93 @@ curl -X POST http://localhost:8000/chat \
 curl -X POST http://localhost:8000/notify/alert/12 \
   -H "Content-Type: application/json" \
   -d '{"recipients": ["analyst@example.com"]}'
+
+# Delete a report
+curl -X DELETE http://localhost:8000/api/v1/report/12
+
+# Cross-report analytics
+curl http://localhost:8000/analytics/summary
+```
+
+## Context Classification
+
+Every sentence is classified into one or more `ContextType` values before confidence scoring. The type drives a multiplier — no speaker identity is ever consulted.
+
+| ContextType | Multiplier | Meaning |
+|---|---|---|
+| `ADMINISTRATIVE` | −0.40 | Event logistics, forms, schedules — suppresses false positives |
+| `INFORMATION_GATHERING` | +0.15 | Collecting personal details |
+| `TRUST_BUILDING` | +0.20 | "I care about you", "trust me" |
+| `RELATIONSHIP_BUILDING` | +0.15 | "special connection", "best friends" |
+| `MANIPULATION` | +0.30 | "they won't understand", coercion |
+| `SECRECY` | +0.40 | "don't tell anyone", "our secret" |
+| `ESCALATION` | +0.35 | Private call, move to another platform |
+| `MEETING` | +0.35 | Meet up, in person, hang out |
+| `PERSONAL_INFORMATION` | +0.30 | Address, phone, email, route |
+| `VIDEO_CALL` | +0.25 | Video chat, FaceTime, camera requests |
+| `EXPLICIT_CONTENT` | +0.50 | Sexual language — highest multiplier |
+| `BAD_LANGUAGE` | +0.20 | Profanity, slurs, threats |
+| `NEUTRAL` | 0.00 | No strong signal |
+
+---
+
+## Confidence Scoring
+
+```
+score = pattern_strength
+      + exact_phrase_bonus      (+0.15 if matched text is a known exact phrase)
+      + keyword_bonus           (+0.10 if ≥2 supporting keywords present)
+      + context_multiplier      (from ContextType above, −0.40 to +0.50)
+      − negation_penalty        (up to −0.40, token-scoped within ±5 tokens)
+      − joke_penalty            (up to −0.50, ±2 sentence window)
+
+regex_confidence = clamp(score, 0.0, 1.0)
+
+# ML fusion (25% weight, when enabled)
+fused_confidence = 0.75 × regex_confidence + 0.25 × ml_category_score
+```
+
+---
+
+## ML Classifier
+
+- Model: `typeform/distilbert-base-uncased-mnli` (Zero-Shot NLI via HuggingFace)
+- 13 labels mapped to detection categories
+- Temperature calibration T=1.3 for better-calibrated probabilities
+- Multi-label detection threshold: ≥0.15
+- Agreement/disagreement signal surfaced in each finding under `finding["ml"]`
+- LRU cache: 512 entries — repeated sentences are free after first inference
+- Fused at 25% weight into the final confidence score
+- **Disabled by default** (`enable_ml_classifier=False`) — enable once model is cached (~400 MB download on first run)
+
+---
+
+## Configuration Knobs
+
+Key runtime parameters you can tune without touching the pipeline code:
+
+```python
+# grooming_detector.py — constructor defaults
+GroomingDetector(
+    min_confidence_threshold = 0.15,   # drop findings below this (API default: 0.30)
+    enable_context_analysis  = True,   # apply ContextType multipliers
+    enable_filters           = True,   # apply negation + joke penalties
+    enable_grouping          = True,   # deduplicate via EvidenceGroupingEngine
+    enable_ml_classifier     = False,  # set True once model is cached (~400 MB)
+)
+
+# risk_scorer.py — weight overrides
+WeightedRiskScorer(
+    custom_weights = {"explicit_content": 30, "threats_coercion": 25},
+    enable_diminishing_returns = True,
+)
+
+# audio_safety_service.py — service-level flags
+AudioSafetyService(
+    min_confidence_threshold = 0.30,
+    enable_llm_summary       = True,   # set False to skip Ollama entirely
+    enable_vector_storage    = True,   # set False to skip ChromaDB indexing
+)
 ```
 
 ---
@@ -470,6 +614,85 @@ Audio File
 
 ---
 
+## Frontend
+
+The React 19 dashboard has three routes:
+
+| Route | Page | Description |
+|---|---|---|
+| `/` | Dashboard | Analysis history table with live search, sortable columns (filename, severity, risk score), and 4 stat cards — total analyses, average risk score, critical findings, high findings |
+| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload with real-time progress bar; polls status until complete then redirects to the report |
+| `/report/:id` | Report | Full analysis view — see tabs below |
+
+### Report Page Tabs
+
+| Tab | Contents |
+|---|---|
+| **Overview** | Risk ring (animated 0–100 gauge), severity badge, LLM summary, rule-based summary, category breakdown |
+| **Findings** | Grouped findings with confidence bars, matched text, context type, filter flags (negated / joke), ML label and agreement signal, scoring breakdown |
+| **Evidence Log** | Flat evidence list — timestamp, category badge, severity, speaker label, confidence, context type, base confidence, context multiplier |
+| **Timeline** | Scatter chart of findings over time — x-axis: timestamp, y-axis: confidence, colour-coded by category |
+| **Analytics** | Per-report charts — category distribution (bar), severity distribution (pie), confidence histogram (bar), context type distribution (bar), speaker distribution (bar), ML agreement rate |
+| **Raw Data** | Full JSON dump of the report object — useful for debugging |
+
+The chatbot sidebar is available on the Report page. It sends questions to `POST /chat` and displays the answer with source excerpts.
+
+---
+
+## Utility Scripts
+
+### `test_email.py` — Email Integration Test
+
+Verifies the full SMTP setup in 4 steps without needing a real audio file:
+
+```bash
+cd backend
+python test_email.py
+```
+
+1. **Config check** — validates `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_RECIPIENTS` are set
+2. **SMTP connection** — connects to the server, runs STARTTLS, authenticates
+3. **Alert email** — sends a real red-alert email with mock Critical findings
+4. **Summary email** — sends a real summary email with mock data
+
+Exits with a clear error message and fix instructions if any step fails. Use this before deploying to confirm email works end-to-end.
+
+### `debug_env.py` — SMTP Credential Debugger
+
+Low-level SMTP auth debugger for diagnosing Gmail App Password issues:
+
+```bash
+cd backend
+python debug_env.py
+```
+
+Prints the raw credential values (length, leading/trailing chars, presence of spaces or quotes) and attempts a direct `smtplib` login. Useful when `test_email.py` fails at the authentication step.
+
+### `test_pipeline.py` — Interactive CLI Tester
+
+```bash
+cd backend
+python test_pipeline.py
+```
+
+Runs any sentence or multi-line transcript through the full detection pipeline interactively. Each input prints a 4-section output:
+
+1. **Context classification** — matched ContextType(s) and multiplier
+2. **Filter results** — negation score, joke score, combined penalty
+3. **Per-category findings** — category, confidence, matched text, severity
+4. **Risk breakdown** — weighted score per category, total risk score, risk level
+
+```
+pipeline> keep this between us, nobody needs to know
+pipeline> age is just a number
+pipeline> I'll buy you whatever you want
+pipeline> clear          ← clears the screen
+```
+
+The tester uses a lower confidence threshold (0.15) than the API default (0.30) to surface borderline matches during development.
+
+---
+
 ## Running the Test Scripts
 
 ```bash
@@ -484,29 +707,6 @@ python examples/run_test_scripts.py
 | `test_script_good.txt` | 0 | LOW | Normal classroom exchange — zero findings |
 
 Set `ENABLE_ML = True` in `run_test_scripts.py` to include the ML classifier layer (~400 MB model download on first run).
-
----
-
-## Interactive CLI Tester
-
-Test any sentence through the full pipeline without uploading a file:
-
-```bash
-cd backend
-python test_pipeline.py
-```
-
-```
-pipeline> keep this between us, nobody needs to know
-pipeline> what time does the science exhibition finish?
-pipeline> send me your nudes right now
-pipeline> haha just kidding, lets meet up lol
-pipeline> I'll buy you whatever you want
-pipeline> age is just a number
-pipeline> your friends don't really care about you
-```
-
-Each input prints context classification, filter results, per-category confidence, and the full risk breakdown.
 
 ---
 
