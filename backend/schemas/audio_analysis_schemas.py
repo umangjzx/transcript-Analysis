@@ -255,12 +255,14 @@ class AnalysisResponse(BaseModel):
 
 class HistoryItem(BaseModel):
     """History list item."""
-    
+
     id: int
     filename: str
-    severity: str
-    risk_score: float
-    analyzed_at: Optional[str] = None
+    severity: Optional[str] = None
+    risk_score: Optional[float] = None
+    # created_at is the canonical field; analyzed_at is kept for schema compat
+    created_at: Optional[str] = None
+    analyzed_at: Optional[str] = None  # alias — populated from created_at if present
 
 
 class HistoryResponse(BaseModel):
@@ -272,18 +274,22 @@ class HistoryResponse(BaseModel):
 
 class ReportResponse(BaseModel):
     """Single report response."""
-    
+
     id: int
     filename: str
-    transcript: str
-    findings: List[Finding]
-    evidence: List[Evidence]
-    stats: Statistics
-    summary: str
-    llm_summary: Optional[str]
-    severity: str
-    risk_score: float
-    pdf_path: str
+    transcript: Optional[str] = None
+    findings: List[Any] = []
+    evidence: List[Any] = []
+    stats: Optional[Any] = None
+    summary: Optional[str] = None
+    llm_summary: Optional[str] = None
+    severity: Optional[str] = None
+    risk_score: Optional[float] = None
+    pdf_path: Optional[str] = None
+    created_at: Optional[str] = None
+
+    class Config:
+        extra = "allow"  # forward-compat with any extra fields
 
 
 class EvidenceResponse(BaseModel):

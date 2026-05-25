@@ -4,6 +4,7 @@ import { Shield, Home, UploadCloud, Settings, Bell } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Report from './pages/Report';
+import ErrorBoundary from './components/ErrorBoundary';
 import './App.css';
 
 const Navigation = () => {
@@ -39,11 +40,13 @@ function App() {
       <div className="app-container">
         <Navigation />
         <main className="main-content">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/upload" element={<Upload />} />
-            <Route path="/report/:id" element={<Report />} />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/upload" element={<Upload />} />
+              <Route path="/report/:id" element={<Report />} />
+            </Routes>
+          </ErrorBoundary>
         </main>
       </div>
     </BrowserRouter>

@@ -92,24 +92,31 @@ Detected Categories:
 
     summary += "\n\nRisk Assessment:\n"
 
-    if severity == "CRITICAL":
+    sev_lower = (severity or "").lower()
 
+    if sev_lower == "critical":
         summary += (
             "Multiple high-risk indicators were detected, "
             "including attempts to gather personal information, "
             "secrecy-related language, private communication "
-            "requests, or meeting arrangements."
+            "requests, or meeting arrangements. Urgent intervention required."
         )
-
-    elif severity == "MEDIUM":
-
+    elif sev_lower == "high":
+        summary += (
+            "Significant grooming patterns detected. "
+            "Immediate review by a qualified analyst is recommended."
+        )
+    elif sev_lower == "moderate":
         summary += (
             "Several potentially concerning indicators were "
             "identified. Manual review is recommended."
         )
-
+    elif sev_lower == "low":
+        summary += (
+            "Minor concerns detected. The conversation may warrant monitoring "
+            "but no immediate action is required."
+        )
     else:
-
         summary += (
             "No significant risk indicators were detected "
             "based on current rules."

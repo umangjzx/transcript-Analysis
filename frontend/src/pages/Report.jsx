@@ -9,9 +9,9 @@ import {
   Download, AlertTriangle, FileText, Activity, ShieldAlert,
   Brain, Clock, ChevronDown, ChevronUp, Code, MessageSquare,
   ArrowLeft, Zap, Eye, TrendingUp, Database, BarChart2, Info, CheckCircle, XCircle,
-  Users, Mail, Bell,
+  Users, Mail, Bell, Trash2, X,
 } from 'lucide-react';
-import { getReport, downloadPdfUrl, sendAlertEmail, sendSummaryEmail } from '../api';
+import { getReport, downloadPdfUrl, sendAlertEmail, sendSummaryEmail, deleteReport } from '../api';
 import Chatbot from '../components/Chatbot';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -35,6 +35,38 @@ const getScoreColor = (score) => {
 const fmtPct = (v) => `${((v || 0) * 100).toFixed(1)}%`;
 const fmtScore = (v) => (v != null ? (v * 100).toFixed(0) : '—');
 const capitalize = (s) => (s || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+// ─── Skeleton loader ────────────────────────────────────────────────────────
+
+const SkeletonBlock = ({ height = 80, style = {} }) => (
+  <div
+    style={{
+      height,
+      borderRadius: 'var(--radius-md)',
+      background: 'linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%)',
+      backgroundSize: '200% 100%',
+      animation: 'shimmer 1.4s infinite',
+      ...style,
+    }}
+  />
+);
+
+const FindingsSkeleton = () => (
+  <div className="findings-debug-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+    {[100, 80, 90, 70, 85].map((h, i) => (
+      <SkeletonBlock key={i} height={h} />
+    ))}
+    <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+  </div>
+);
+
+const EvidenceSkeleton = () => (
+  <div className="evidence-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+    {[110, 90, 100, 80].map((h, i) => (
+      <SkeletonBlock key={i} height={h} />
+    ))}
+  </div>
+);
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
@@ -239,9 +271,38 @@ const Report = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [chatOpen, setChatOpen]   = useState(false);
 
+  // Track which tabs have been visited — show skeleton on first render
+  const [tabsReady, setTabsReady] = useState({ overview: false, findings: false, evidence: false });
+
+  // Mark a tab as ready after its first paint (one animation frame delay)
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (!tabsReady[tab]) {
+      requestAnimationFrame(() =>
+        setTabsReady(prev => ({ ...prev, [tab]: true }))
+      );
+    }
+  };
+
   // Email notification state
   const [emailStatus, setEmailStatus] = useState(null); // null | 'sending' | 'sent' | 'error'
   const [emailMsg, setEmailMsg]       = useState('');
+
+  // Delete state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting]               = useState(false);
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await deleteReport(id);
+      navigate('/', { replace: true });
+    } catch (e) {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+      alert(`Failed to delete report: ${e?.response?.data?.detail || e.message}`);
+    }
+  };
 
   const handleSendAlert = async () => {
     setEmailStatus('sending');
@@ -274,6 +335,10 @@ const Report = () => {
       try {
         const data = await getReport(id);
         setReport(data);
+        // Overview is the default tab — mark it ready after data arrives
+        requestAnimationFrame(() =>
+          setTabsReady(prev => ({ ...prev, overview: true }))
+        );
       } catch (err) {
         console.error('Failed to fetch report', err);
       } finally {
@@ -437,6 +502,19 @@ const Report = () => {
           <button className="btn btn-secondary" onClick={() => setChatOpen(o => !o)}>
             <MessageSquare size={16} /> {chatOpen ? 'Close Chat' : 'Ask AI'}
           </button>
+          <button
+            className="btn"
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--status-high)',
+              color: 'var(--status-high)',
+              display: 'flex', alignItems: 'center', gap: '0.4rem',
+            }}
+            onClick={() => setShowDeleteConfirm(true)}
+            title="Delete this report"
+          >
+            <Trash2 size={15} /> Delete
+          </button>
 
           {/* Email toast */}
           {emailStatus && emailStatus !== 'sending' && (
@@ -476,12 +554,12 @@ const Report = () => {
         <div className="report-content">
           {/* Tab Navigation */}
           <div className="report-tabs glass-panel">
-            <TabButton active={activeTab === 'overview'}  onClick={() => setActiveTab('overview')}  icon={Activity}    label="Overview" />
-            <TabButton active={activeTab === 'findings'}  onClick={() => setActiveTab('findings')}  icon={ShieldAlert} label="Findings Debugger" count={findings.length} />
-            <TabButton active={activeTab === 'evidence'}  onClick={() => setActiveTab('evidence')}  icon={Eye}         label="Evidence Log" count={evidence.length} />
-            <TabButton active={activeTab === 'timeline'}  onClick={() => setActiveTab('timeline')}  icon={Clock}       label="Timeline" count={timeline.length} />
-            <TabButton active={activeTab === 'analytics'} onClick={() => setActiveTab('analytics')} icon={TrendingUp}  label="Analytics" />
-            <TabButton active={activeTab === 'raw'}       onClick={() => setActiveTab('raw')}       icon={Database}    label="Raw Data" />
+            <TabButton active={activeTab === 'overview'}  onClick={() => handleTabChange('overview')}  icon={Activity}    label="Overview" />
+            <TabButton active={activeTab === 'findings'}  onClick={() => handleTabChange('findings')}  icon={ShieldAlert} label="Findings Debugger" count={findings.length} />
+            <TabButton active={activeTab === 'evidence'}  onClick={() => handleTabChange('evidence')}  icon={Eye}         label="Evidence Log" count={evidence.length} />
+            <TabButton active={activeTab === 'timeline'}  onClick={() => handleTabChange('timeline')}  icon={Clock}       label="Timeline" count={timeline.length} />
+            <TabButton active={activeTab === 'analytics'} onClick={() => handleTabChange('analytics')} icon={TrendingUp}  label="Analytics" />
+            <TabButton active={activeTab === 'raw'}       onClick={() => handleTabChange('raw')}       icon={Database}    label="Raw Data" />
           </div>
 
           {/* ─────────────── TAB: OVERVIEW ─────────────── */}
@@ -592,7 +670,9 @@ const Report = () => {
                 <span className="findings-count">{findings.length} findings</span>
                 <span className="findings-hint">Click any finding to expand the full ML and regex breakdown</span>
               </div>
-              {findings.length === 0 ? (
+              {!tabsReady.findings ? (
+                <FindingsSkeleton />
+              ) : findings.length === 0 ? (
                 <div className="empty-state glass-panel">
                   <CheckCircle size={40} style={{ color: 'var(--status-safe)' }} />
                   <p>No concerning findings detected by the pipeline.</p>
@@ -610,7 +690,9 @@ const Report = () => {
           {/* ─────────────── TAB: EVIDENCE LOG ─────────────── */}
           {activeTab === 'evidence' && (
             <div className="tab-content animate-fade-in">
-              {evidence.length === 0 ? (
+              {!tabsReady.evidence ? (
+                <EvidenceSkeleton />
+              ) : evidence.length === 0 ? (
                 <div className="empty-state glass-panel">
                   <CheckCircle size={40} style={{ color: 'var(--status-safe)' }} />
                   <p>No extracted evidence found.</p>

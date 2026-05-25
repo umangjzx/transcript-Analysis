@@ -89,7 +89,7 @@ def _get_client():
 def _get_bucket() -> str:
     from dotenv import dotenv_values
     v = dotenv_values(os.path.join(os.path.dirname(__file__), '..', '.env'))
-    return v.get("S3_BUCKET", "") or os.getenv("S3_BUCKET", "")
+    return v.get("S3_BUCKET_NAME", "") or os.getenv("S3_BUCKET_NAME", "")
 
 
 def _get_region() -> str:

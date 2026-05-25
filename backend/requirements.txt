@@ -11,6 +11,7 @@ SQLAlchemy==2.0.49
 faster-whisper==1.2.1
 ctranslate2==4.7.2
 av==17.0.1
+pyannote.audio==3.3.2
 
 # ── ML / NLP ──────────────────────────────────────────────────────────────────
 transformers==5.9.0
@@ -18,7 +19,7 @@ torch==2.12.0
 tokenizers==0.22.2
 safetensors==0.7.0
 huggingface_hub==1.16.1
-sentence-transformers==5.5.1
+sentence-transformers==3.3.1
 scikit-learn==1.8.0
 spacy==3.8.14
 

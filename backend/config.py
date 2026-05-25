@@ -34,6 +34,35 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "audio_safety_db")
 AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 AWS_REGION            = os.getenv("AWS_REGION", "us-east-1")
-S3_BUCKET             = os.getenv("S3_BUCKET", "")
+S3_BUCKET             = os.getenv("S3_BUCKET_NAME", "")
+
+# ── Speaker Diarization ───────────────────────────────────────────────────────
+# HuggingFace token for pyannote/speaker-diarization-3.1
+# Leave blank to run without diarization.
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+
+# ── ML Classifier ─────────────────────────────────────────────────────────────
+# Set to "true" once the ~400 MB distilbert-mnli model has been downloaded.
+ENABLE_ML_CLASSIFIER = os.getenv("ENABLE_ML_CLASSIFIER", "false").lower() == "true"
+
+# ── Upload limits ─────────────────────────────────────────────────────────────
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Comma-separated list of allowed frontend origins.
+# Default allows the Vite dev server. Change for production.
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173"
+)
+
+# ── Authentication ─────────────────────────────────────────────────────────────
+# Set a strong random string to enable API key auth.
+# Leave blank to disable (local dev only).
+API_KEY = os.getenv("API_KEY", "")
+
+# ── Upload cleanup ─────────────────────────────────────────────────────────────
+# Uploaded audio files older than this many hours are auto-deleted. 0 = disabled.
+UPLOAD_TTL_HOURS = int(os.getenv("UPLOAD_TTL_HOURS", "24"))
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)

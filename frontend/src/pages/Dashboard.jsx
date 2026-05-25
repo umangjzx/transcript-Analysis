@@ -7,9 +7,9 @@ import {
 import {
   ShieldAlert, Activity, FileAudio, Search, TrendingUp,
   CheckCircle, AlertTriangle, Clock, ChevronRight, RefreshCw,
-  BarChart2, Brain,
+  BarChart2, Brain, Trash2, X,
 } from 'lucide-react';
-import { getHistory, getAnalyticsSummary } from '../api';
+import { getHistory, getAnalyticsSummary, deleteReport } from '../api';
 
 const getBadgeClass = (severity) => {
   const s = (severity || '').toLowerCase();
@@ -96,7 +96,31 @@ const Dashboard = () => {
   const [search, setSearch]       = useState('');
   const [sortKey, setSortKey]     = useState('id');
   const [sortDir, setSortDir]     = useState('desc');
+  // Delete state
+  const [confirmDelete, setConfirmDelete] = useState(null); // item to confirm
+  const [deleting, setDeleting]           = useState(null); // id being deleted
   const navigate = useNavigate();
+
+  const handleDeleteClick = (e, item) => {
+    e.stopPropagation();
+    setConfirmDelete(item);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!confirmDelete) return;
+    const id = confirmDelete.id;
+    setDeleting(id);
+    setConfirmDelete(null);
+    try {
+      await deleteReport(id);
+      setHistory(prev => prev.filter(h => h.id !== id));
+    } catch (err) {
+      console.error('Delete failed', err);
+      alert(`Failed to delete report #${id}: ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const fetchAll = async () => {
     setLoading(true);
@@ -105,10 +129,12 @@ const Dashboard = () => {
         getHistory(),
         getAnalyticsSummary().catch(() => null),
       ]);
-      setHistory(Array.isArray(histData) ? histData : (histData.reports || []));
+      // getHistory() already normalises to an array in api.js
+      setHistory(Array.isArray(histData) ? histData : (histData?.reports || []));
       setAnalytics(analyticsData);
     } catch (err) {
       console.error('Failed to fetch dashboard data', err);
+      setHistory([]);
     } finally {
       setLoading(false);
     }
@@ -465,20 +491,21 @@ const Dashboard = () => {
                 <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none' }}>File Name <SortIcon col="filename" /></th>
                 <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none' }}>Risk Score <SortIcon col="risk_score" /></th>
                 <th onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none' }}>Severity <SortIcon col="severity" /></th>
+                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date <SortIcon col="created_at" /></th>
                 <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="6" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
+                <tr><td colSpan="7" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
                     <div className="loading-spinner" style={{ width: 32, height: 32 }} />
                     Loading analyses...
                   </div>
                 </td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan="6" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
+                <tr><td colSpan="7" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
                   {search ? `No files matching "${search}"` : 'No analyses yet. Upload an audio file to begin.'}
                 </td></tr>
               ) : filtered.map(item => (
@@ -494,6 +521,11 @@ const Dashboard = () => {
                   </td>
                   <td>
                     <span className={`badge ${getBadgeClass(item.severity)}`}>{item.severity || '—'}</span>
+                  </td>
+                  <td style={{ color: 'var(--text-tertiary)', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+                    {item.created_at
+                      ? new Date(item.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+                      : '—'}
                   </td>
                   <td>
                     {item.status === 'PROCESSING' ? (
@@ -511,13 +543,32 @@ const Dashboard = () => {
                     )}
                   </td>
                   <td>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.82rem' }}
-                      onClick={e => { e.stopPropagation(); navigate(`/report/${item.id}`); }}
-                    >
-                      View <ChevronRight size={14} />
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.82rem' }}
+                        onClick={e => { e.stopPropagation(); navigate(`/report/${item.id}`); }}
+                      >
+                        View <ChevronRight size={14} />
+                      </button>
+                      <button
+                        className="btn btn-icon"
+                        title="Delete report"
+                        disabled={deleting === item.id}
+                        onClick={e => handleDeleteClick(e, item)}
+                        style={{
+                          padding: '0.35rem',
+                          color: deleting === item.id ? 'var(--text-tertiary)' : 'var(--status-high)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: 'var(--radius-sm)',
+                          background: 'transparent',
+                          cursor: deleting === item.id ? 'not-allowed' : 'pointer',
+                          display: 'flex', alignItems: 'center',
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -531,6 +582,95 @@ const Dashboard = () => {
           </div>
         )}
       </div>
+
+      {/* ── Delete confirmation modal ─────────────────────────────────────── */}
+      {confirmDelete && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '1rem',
+          }}
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            className="glass-panel"
+            style={{ maxWidth: 420, width: '100%', padding: '1.75rem', borderRadius: 'var(--radius-lg)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <Trash2 size={20} style={{ color: 'var(--status-high)' }} />
+                <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>
+                  Delete Report
+                </span>
+              </div>
+              <button
+                className="btn-icon"
+                onClick={() => setConfirmDelete(null)}
+                style={{ color: 'var(--text-tertiary)' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+              Are you sure you want to permanently delete this report?
+            </p>
+            <div style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-md)',
+              padding: '0.75rem 1rem',
+              marginBottom: '1.5rem',
+              fontSize: '0.85rem',
+            }}>
+              <div style={{ color: 'var(--text-tertiary)', marginBottom: '0.2rem' }}>
+                #{confirmDelete.id}
+              </div>
+              <div style={{ color: 'var(--text-primary)', fontWeight: 500, wordBreak: 'break-all' }}>
+                {confirmDelete.filename}
+              </div>
+              {confirmDelete.severity && (
+                <span
+                  className={`badge ${getBadgeClass(confirmDelete.severity)}`}
+                  style={{ marginTop: '0.5rem', display: 'inline-block' }}
+                >
+                  {confirmDelete.severity}
+                </span>
+              )}
+            </div>
+            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', marginBottom: '1.5rem' }}>
+              This will delete the database record and the PDF report from disk. This action cannot be undone.
+            </p>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmDelete(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                style={{
+                  background: 'var(--status-high)',
+                  color: '#fff',
+                  border: 'none',
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
+                }}
+                onClick={handleDeleteConfirm}
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

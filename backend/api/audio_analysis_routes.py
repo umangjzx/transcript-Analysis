@@ -7,7 +7,6 @@ logging, validation, and documentation.
 
 import os
 import json
-import shutil
 import logging
 from typing import Optional
 from datetime import datetime
@@ -42,6 +41,12 @@ from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS
 
 # Import chatbot
 from modules.chatbot import answer_question
+
+# Import caching
+from modules.cache import history_cache, report_cache, evidence_cache
+
+# Import auth
+from auth import get_current_user
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -83,11 +88,12 @@ def get_service() -> AudioSafetyService:
 )
 async def health_check():
     """Health check endpoint."""
+    from app import _enable_ml
     return HealthResponse(
         status="healthy",
         service="Audio Safety Analyzer",
         version="2.0.0",
-        timestamp=datetime.now().isoformat()
+        timestamp=datetime.now().isoformat(),
     )
 
 
@@ -114,57 +120,56 @@ async def analyze_audio(
 ):
     """
     Analyze an audio file for grooming patterns.
-    
-    Pipeline:
-    1. Transcription
-    2. Grooming Detection
-    3. Risk Scoring
-    4. Severity Classification
-    5. Summary Generation
-    6. PDF Report Generation
-    7. Database Persistence
-    
-    Supported formats: .mp3, .wav, .m4a, .ogg, .flac
+
+    Supported formats: .mp3, .wav, .m4a, .aac, .ogg
     """
+    import uuid as _uuid
+    from app import MAX_UPLOAD_BYTES
+
     logger.info(f"Received analysis request for file: {file.filename}")
-    
+
     # Validate file extension
-    extension = os.path.splitext(file.filename)[1].lower()
+    extension = os.path.splitext(file.filename or "")[1].lower()
     if extension not in ALLOWED_EXTENSIONS:
-        logger.warning(f"Unsupported file format: {extension}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported audio format: {extension}. Supported: {', '.join(ALLOWED_EXTENSIONS)}"
         )
-    
-    # Save uploaded file
+
+    # Read into memory so we can enforce the size limit
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+        )
+
+    # Use a UUID-based filename on disk to prevent path traversal
+    safe_disk_name = f"{_uuid.uuid4().hex}{extension}"
+    original_filename = file.filename or safe_disk_name
+
     try:
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        filepath = os.path.join(UPLOAD_FOLDER, file.filename)
-        
+        filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
         with open(filepath, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
+            buffer.write(content)
         logger.info(f"File saved to: {filepath}")
-        
     except Exception as e:
         logger.error(f"File save failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save file: {str(e)}"
         )
-    
+
     # Perform analysis
     try:
         result = await service.analyze_audio_file(
             filepath=filepath,
-            filename=file.filename,
+            filename=original_filename,
             db_session=db
         )
-        
-        logger.info(f"Analysis completed successfully for: {file.filename}")
+        logger.info(f"Analysis completed successfully for: {original_filename}")
         return result
-        
     except Exception as e:
         logger.error(f"Analysis failed: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -181,15 +186,26 @@ async def analyze_audio(
     "/history",
     response_model=HistoryResponse,
     summary="Get Analysis History",
-    description="Retrieve list of all analysis reports"
+    description="Retrieve list of all analysis reports (cached)"
 )
 async def get_history(
     db: Session = Depends(get_db),
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    _user = Depends(get_current_user)
 ):
-    """Get list of all analysis reports."""
+    """Get list of all analysis reports with caching."""
     try:
+        # Create cache key
+        cache_key = f"history_{skip}_{limit}"
+        
+        # Try to get from cache
+        cached_result = history_cache.get(cache_key)
+        if cached_result is not None:
+            logger.debug(f"History cache hit")
+            return cached_result
+        
+        # Cache miss — query database
         reports = db.query(AudioAnalysis).offset(skip).limit(limit).all()
         total = db.query(AudioAnalysis).count()
         
@@ -198,12 +214,19 @@ async def get_history(
                 id=report.id,
                 filename=report.filename,
                 severity=report.severity,
-                risk_score=report.risk_score
+                risk_score=report.risk_score,
+                created_at=report.created_at.isoformat() if report.created_at else None,
+                analyzed_at=report.created_at.isoformat() if report.created_at else None,
             )
             for report in reports
         ]
         
-        return HistoryResponse(reports=items, total=total)
+        result = HistoryResponse(reports=items, total=total)
+        
+        # Cache the result
+        history_cache.set(cache_key, result)
+        
+        return result
         
     except Exception as e:
         logger.error(f"Failed to retrieve history: {str(e)}")
@@ -221,17 +244,28 @@ async def get_history(
     "/report/{report_id}",
     response_model=ReportResponse,
     summary="Get Analysis Report",
-    description="Retrieve detailed analysis report by ID",
+    description="Retrieve detailed analysis report by ID (cached)",
     responses={
         404: {"model": ErrorResponse, "description": "Report not found"}
     }
 )
 async def get_report(
     report_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _user = Depends(get_current_user)
 ):
-    """Get detailed analysis report by ID."""
+    """Get detailed analysis report by ID with caching."""
     try:
+        # Create cache key
+        cache_key = f"report_{report_id}"
+        
+        # Try to get from cache
+        cached_result = report_cache.get(cache_key)
+        if cached_result is not None:
+            logger.debug(f"Report cache hit for ID {report_id}")
+            return cached_result
+        
+        # Cache miss — query database
         report = db.query(AudioAnalysis).filter(
             AudioAnalysis.id == report_id
         ).first()
@@ -242,19 +276,25 @@ async def get_report(
                 detail=f"Report with ID {report_id} not found"
             )
         
-        return ReportResponse(
+        result = ReportResponse(
             id=report.id,
             filename=report.filename,
             transcript=report.transcript,
-            findings=json.loads(report.findings) if report.findings else [],
-            evidence=json.loads(report.evidence) if report.evidence else [],
-            stats=json.loads(report.stats) if report.stats else {},
+            findings=report.findings if isinstance(report.findings, list) else [],
+            evidence=report.evidence if isinstance(report.evidence, list) else [],
+            stats=report.stats if isinstance(report.stats, dict) else {},
             summary=report.summary,
             llm_summary=report.llm_summary,
             severity=report.severity,
             risk_score=report.risk_score,
-            pdf_path=report.pdf_path
+            pdf_path=report.pdf_path,
+            created_at=report.created_at.isoformat() if report.created_at else None
         )
+        
+        # Cache the result
+        report_cache.set(cache_key, result)
+        
+        return result
         
     except HTTPException:
         raise
@@ -274,17 +314,28 @@ async def get_report(
     "/report/{report_id}/evidence",
     response_model=EvidenceResponse,
     summary="Get Report Evidence",
-    description="Retrieve evidence items for a specific report",
+    description="Retrieve evidence items for a specific report (cached)",
     responses={
         404: {"model": ErrorResponse, "description": "Report not found"}
     }
 )
 async def get_evidence(
     report_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _user = Depends(get_current_user)
 ):
-    """Get evidence items for a specific report."""
+    """Get evidence items for a specific report with caching."""
     try:
+        # Create cache key
+        cache_key = f"evidence_{report_id}"
+        
+        # Try to get from cache
+        cached_result = evidence_cache.get(cache_key)
+        if cached_result is not None:
+            logger.debug(f"Evidence cache hit for report {report_id}")
+            return cached_result
+        
+        # Cache miss — query database
         report = db.query(AudioAnalysis).filter(
             AudioAnalysis.id == report_id
         ).first()
@@ -295,12 +346,17 @@ async def get_evidence(
                 detail=f"Report with ID {report_id} not found"
             )
         
-        return EvidenceResponse(
+        result = EvidenceResponse(
             report_id=report_id,
             severity=report.severity,
             risk_score=report.risk_score,
-            evidence=json.loads(report.evidence) if report.evidence else []
+            evidence=report.evidence if isinstance(report.evidence, list) else []
         )
+        
+        # Cache the result
+        evidence_cache.set(cache_key, result)
+        
+        return result
         
     except HTTPException:
         raise
@@ -340,7 +396,13 @@ async def get_report_stats(
                 detail=f"Report with ID {report_id} not found"
             )
         
-        return json.loads(report.stats) if report.stats else {}
+        st = report.stats
+        if isinstance(st, str):
+            try:
+                st = json.loads(st)
+            except Exception:
+                st = {}
+        return st or {}
         
     except HTTPException:
         raise
