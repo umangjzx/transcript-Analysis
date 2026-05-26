@@ -1,6 +1,6 @@
-# AuraSafety — Backend
+# AuraSafety — Backend (v2.1.0)
 
-Production-grade FastAPI backend for detecting grooming behaviour, explicit content, and harmful language in audio conversations. Supports Discord voice chats, WhatsApp calls, Zoom meetings, gaming voice chats, and any general audio source.
+Production-grade FastAPI backend for detecting grooming behaviour, explicit content, and harmful language in audio conversations. Supports audio files, video files, plain-text transcripts, and Google Drive imports. Works with Discord voice chats, WhatsApp calls, Zoom meetings, gaming voice chats, and any general audio/video source.
 
 ---
 
@@ -9,7 +9,10 @@ Production-grade FastAPI backend for detecting grooming behaviour, explicit cont
 ```mermaid
 flowchart TD
     subgraph INPUT["① INPUT"]
-        A([🎙️ Audio File\n.mp3 / .wav / .m4a / .aac / .ogg])
+        A1([🎙️ Audio File\n.mp3 / .wav / .m4a / .aac / .ogg])
+        A2([🎬 Video File\n.mp4 / .mkv / .avi / .mov / .webm])
+        A3([📄 Plain-Text Transcript])
+        A4([☁️ Google Drive\n.txt / Google Docs])
     end
 
     subgraph TRANSCRIPTION["② TRANSCRIPTION"]
@@ -42,34 +45,37 @@ flowchart TD
     end
 
     subgraph STORAGE["⑥ STORAGE"]
-        DB[(SQLite · analysis.db)]
         MDB[(MongoDB · 7 collections)]
         S3[(AWS S3 · 5 storage types)]
         VEC[(ChromaDB · vectors/)]
     end
 
     subgraph API["⑦ REST API · FastAPI :8000"]
-        EP1[POST /analyze]
+        EP1[POST /analyze · /analyze/video · /analyze/transcript]
         EP2[GET /report/id/status]
         EP3[GET /history · /report/id · /report/id/pdf]
         EP4[POST /chat]
         EP5[POST /notify/alert/id · /notify/summary/id]
         EP6[GET /analytics/summary]
+        EP7[GET+POST /api/v1/google-drive/*]
     end
 
-    A --> B --> B1 & B2
+    A1 --> B --> B1 & B2
+    A2 --> B
+    A3 --> B1
+    A4 --> B1
     B1 --> C --> PAT --> CTX --> FIL --> CONF --> EG
     CONF --> ML --> EG
     EG --> RS --> SV & SUM & LLM
     SV & SUM & LLM --> PDF
-    PDF --> DB & MDB & S3
-    A --> S3
+    PDF --> MDB & S3
+    A1 & A2 --> S3
     B1 --> VEC --> BOT
-    EG --> DB & MDB
-    DB & MDB --> EP3 & EP6
+    EG --> MDB
+    MDB --> EP3 & EP6
     BOT --> EP4
     EMAIL --> EP5
-    EP1 & EP2 & EP3 & EP4 & EP5 & EP6 --> API
+    EP1 & EP2 & EP3 & EP4 & EP5 & EP6 & EP7 --> API
 ```
 
 ---
@@ -87,6 +93,7 @@ flowchart TD
 - [Evidence Grouping](#evidence-grouping)
 - [Storage](#storage)
 - [Email Notifications](#email-notifications)
+- [Google Drive Integration](#google-drive-integration)
 - [Modules Reference](#modules-reference)
 - [API Endpoints](#api-endpoints)
 - [Configuration](#configuration)
@@ -104,17 +111,18 @@ flowchart TD
 |---|---|
 | API Framework | FastAPI 0.136 + Uvicorn 0.47 |
 | Audio Transcription | faster-whisper 1.2 (Whisper Base, CPU, int8) |
+| Video Audio Extraction | PyAV (streamed, never loads full file into memory) |
 | Speaker Diarization | pyannote.audio 3.3 (optional — requires `HF_TOKEN`) |
 | Pattern Detection | Python `re` — 20 compiled regex categories |
 | ML Classifier | `typeform/distilbert-base-uncased-mnli` — Zero-Shot NLI |
 | LLM Summary | Ollama — Llama 3.1 (optional, graceful fallback) |
 | Vector Store | ChromaDB (persistent) |
 | Embeddings | SentenceTransformers `all-MiniLM-L6-v2` |
-| Primary Database | SQLite via SQLAlchemy ORM |
-| Analytics Database | MongoDB Atlas — 7 collections |
+| Primary Database | MongoDB Atlas — 7 collections |
 | File Storage | AWS S3 — 5 storage types, AES-256 encrypted |
 | Email | SMTP (Gmail / any provider) — HTML alert + summary templates |
 | PDF Generation | ReportLab |
+| Google Drive | Google Drive API + Google Docs API (OAuth2) |
 | Runtime | Python 3.10+ |
 
 ---
@@ -125,7 +133,7 @@ flowchart TD
 backend/
 │
 ├── app.py                          # FastAPI application — all routes + background tasks
-├── config.py                       # Paths, DB URL, SMTP, S3, MongoDB config
+├── config.py                       # Paths, SMTP, S3, MongoDB, Google Drive config
 ├── auth.py                         # API key authentication helpers
 ├── requirements.txt                # Python dependencies
 ├── test_pipeline.py                # Interactive CLI pipeline tester
@@ -134,10 +142,12 @@ backend/
 ├── .env.example                    # Environment variable template
 │
 ├── api/
-│   └── audio_analysis_routes.py   # Versioned router /api/v1/* (Pydantic, pagination)
+│   ├── audio_analysis_routes.py   # Versioned router /api/v1/* (Pydantic, pagination)
+│   └── google_drive_routes.py     # Google Drive router /api/v1/google-drive/*
 │
 ├── services/
-│   └── audio_safety_service.py    # Async pipeline orchestration service
+│   ├── audio_safety_service.py    # Async pipeline orchestration service
+│   └── google_drive_service.py    # Google OAuth2 + Drive/Docs file access
 │
 ├── schemas/
 │   └── audio_analysis_schemas.py  # Pydantic request/response models
@@ -155,19 +165,18 @@ backend/
 │   ├── summarizer.py              # Rule-based summary generator
 │   ├── llm_summarizer.py          # Ollama Llama 3.1 summary
 │   ├── report_generator.py        # PDF report generation
-│   ├── transcriber.py             # faster-whisper transcription → (transcript, timeline)
+│   ├── transcriber.py             # faster-whisper + PyAV video extraction
 │   ├── evidence_extractor.py      # Evidence list extraction from grouped findings
 │   ├── stats.py                   # Statistics + timeline + ML agreement
 │   ├── chatbot.py                 # RAG chatbot (ChromaDB + Ollama)
 │   ├── email_notifier.py          # SMTP alert + summary HTML emails
 │   ├── s3_storage.py              # AWS S3 upload / presign / delete
+│   ├── drive_watcher.py           # Google Drive background auto-import watcher
 │   ├── cache.py                   # TTL in-memory cache helpers
 │   └── file_cleanup.py            # Upload file cleanup daemon
 │
 ├── database/
-│   ├── db.py                      # SQLAlchemy engine + session factory
-│   ├── models.py                  # AudioAnalysis ORM model
-│   └── mongo.py                   # MongoDB client — 7-collection schema
+│   └── mongo.py                   # MongoDB client — 7-collection schema + read helpers
 │
 ├── examples/
 │   ├── test_script_bad.txt        # CRITICAL — all categories triggered
@@ -176,15 +185,15 @@ backend/
 │   └── run_test_scripts.py        # Pipeline test runner
 │
 └── (auto-created on first run, git-ignored)
-    ├── uploads/                   # Uploaded audio files
+    ├── uploads/                   # Uploaded audio/video files (temp)
     ├── reports/                   # Generated PDF reports
     ├── vectors/                   # ChromaDB persistent vector store
-    ├── analysis.db                # SQLite database
     └── logs/app.log               # Application log (UTF-8, stdout + file)
 ```
 
----
+> **Note:** SQLite (`analysis.db`) has been removed. MongoDB is now the sole data store for all analysis results, transcripts, findings, and audit logs.
 
+---
 ## Detection Categories
 
 The pipeline detects **20 categories** across the full grooming lifecycle.
@@ -312,46 +321,36 @@ Diminishing returns — repeated occurrences of the same category are progressiv
 When a single sentence matches multiple categories, `EvidenceGroupingEngine` merges them into one grouped finding with aggregate confidence and severity — preventing the same quote from inflating the score across categories.
 
 ---
-
 ## Storage
 
-### SQLite (`analysis.db`)
+### MongoDB (7 collections) — Primary Store
 
-Primary operational store — every analysis result is written here. Created automatically on first run.
-
-```
-audio_analysis
-├── id             INTEGER  PRIMARY KEY AUTOINCREMENT
-├── filename       TEXT
-├── transcript     TEXT
-├── findings       TEXT     JSON array of grouped findings
-├── evidence       TEXT     JSON array of evidence items
-├── stats          TEXT     JSON stats object
-├── summary        TEXT     Rule-based summary
-├── llm_summary    TEXT     Ollama LLM summary (or rule summary if Ollama unavailable)
-├── severity       TEXT     Safe / Low / Moderate / High / Critical
-├── risk_score     REAL     0.0 – 100.0
-├── pdf_path       TEXT     Local path to generated PDF
-├── diarization    TEXT     JSON timeline array
-├── status         TEXT     PENDING / PROCESSING / COMPLETED / FAILED
-├── error_message  TEXT     Populated only on FAILED status
-├── created_at     DATETIME
-└── updated_at     DATETIME
-```
-
-### MongoDB (7 collections)
-
-Analytics and audit store written on every completed analysis:
+MongoDB is the sole data store. All analysis results, transcripts, findings, and audit logs are written here. SQLite has been removed.
 
 | Collection | Contents |
 |---|---|
-| `meeting_metadata` | Filename, date, duration, participants, S3 URL, status |
+| `meeting_metadata` | Filename, date, duration, participants, S3 URL, pdf_path, s3_pdf_url, status |
 | `transcripts` | Full transcript, speaker segments, timestamps, word count |
-| `analysis_results` | Risk score, severity, LLM summary, rule summary, stats |
+| `analysis_results` | Risk score, severity, LLM summary, rule summary, stats, evidence |
 | `safety_findings` | Per-finding category, evidence, confidence, context type, ML fields |
 | `action_items` | High/critical findings requiring action, topics, keywords |
 | `processing_status` | Pipeline stage, started_at, completed_at, errors |
 | `audit_logs` | All events — uploads, completions, failures, emails sent |
+
+A `counters` collection provides atomic auto-increment meeting IDs via `findOneAndUpdate`.
+
+Read helpers in `database/mongo.py` allow SQLite-free operation:
+
+| Helper | Description |
+|---|---|
+| `list_meetings(skip, limit)` | Paginated history list |
+| `get_meeting(id)` | Single meeting metadata |
+| `get_transcript(id)` | Transcript + diarization |
+| `get_analysis(id)` | Full analysis result |
+| `get_findings(id)` | Safety findings list |
+| `get_evidence(id)` | Evidence list |
+| `get_full_report(id)` | Assembled report from all collections |
+| `get_analytics_summary()` | Aggregate analytics across all meetings |
 
 ### AWS S3 (5 storage types)
 
@@ -360,12 +359,12 @@ All files are AES-256 server-side encrypted:
 | Type | S3 Prefix | Description |
 |---|---|---|
 | Audio recordings | `recordings/YYYY/MM/` | Original uploaded audio |
-| Extracted audio | `recordings/YYYY/MM/` | Converted/extracted audio |
+| Extracted audio | `recordings/YYYY/MM/` | Converted/extracted audio from video |
 | PDF reports | `reports/YYYY/MM/` | Generated analysis PDFs |
 | Exports | `exports/YYYY/MM/` | CSV / JSON / XLSX exports |
 | Backups | `backups/YYYY/MM/` | Long-term archives |
 
-Presigned URLs and deletion are also supported. S3 is non-blocking — a failure does not abort the analysis pipeline.
+Presigned URLs and deletion are supported. S3 is non-blocking — a failure does not abort the analysis pipeline.
 
 ---
 
@@ -380,6 +379,47 @@ Two email types are supported, both rendered as dark-themed HTML with a risk sco
 **Manual re-send** — `POST /notify/alert/{id}` re-sends the alert email for any report regardless of severity. Accepts an optional `recipients` override.
 
 Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "message": str, "recipients": [...]}`.
+
+---
+
+## Google Drive Integration
+
+AuraSafety can connect to Google Drive to import `.txt` files and Google Docs directly as transcripts, bypassing the audio upload step entirely.
+
+### Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a project → Enable **Google Drive API** and **Google Docs API**
+3. Create OAuth 2.0 credentials (type: Web application)
+4. Add `http://localhost:8000/api/v1/google-drive/callback` as an Authorized Redirect URI
+5. Copy the Client ID and Client Secret to `.env`
+
+### Auth Flow
+
+```
+GET /api/v1/google-drive/auth-url   → returns consent URL
+# Open URL in browser, grant access
+GET /api/v1/google-drive/callback   → exchanges code for tokens (stored on disk)
+GET /api/v1/google-drive/status     → confirms authentication
+```
+
+### Drive Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/google-drive/auth-url` | Returns the OAuth2 consent URL |
+| `GET` | `/api/v1/google-drive/callback` | Handles OAuth2 redirect, stores tokens |
+| `GET` | `/api/v1/google-drive/status` | Returns authentication status |
+| `DELETE` | `/api/v1/google-drive/logout` | Revokes and deletes stored credentials |
+| `GET` | `/api/v1/google-drive/files` | Lists importable files (`.txt` + Google Docs) |
+| `POST` | `/api/v1/google-drive/import` | Imports a file as a transcript and runs the pipeline |
+| `GET` | `/api/v1/google-drive/watcher/status` | Returns watcher running state + stats |
+| `POST` | `/api/v1/google-drive/watcher/start` | Starts the background auto-import watcher |
+| `POST` | `/api/v1/google-drive/watcher/stop` | Stops the watcher |
+
+### Auto-Watcher
+
+Set `DRIVE_AUTO_WATCH=true` in `.env` to automatically start polling Drive on server startup. The watcher checks for new files every `DRIVE_POLL_INTERVAL_SECONDS` (default: 120) and imports them automatically. Optionally restrict to a specific folder with `DRIVE_WATCH_FOLDER_ID`.
 
 ---
 
@@ -399,17 +439,17 @@ Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "messag
 | `summarizer.py` | Rule-based summary from findings + risk score |
 | `llm_summarizer.py` | Ollama Llama 3.1 executive summary — fails gracefully |
 | `report_generator.py` | PDF report with findings, score, severity, LLM summary |
-| `transcriber.py` | faster-whisper — returns `(transcript, timeline)` |
+| `transcriber.py` | faster-whisper transcription + PyAV video audio extraction |
 | `evidence_extractor.py` | Clean evidence list from grouped findings |
 | `stats.py` | Statistics dict — categories, confidence histogram, ML stats, context distribution |
 | `chatbot.py` | RAG chatbot — ChromaDB + SentenceTransformers + Ollama |
 | `email_notifier.py` | SMTP alert + summary emails, `should_auto_alert()`, `send_alert_email()`, `send_summary_email()` |
 | `s3_storage.py` | `upload_audio()`, `upload_pdf_report()`, `get_presigned_url()`, `delete_file()`, `ping()` |
+| `drive_watcher.py` | Background Google Drive polling watcher — `start_watcher()`, `stop_watcher()`, `get_status()` |
 | `cache.py` | TTL in-memory cache helpers |
 | `file_cleanup.py` | Upload file cleanup daemon |
 
 ---
-
 ## API Endpoints
 
 ### Core
@@ -418,14 +458,16 @@ Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "messag
 |---|---|---|
 | `GET` | `/` | Service name + version |
 | `GET` | `/health` | S3 + MongoDB + ML classifier health |
-| `POST` | `/analyze` | Upload audio — returns immediately, runs pipeline in background |
+| `POST` | `/analyze` | Upload audio file — returns immediately, runs pipeline in background |
+| `POST` | `/analyze/video` | Upload video file — audio extracted server-side, then analyzed |
+| `POST` | `/analyze/transcript` | Submit plain-text transcript — skips transcription step |
 | `GET` | `/report/{id}/status` | Poll status: `PROCESSING` / `COMPLETED` / `FAILED` |
 | `GET` | `/history` | Paginated history — `id`, `filename`, `severity`, `risk_score`, `status`, `created_at` |
 | `GET` | `/report/{id}` | Full report — transcript, findings, evidence, stats, summaries, timeline |
 | `GET` | `/report/{id}/evidence` | Evidence list with `severity`, `risk_score`, `context_type`, `speaker` |
 | `GET` | `/report/{id}/stats` | Full stats object |
 | `GET` | `/report/{id}/pdf` | Download PDF report |
-| `DELETE` | `/report/{id}` | Delete report record and associated PDF file |
+| `DELETE` | `/report/{id}` | Delete report from MongoDB, S3, and local PDF |
 | `POST` | `/chat` | RAG chatbot — returns `{answer, sources, confidence}` |
 
 ### Notifications
@@ -441,7 +483,11 @@ Both accept `{"recipients": ["email@example.com"]}` to override `ALERT_RECIPIENT
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/analytics/summary` | Cross-report aggregation — severity distribution, risk histogram, top categories, ML agreement, confidence histogram, status distribution |
+| `GET` | `/analytics/summary` | Cross-report aggregation — severity distribution, risk histogram, top categories, ML agreement, status distribution |
+
+### Google Drive (`/api/v1/google-drive/`)
+
+See [Google Drive Integration](#google-drive-integration) for the full endpoint list.
 
 ### Versioned Router (`/api/v1/`)
 
@@ -450,9 +496,19 @@ Mirrors the core endpoints with Pydantic response models and pagination. Used by
 ### Examples
 
 ```bash
-# Upload and analyze
+# Upload and analyze audio
 curl -X POST http://localhost:8000/analyze -F "file=@conversation.mp3"
 # → {"id": 12, "status": "PROCESSING", "message": "Analysis started in background"}
+
+# Upload and analyze video
+curl -X POST http://localhost:8000/analyze/video -F "file=@recording.mp4"
+# → {"id": 13, "status": "PROCESSING", "message": "Video audio extracted, analysis started in background"}
+
+# Submit a plain-text transcript
+curl -X POST http://localhost:8000/analyze/transcript \
+  -H "Content-Type: application/json" \
+  -d '{"transcript": "Speaker A: keep this between us...", "filename": "chat.txt"}'
+# → {"id": 14, "status": "PROCESSING", "message": "Transcript received, analysis started in background"}
 
 # Poll until complete
 curl http://localhost:8000/report/12/status
@@ -476,6 +532,17 @@ curl -X DELETE http://localhost:8000/report/12
 
 # Cross-report analytics
 curl http://localhost:8000/analytics/summary
+
+# Google Drive — get auth URL
+curl http://localhost:8000/api/v1/google-drive/auth-url
+
+# Google Drive — list files
+curl http://localhost:8000/api/v1/google-drive/files
+
+# Google Drive — import a file
+curl -X POST http://localhost:8000/api/v1/google-drive/import \
+  -H "Content-Type: application/json" \
+  -d '{"file_id": "1A2B3C...", "file_name": "chat_log.txt", "mime_type": "text/plain"}'
 ```
 
 ---
@@ -512,7 +579,7 @@ AudioSafetyService(
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in your values. All three integrations (MongoDB, S3, SMTP) are optional — the core analysis pipeline runs without them.
+Copy `.env.example` to `.env` and fill in your values. MongoDB, S3, SMTP, and Google Drive are all optional — the core analysis pipeline runs without them.
 
 ```env
 # ── SMTP ──────────────────────────────────────────────────────────────────────
@@ -541,10 +608,20 @@ ENABLE_DIARIZATION=false          # adds ~90s per 3-min file on CPU
 
 # ── Feature Flags ─────────────────────────────────────────────────────────────
 ENABLE_ML_CLASSIFIER=false        # set true after ~400 MB model is cached
-MAX_UPLOAD_MB=200
+ENABLE_LLM_SUMMARY=true           # set false to skip Ollama entirely (faster)
+MAX_UPLOAD_MB=200                 # max audio upload size in MB
+MAX_VIDEO_UPLOAD_MB=500           # max video upload size in MB
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 API_KEY=                          # leave blank to disable auth in dev
 UPLOAD_TTL_HOURS=24               # 0 = disable upload cleanup
+
+# ── Google Drive ──────────────────────────────────────────────────────────────
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/google-drive/callback
+DRIVE_AUTO_WATCH=false            # true = start polling Drive on server startup
+DRIVE_POLL_INTERVAL_SECONDS=120   # how often to check Drive for new files
+DRIVE_WATCH_FOLDER_ID=            # optional: restrict to a specific Drive folder ID
 ```
 
 > **Gmail tip:** Generate a 16-character App Password at https://myaccount.google.com/apppasswords — 2FA must be enabled first.
@@ -569,12 +646,22 @@ ollama pull llama3.1
 uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+Or use the included batch script on Windows:
+
+```bash
+start.bat
+```
+
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-### Supported audio formats
+### Supported input formats
 
-`.mp3` `.wav` `.m4a` `.aac` `.ogg`
+**Audio:** `.mp3` `.wav` `.m4a` `.aac` `.ogg`
+
+**Video:** `.mp4` `.mkv` `.avi` `.mov` `.webm` `.flv` `.wmv`
+
+**Text:** Plain-text transcript via `POST /analyze/transcript` or Google Drive import
 
 ---
 
@@ -655,6 +742,8 @@ Prints raw credential values (length, leading/trailing chars, presence of spaces
 
 **Administrative suppression** — sentences classified as `ADMINISTRATIVE` receive a −0.40 confidence multiplier, suppressing false positives from legitimate institutional language.
 
-**Graceful degradation** — MongoDB, S3, SMTP, and Ollama are all optional. A failure in any of them is logged as a warning and the pipeline continues. The core analysis always runs.
+**Graceful degradation** — MongoDB, S3, SMTP, Ollama, and Google Drive are all optional. A failure in any of them is logged as a warning and the pipeline continues. The core analysis always runs.
 
-**Background processing** — `/analyze` returns immediately with a record ID. The client polls `/report/{id}/status` until `COMPLETED`.
+**Background processing** — `/analyze`, `/analyze/video`, and `/analyze/transcript` all return immediately with a record ID. The client polls `/report/{id}/status` until `COMPLETED`.
+
+**Video privacy** — video files are streamed to disk in 1 MB chunks (never fully loaded into memory), audio is extracted, and the original video file is deleted immediately. Only the transcript text and analysis results are stored.

@@ -9,7 +9,7 @@ React 19 + Vite 8 dashboard for the AuraSafety audio grooming detection system.
 | Route | Page | Description |
 |---|---|---|
 | `/` | Dashboard | Analysis history table with live search, sortable columns, 4 stat cards, and delete action |
-| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload with real-time progress bar; polls status until complete then redirects to the report |
+| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio or video) with real-time progress bar; polls status until complete then redirects to the report |
 | `/report/:id` | Report | Full analysis view — 6 tabs + chatbot sidebar (see below) |
 
 ### Report Page Tabs
@@ -71,11 +71,13 @@ All backend calls go through a single Axios instance with `baseURL: '/api/v1'` a
 | `getReport(id)` | `GET /report/:id` | Full report object |
 | `getReportStatus(id)` | `GET /report/:id/status` | Poll PROCESSING / COMPLETED / FAILED |
 | `uploadAudio(file, onProgress)` | `POST /analyze` | Upload audio file (10 min timeout) |
+| `uploadVideo(file, onProgress)` | `POST /analyze/video` | Upload video file (30 min timeout) |
+| `analyzeTranscript(transcript, filename)` | `POST /analyze/transcript` | Submit plain-text transcript (10 min timeout) |
 | `getChatbotAnswer(reportId, question)` | `POST /chat` | RAG chatbot (2 min timeout) |
 | `getAnalyticsSummary()` | `GET /analytics/summary` | Cross-report aggregation |
 | `sendAlertEmail(reportId, recipients)` | `POST /notify/alert/:id` | Send / re-send alert email |
 | `sendSummaryEmail(reportId, recipients)` | `POST /notify/summary/:id` | Send summary email |
-| `deleteReport(id)` | `DELETE /report/:id` | Delete report record + PDF |
+| `deleteReport(id)` | `DELETE /report/:id` | Delete report record + PDF + S3 files |
 | `downloadPdfUrl(reportId)` | — | Returns the PDF download URL string |
 
 Set `VITE_API_KEY` in `frontend/.env` to attach an `X-API-Key` header to every request (required when `API_KEY` is set in the backend `.env`).

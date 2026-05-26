@@ -92,6 +92,9 @@ API_KEY: str = os.getenv("API_KEY", "")
 # Upload TTL — audio files older than this are deleted. 0 = disabled.
 UPLOAD_TTL_HOURS: int = int(os.getenv("UPLOAD_TTL_HOURS", "24"))
 
+# LLM summarizer — set ENABLE_LLM_SUMMARY=false to skip (faster, no API calls).
+ENABLE_LLM_SUMMARY: bool = os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
+
 # ── TTL cache ─────────────────────────────────────────────────────────────────
 
 _CACHE_TTL = 60  # seconds
@@ -285,6 +288,12 @@ async def startup_event():
 
     logger.info("Service initialized successfully")
 
+    # Auto-start Drive watcher if enabled in .env
+    from modules.drive_watcher import start_watcher as _start_drive_watcher, AUTO_WATCH as _auto_watch
+    if _auto_watch:
+        _start_drive_watcher()
+        logger.info("Google Drive auto-watcher started (DRIVE_AUTO_WATCH=true)")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -293,7 +302,9 @@ async def shutdown_event():
 # ── Register versioned router ─────────────────────────────────────────────────
 
 from api.audio_analysis_routes import router as v1_router  # noqa: E402
+from api.google_drive_routes import router as gdrive_router  # noqa: E402
 app.include_router(v1_router)
+app.include_router(gdrive_router)
 
 if _enable_ml:
     logger.info("ML classifier ENABLED (distilbert-mnli)")
@@ -353,13 +364,17 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
         # Stats & summaries
         stats = generate_stats(transcript, findings, severity, risk_score)
         summary = generate_summary(transcript, findings, risk_score, severity)
-        save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
 
-        try:
-            llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-            llm_summary = f"LLM Summary unavailable: {_e}"
+        if ENABLE_LLM_SUMMARY:
+            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
+            try:
+                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
+                llm_summary = f"LLM Summary unavailable: {_e}"
+        else:
+            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
+            llm_summary = summary  # fall back to rule-based summary
 
         # Vector store
         try:
@@ -464,13 +479,17 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
         # Stats & summaries
         stats = generate_stats(transcript, findings, severity, risk_score)
         summary = generate_summary(transcript, findings, risk_score, severity)
-        save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
 
-        try:
-            llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-            llm_summary = f"LLM Summary unavailable: {_e}"
+        if ENABLE_LLM_SUMMARY:
+            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
+            try:
+                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
+                llm_summary = f"LLM Summary unavailable: {_e}"
+        else:
+            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
+            llm_summary = summary  # fall back to rule-based summary
 
         # Vector store
         try:
@@ -531,7 +550,7 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
         logger.error(f"[#{record_id}] Video background processing FAILED: {_e}", exc_info=True)
 
 
-
+def process_transcript_background(record_id: int, transcript: str, filename: str):
     """
     Analysis pipeline for a pre-supplied transcript — skips transcription.
     Writes to MongoDB + S3 only (no audio file to upload).
@@ -561,13 +580,17 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
         # Stats & summaries
         stats = generate_stats(transcript, findings, severity, risk_score)
         summary = generate_summary(transcript, findings, risk_score, severity)
-        save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
 
-        try:
-            llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-            llm_summary = f"LLM Summary unavailable: {_e}"
+        if ENABLE_LLM_SUMMARY:
+            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
+            try:
+                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
+                llm_summary = f"LLM Summary unavailable: {_e}"
+        else:
+            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
+            llm_summary = summary  # fall back to rule-based summary
 
         # Vector store
         try:

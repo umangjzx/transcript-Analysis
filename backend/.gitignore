@@ -37,3 +37,6 @@ uploads/
 reports/
 vectors/chroma.sqlite3
 vectors/**/*.sqlite3
+
+# Google OAuth2 credentials (contains refresh tokens — never commit)
+.google_credentials.json
