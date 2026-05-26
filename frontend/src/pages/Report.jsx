@@ -1031,14 +1031,15 @@ const Report = () => {
           style={{
             position: 'fixed', inset: 0, zIndex: 9999,
             background: 'rgba(0,0,0,0.7)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '1rem',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            padding: '10vh 1rem 1rem',
+            overflowY: 'auto',
           }}
           onClick={() => !isDeleting && setShowDeleteConfirm(false)}
         >
           <div
             className="glass-panel"
-            style={{ maxWidth: 420, width: '100%', padding: '1.75rem', borderRadius: 'var(--radius-lg)' }}
+            style={{ maxWidth: 420, width: '100%', padding: '1.75rem', borderRadius: 'var(--radius-lg)', flexShrink: 0 }}
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}

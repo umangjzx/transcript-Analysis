@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -40,6 +40,7 @@ from database.models import Base, AudioAnalysis
 from database.mongo import (
     save_full_analysis, save_processing_status,
     update_meeting_status, audit_log, log_alert,
+    delete_meeting_data,
 )
 from modules.transcriber import transcribe_audio
 from modules.grooming_detector import GroomingDetector
@@ -52,7 +53,7 @@ from modules.llm_summarizer import generate_llm_summary
 from modules.report_generator import generate_pdf_report
 from modules.chatbot import store_transcript, answer_question
 from modules.email_notifier import send_alert_email, send_summary_email, should_auto_alert
-from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf
+from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -327,6 +328,8 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
             s3_url = s3_upload_audio(filepath, record_id, filename)
             if s3_url:
                 logger.info(f"[#{record_id}] Audio uploaded to S3: {s3_url}")
+                record.s3_audio_url = s3_url
+                db.commit()
                 audit_log("s3_upload_success", meeting_id=record_id, details={"s3_url": s3_url})
         except Exception as _e:
             logger.warning(f"[#{record_id}] S3 upload failed: {_e}")
@@ -389,6 +392,7 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
             try:
                 s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
                 if s3_pdf_url:
+                    record.s3_pdf_url = s3_pdf_url
                     audit_log("s3_pdf_uploaded", meeting_id=record_id, details={"s3_url": s3_pdf_url})
             except Exception as _e:
                 logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
@@ -624,33 +628,69 @@ def download_pdf(report_id: int):
                         filename=f"report_{report_id}.pdf")
 
 
-@app.delete("/report/{report_id}", status_code=204)
+@app.delete("/report/{report_id}", status_code=204, response_class=Response)
 def delete_report(report_id: int):
-    """Delete a report record, its PDF file, and invalidate caches."""
+    """Delete a report record from SQLite, S3, MongoDB, and local PDF."""
     db = SessionLocal()
     report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
     if not report:
         db.close()
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Delete PDF from disk if it exists
-    if report.pdf_path and os.path.exists(report.pdf_path):
-        try:
-            os.remove(report.pdf_path)
-            logger.info(f"[#{report_id}] PDF deleted: {report.pdf_path}")
-        except Exception as _e:
-            logger.warning(f"[#{report_id}] Could not delete PDF: {_e}")
+    # Snapshot URLs/paths before deleting the record
+    pdf_path     = report.pdf_path
+    s3_audio_url = report.s3_audio_url
+    s3_pdf_url   = report.s3_pdf_url
 
+    # ── 1. Delete local PDF from disk ─────────────────────────────────────────
+    if pdf_path and os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+            logger.info(f"[#{report_id}] Local PDF deleted: {pdf_path}")
+        except Exception as _e:
+            logger.warning(f"[#{report_id}] Could not delete local PDF: {_e}")
+
+    # ── 2. Delete from SQLite ─────────────────────────────────────────────────
     db.delete(report)
     db.commit()
     db.close()
+    logger.info(f"[#{report_id}] SQLite record deleted")
 
-    # Invalidate caches so history/analytics reflect the deletion immediately
+    # ── 3. Delete audio file from S3 ─────────────────────────────────────────
+    if s3_audio_url:
+        try:
+            s3_delete_file(s3_audio_url)
+            logger.info(f"[#{report_id}] S3 audio deleted: {s3_audio_url}")
+        except Exception as _e:
+            logger.warning(f"[#{report_id}] S3 audio delete failed (non-fatal): {_e}")
+
+    # ── 4. Delete PDF from S3 ─────────────────────────────────────────────────
+    if s3_pdf_url:
+        try:
+            s3_delete_file(s3_pdf_url)
+            logger.info(f"[#{report_id}] S3 PDF deleted: {s3_pdf_url}")
+        except Exception as _e:
+            logger.warning(f"[#{report_id}] S3 PDF delete failed (non-fatal): {_e}")
+
+    # ── 5. Delete all MongoDB collections for this meeting ────────────────────
+    try:
+        delete_meeting_data(report_id)
+    except Exception as _e:
+        logger.warning(f"[#{report_id}] MongoDB cleanup failed (non-fatal): {_e}")
+
+    # ── 6. Invalidate caches ──────────────────────────────────────────────────
     _cache.invalidate()
 
-    audit_log("report_deleted", meeting_id=report_id,
-              details={"report_id": report_id})
-    logger.info(f"[#{report_id}] Report deleted")
+    logger.info(f"[#{report_id}] Report fully deleted (SQLite + local PDF + S3 + MongoDB)")
+
+    # Audit log is non-fatal — don't let MongoDB errors break the response
+    try:
+        audit_log("report_deleted", meeting_id=report_id,
+                  details={"report_id": report_id})
+    except Exception as _e:
+        logger.warning(f"[#{report_id}] Audit log failed (non-fatal): {_e}")
+
+    return Response(status_code=204)
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 

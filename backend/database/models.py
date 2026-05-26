@@ -57,6 +57,10 @@ class AudioAnalysis(Base):
 
     diarization = Column(JSONEncoder, nullable=True, default=list)
 
+    # S3 URLs — stored so we can clean up on delete
+    s3_audio_url = Column(String, nullable=True)
+    s3_pdf_url   = Column(String, nullable=True)
+
     # Timestamp columns — added to track when each record was created/updated
     created_at = Column(
         DateTime,

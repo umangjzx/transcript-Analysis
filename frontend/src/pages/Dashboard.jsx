@@ -109,6 +109,7 @@ const Dashboard = () => {
   const handleDeleteConfirm = async () => {
     if (!confirmDelete) return;
     const id = confirmDelete.id;
+    console.log(`[Dashboard] handleDeleteConfirm called for id=${id}`);
     setDeleting(id);
     setConfirmDelete(null);
     try {
@@ -509,7 +510,7 @@ const Dashboard = () => {
                   {search ? `No files matching "${search}"` : 'No analyses yet. Upload an audio file to begin.'}
                 </td></tr>
               ) : filtered.map(item => (
-                <tr key={item.id} onClick={() => navigate(`/report/${item.id}`)}>
+                <tr key={item.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/report/${item.id}`)}>
                   <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.85rem' }}>#{item.id}</td>
                   <td style={{ fontWeight: 500, maxWidth: 350 }}>
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>
@@ -542,9 +543,10 @@ const Dashboard = () => {
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                       <button
+                        type="button"
                         className="btn btn-secondary"
                         style={{ padding: '0.35rem 0.75rem', fontSize: '0.82rem' }}
                         onClick={e => { e.stopPropagation(); navigate(`/report/${item.id}`); }}
@@ -552,10 +554,16 @@ const Dashboard = () => {
                         View <ChevronRight size={14} />
                       </button>
                       <button
+                        type="button"
                         className="btn btn-icon"
                         title="Delete report"
                         disabled={deleting === item.id}
-                        onClick={e => handleDeleteClick(e, item)}
+                        onClick={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log(`[Dashboard] trash clicked for id=${item.id}`);
+                          handleDeleteClick(e, item);
+                        }}
                         style={{
                           padding: '0.35rem',
                           color: deleting === item.id ? 'var(--text-tertiary)' : 'var(--status-high)',
@@ -589,14 +597,15 @@ const Dashboard = () => {
           style={{
             position: 'fixed', inset: 0, zIndex: 9999,
             background: 'rgba(0,0,0,0.65)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '1rem',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            padding: '10vh 1rem 1rem',
+            overflowY: 'auto',
           }}
           onClick={() => setConfirmDelete(null)}
         >
           <div
             className="glass-panel"
-            style={{ maxWidth: 420, width: '100%', padding: '1.75rem', borderRadius: 'var(--radius-lg)' }}
+            style={{ maxWidth: 420, width: '100%', padding: '1.75rem', borderRadius: 'var(--radius-lg)', flexShrink: 0 }}
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}

@@ -467,6 +467,45 @@ def save_full_analysis(
     return results
 
 
+# ── Delete all data for a meeting ────────────────────────────────────────────
+
+def delete_meeting_data(meeting_id: int) -> Dict[str, bool]:
+    """
+    Delete all MongoDB documents for a given meeting_id across all 6 collections.
+    audit_logs are kept for compliance — only operational data is removed.
+    Returns a dict of {collection: success}.
+    """
+    db = get_mongo_db()
+    if db is None:
+        return {}
+
+    collections = [
+        "meeting_metadata",
+        "transcripts",
+        "analysis_results",
+        "safety_findings",
+        "action_items",
+        "processing_status",
+    ]
+
+    results = {}
+    for col in collections:
+        try:
+            db[col].delete_many({"meeting_id": meeting_id})
+            results[col] = True
+        except Exception as e:
+            logger.warning(f"MongoDB delete failed [{col}] for meeting #{meeting_id}: {e}")
+            results[col] = False
+
+    failed = [k for k, v in results.items() if not v]
+    if failed:
+        logger.warning(f"MongoDB: failed to delete from {failed} for meeting #{meeting_id}")
+    else:
+        logger.info(f"MongoDB: all collections cleaned up for meeting #{meeting_id}")
+
+    return results
+
+
 # ── Alert Logging ─────────────────────────────────────────────────────────────
 
 def log_alert(

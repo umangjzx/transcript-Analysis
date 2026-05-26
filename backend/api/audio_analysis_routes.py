@@ -515,55 +515,8 @@ async def chat(
             detail=f"Chatbot error: {str(e)}"
         )
 
-
-# ============================================================================
-# DELETE REPORT
-# ============================================================================
-
-@router.delete(
-    "/report/{report_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete Report",
-    description="Delete an analysis report and associated files",
-    responses={
-        404: {"model": ErrorResponse, "description": "Report not found"}
-    }
-)
-async def delete_report(
-    report_id: int,
-    db: Session = Depends(get_db)
-):
-    """Delete an analysis report."""
-    try:
-        report = db.query(AudioAnalysis).filter(
-            AudioAnalysis.id == report_id
-        ).first()
-        
-        if not report:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Report with ID {report_id} not found"
-            )
-        
-        # Delete PDF if exists
-        if report.pdf_path and os.path.exists(report.pdf_path):
-            try:
-                os.remove(report.pdf_path)
-            except Exception as e:
-                logger.warning(f"Failed to delete PDF: {str(e)}")
-        
-        # Delete database record
-        db.delete(report)
-        db.commit()
-        
-        logger.info(f"Report {report_id} deleted successfully")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to delete report {report_id}: {str(e)}")
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete report: {str(e)}"
-        )
+# NOTE: DELETE /report/{report_id} is handled by app.py directly (no /api/v1 prefix).
+# The Vite proxy strips /api/v1 before forwarding to the backend, so the route
+# in app.py (@app.delete("/report/{report_id}")) is the one that handles all
+# frontend delete requests. That route also invalidates the TTL cache and writes
+# an audit log entry — do not add a duplicate here.

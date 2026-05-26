@@ -99,7 +99,14 @@ export const sendSummaryEmail = async (reportId, recipients = []) => {
 // ── Delete report ─────────────────────────────────────────────────────────────
 
 export const deleteReport = async (id) => {
-  await api.delete(`/report/${id}`);
+  console.log(`[deleteReport] Sending DELETE /api/v1/report/${id}`);
+  try {
+    const res = await api.delete(`/report/${id}`);
+    console.log(`[deleteReport] Success, status=${res.status}`);
+  } catch (err) {
+    console.error(`[deleteReport] Failed:`, err?.response?.status, err?.response?.data, err?.message);
+    throw err;
+  }
 };
 
 // ── PDF download ──────────────────────────────────────────────────────────────
