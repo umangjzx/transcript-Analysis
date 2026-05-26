@@ -32,15 +32,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, APP_URL
-from database.db import engine, SessionLocal
-from database.models import Base, AudioAnalysis
 from database.mongo import (
     save_full_analysis, save_processing_status,
     update_meeting_status, audit_log, log_alert,
     delete_meeting_data,
+    # Read helpers — used by all GET routes (SQLite-free)
+    list_meetings, get_full_report, get_analytics_summary as mongo_analytics,
+    get_meeting, get_evidence as mongo_get_evidence,
+    update_s3_urls, update_pdf_path,
+    next_meeting_id,
 )
 from modules.transcriber import transcribe_audio
 from modules.grooming_detector import GroomingDetector
@@ -128,11 +130,11 @@ _cache = _TTLCache()
 # ── Database init ─────────────────────────────────────────────────────────────
 
 try:
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created/verified")
+    from database.mongo import get_mongo_db as _mongo_init
+    _mongo_init()  # establishes connection + creates indexes on first call
+    logger.info("MongoDB connection initialised")
 except Exception as _e:
-    logger.error(f"Database initialization failed: {_e}")
-    raise
+    logger.warning(f"MongoDB init warning (non-fatal): {_e}")
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
@@ -225,22 +227,24 @@ async def startup_event():
     logger.info(f"ML classifier: {'ENABLED' if _enable_ml else 'DISABLED'}")
     logger.info("=" * 70)
 
-    # Stuck-job recovery
+    # Stuck-job recovery — mark PROCESSING jobs older than 30 min as FAILED
     try:
-        db: Session = SessionLocal()
-        cutoff = datetime.utcnow() - timedelta(minutes=30)
-        stuck = (
-            db.query(AudioAnalysis)
-            .filter(AudioAnalysis.status == "PROCESSING", AudioAnalysis.created_at < cutoff)
-            .all()
-        )
-        for rec in stuck:
-            rec.status = "FAILED"
-            rec.error_message = "Processing timed out — server was restarted mid-analysis."
-            logger.warning(f"Stuck-job recovery: marked record #{rec.id} as FAILED")
-        if stuck:
-            db.commit()
-        db.close()
+        from database.mongo import get_mongo_db as _get_db
+        _mdb = _get_db()
+        if _mdb is not None:
+            cutoff = datetime.utcnow() - timedelta(minutes=30)
+            stuck_cursor = _mdb["processing_status"].find(
+                {"status": "PROCESSING", "started_at": {"$lt": cutoff}},
+                {"meeting_id": 1, "_id": 0},
+            )
+            stuck_ids = [d["meeting_id"] for d in stuck_cursor]
+            for mid in stuck_ids:
+                save_processing_status(
+                    mid, "FAILED", "error",
+                    error="Processing timed out — server was restarted mid-analysis.",
+                )
+                update_meeting_status(mid, "FAILED")
+                logger.warning(f"Stuck-job recovery: marked meeting #{mid} as FAILED")
     except Exception as _e:
         logger.warning(f"Stuck-job recovery failed: {_e}")
 
@@ -310,17 +314,13 @@ class NotifyRequest(BaseModel):
 # ── Background pipeline ───────────────────────────────────────────────────────
 
 def process_audio_background(record_id: int, filepath: str, filename: str):
-    """Full analysis pipeline — runs in a background thread."""
-    db: Session = SessionLocal()
-    record = db.query(AudioAnalysis).filter(AudioAnalysis.id == record_id).first()
-    if not record:
-        db.close()
-        return
-
+    """Full analysis pipeline — runs in a background thread. Writes to MongoDB + S3 only."""
     started_at = datetime.utcnow()
     save_processing_status(record_id, "PROCESSING", "transcription", started_at=started_at)
     audit_log("analysis_started", meeting_id=record_id, details={"filename": filename})
     s3_url: Optional[str] = None
+    s3_pdf_url: Optional[str] = None
+    pdf_path: Optional[str] = None
 
     try:
         # S3 audio upload (non-fatal)
@@ -328,8 +328,7 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
             s3_url = s3_upload_audio(filepath, record_id, filename)
             if s3_url:
                 logger.info(f"[#{record_id}] Audio uploaded to S3: {s3_url}")
-                record.s3_audio_url = s3_url
-                db.commit()
+                update_s3_urls(record_id, s3_audio_url=s3_url)
                 audit_log("s3_upload_success", meeting_id=record_id, details={"s3_url": s3_url})
         except Exception as _e:
             logger.warning(f"[#{record_id}] S3 upload failed: {_e}")
@@ -362,19 +361,6 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
             logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
             llm_summary = f"LLM Summary unavailable: {_e}"
 
-        # SQLite save — ORM handles JSON serialisation via JSONEncoder columns
-        record.transcript = transcript
-        record.findings   = findings
-        record.evidence   = evidence
-        record.stats      = stats
-        record.summary    = summary
-        record.llm_summary = llm_summary
-        record.severity   = severity
-        record.risk_score = risk_score
-        record.diarization = timeline
-        record.updated_at = datetime.utcnow()
-        db.commit()
-
         # Vector store
         try:
             store_transcript(record_id, transcript)
@@ -387,35 +373,31 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
                 report_id=record_id, filename=filename, severity=severity,
                 risk_score=risk_score, findings=findings, summary=llm_summary,
             )
-            record.pdf_path = pdf_path
-            record.updated_at = datetime.utcnow()
+            update_pdf_path(record_id, pdf_path)
             try:
                 s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
                 if s3_pdf_url:
-                    record.s3_pdf_url = s3_pdf_url
+                    update_s3_urls(record_id, s3_pdf_url=s3_pdf_url)
                     audit_log("s3_pdf_uploaded", meeting_id=record_id, details={"s3_url": s3_pdf_url})
             except Exception as _e:
                 logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
         except Exception as _e:
             logger.error(f"[#{record_id}] PDF generation failed: {_e}", exc_info=True)
 
-        record.status = "COMPLETED"
-        record.updated_at = datetime.utcnow()
-        db.commit()
-
-        # Invalidate caches so next /history and /analytics reflect new data
-        _cache.invalidate()
-
-        # MongoDB
+        # MongoDB — full analysis save
         try:
             save_full_analysis(
                 meeting_id=record_id, filename=filename, transcript=transcript,
                 timeline=timeline, findings=findings, risk_score=risk_score,
                 severity=severity, llm_summary=llm_summary, rule_summary=summary,
                 stats=stats, started_at=started_at, s3_url=s3_url,
+                evidence=evidence, pdf_path=pdf_path, s3_pdf_url=s3_pdf_url,
             )
         except Exception as _e:
             logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
+
+        # Invalidate caches so next /history and /analytics reflect new data
+        _cache.invalidate()
 
         # Auto-alert email
         if should_auto_alert(severity):
@@ -423,7 +405,7 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
                 send_alert_email(
                     report_id=record_id, filename=filename, severity=severity,
                     risk_score=risk_score, findings=findings, summary=llm_summary,
-                    stats=stats, pdf_path=record.pdf_path, app_url=APP_URL,
+                    stats=stats, pdf_path=pdf_path, app_url=APP_URL,
                 )
                 audit_log("alert_email_sent", meeting_id=record_id,
                           details={"severity": severity, "risk_score": risk_score})
@@ -433,16 +415,11 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
         logger.info(f"[#{record_id}] Analysis COMPLETED — severity={severity}, score={risk_score:.1f}")
 
     except Exception as _e:
-        record.status = "FAILED"
-        record.error_message = str(_e)
-        record.updated_at = datetime.utcnow()
-        db.commit()
         save_processing_status(record_id, "FAILED", "error",
                                started_at=started_at, completed_at=datetime.utcnow(), error=str(_e))
+        update_meeting_status(record_id, "FAILED")
         audit_log("analysis_failed", meeting_id=record_id, details={"error": str(_e)})
         logger.error(f"[#{record_id}] Background processing FAILED: {_e}", exc_info=True)
-    finally:
-        db.close()
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -488,16 +465,15 @@ async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = Fi
 
     original_filename = file.filename or safe_disk_name
 
-    db: Session = SessionLocal()
-    record = AudioAnalysis(
-        filename=original_filename, status="PROCESSING",
-        created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
+    # Allocate a new meeting ID from MongoDB counter and create the initial record
+    from database.mongo import save_meeting_metadata as _save_meta
+    record_id = next_meeting_id()
+    _save_meta(
+        meeting_id=record_id,
+        filename=original_filename,
+        file_size_bytes=len(content),
+        status="PROCESSING",
     )
-    db.add(record)
-    db.commit()
-    db.refresh(record)
-    record_id = record.id
-    db.close()
 
     background_tasks.add_task(process_audio_background, record_id, filepath, original_filename)
     audit_log("file_uploaded", meeting_id=record_id, user_action="upload",
@@ -510,17 +486,19 @@ async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = Fi
 
 @app.get("/report/{report_id}/status")
 def get_report_status(report_id: int):
-    db = SessionLocal()
-    report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
-    db.close()
-    if not report:
+    from database.mongo import get_processing_status
+    ps = get_processing_status(report_id)
+    meta = get_meeting(report_id)
+    if ps is None and meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
-    return {"id": report.id, "status": report.status, "error_message": report.error_message}
+    status_val = (ps or {}).get("status") or (meta or {}).get("status", "UNKNOWN")
+    error_msg  = (ps or {}).get("error")
+    return {"id": report_id, "status": status_val, "error_message": error_msg}
 
 
 @app.get("/history")
 def get_history(skip: int = 0, limit: int = 100):
-    """Paginated history with TTL cache — returns id, filename, severity, risk_score, status, created_at."""
+    """Paginated history with TTL cache — reads from MongoDB."""
     if limit > 500:
         limit = 500
     cache_key = f"history:{skip}:{limit}"
@@ -528,100 +506,62 @@ def get_history(skip: int = 0, limit: int = 100):
     if cached is not None:
         return cached
 
-    db = SessionLocal()
-    total = db.query(AudioAnalysis).count()
-    reports = (
-        db.query(AudioAnalysis)
-        .order_by(AudioAnalysis.id.desc())
-        .offset(skip).limit(limit).all()
-    )
-    db.close()
-
-    result = {
-        "reports": [
-            {
-                "id": row.id, "filename": row.filename, "severity": row.severity,
-                "risk_score": row.risk_score, "status": row.status,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            }
-            for row in reports
-        ],
-        "total": total, "skip": skip, "limit": limit,
-    }
+    result = list_meetings(skip=skip, limit=limit)
+    result["skip"]  = skip
+    result["limit"] = limit
     _cache.set(cache_key, result)
     return result
 
 
 @app.get("/report/{report_id}")
 def get_report(report_id: int):
-    db = SessionLocal()
-    report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
-    db.close()
+    report = get_full_report(report_id)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-
-    # JSON columns are auto-deserialised by the ORM JSONEncoder.
-    # Fallback json.loads handles any legacy TEXT rows written before the migration.
-    def _j(val, default):
-        if val is None:
-            return default
-        if isinstance(val, (list, dict)):
-            return val
-        try:
-            return json.loads(val)
-        except Exception:
-            return default
-
-    diarization = _j(report.diarization, [])
-    return {
-        "id": report.id, "filename": report.filename, "transcript": report.transcript,
-        "findings": _j(report.findings, []), "evidence": _j(report.evidence, []),
-        "stats": _j(report.stats, {}), "summary": report.summary,
-        "llm_summary": report.llm_summary, "severity": report.severity,
-        "risk_score": report.risk_score, "pdf_path": report.pdf_path,
-        "status": report.status, "diarization": diarization,
-        "timeline": diarization,  # frontend alias
-        "created_at": report.created_at.isoformat() if report.created_at else None,
-    }
+    return report
 
 
 @app.get("/report/{report_id}/evidence")
 def get_evidence(report_id: int):
-    db = SessionLocal()
-    report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
-    db.close()
-    if not report:
+    meta = get_meeting(report_id)
+    if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
-    ev = report.evidence
-    if isinstance(ev, str):
-        try: ev = json.loads(ev)
-        except Exception: ev = []
-    return {"report_id": report_id, "severity": report.severity,
-            "risk_score": report.risk_score, "evidence": ev or []}
+    from database.mongo import get_analysis
+    analysis = get_analysis(report_id) or {}
+    ev = mongo_get_evidence(report_id)
+    return {
+        "report_id":  report_id,
+        "severity":   analysis.get("severity", ""),
+        "risk_score": analysis.get("risk_score", 0),
+        "evidence":   ev,
+    }
 
 
 @app.get("/report/{report_id}/stats")
 def get_report_stats(report_id: int):
-    db = SessionLocal()
-    report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
-    db.close()
-    if not report:
+    meta = get_meeting(report_id)
+    if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
-    st = report.stats
-    if isinstance(st, str):
-        try: st = json.loads(st)
-        except Exception: st = {}
-    return st or {}
+    from database.mongo import get_analysis
+    analysis = get_analysis(report_id) or {}
+    return {
+        "categories":                analysis.get("category_breakdown", {}),
+        "confidence_stats":          analysis.get("confidence_stats", {}),
+        "severity_distribution":     analysis.get("severity_distribution", {}),
+        "context_type_distribution": analysis.get("context_type_distribution", {}),
+        "ml_stats":                  analysis.get("ml_stats", {}),
+        "word_count":                analysis.get("word_count"),
+        "finding_count":             analysis.get("finding_count", 0),
+        "unique_categories":         analysis.get("unique_categories", 0),
+    }
 
 
 @app.get("/report/{report_id}/pdf")
 def download_pdf(report_id: int):
-    db = SessionLocal()
-    report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
-    db.close()
-    if not report:
+    meta = get_meeting(report_id)
+    if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
-    pdf_path = report.pdf_path or f"reports/report_{report_id}.pdf"
+    pdf_path = meta.get("pdf_path") or f"reports/report_{report_id}.pdf"
     if not os.path.exists(pdf_path):
         raise HTTPException(status_code=404, detail="PDF report not found")
     return FileResponse(path=pdf_path, media_type="application/pdf",
@@ -630,17 +570,15 @@ def download_pdf(report_id: int):
 
 @app.delete("/report/{report_id}", status_code=204, response_class=Response)
 def delete_report(report_id: int):
-    """Delete a report record from SQLite, S3, MongoDB, and local PDF."""
-    db = SessionLocal()
-    report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
-    if not report:
-        db.close()
+    """Delete a report record from MongoDB, S3, and local PDF."""
+    meta = get_meeting(report_id)
+    if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Snapshot URLs/paths before deleting the record
-    pdf_path     = report.pdf_path
-    s3_audio_url = report.s3_audio_url
-    s3_pdf_url   = report.s3_pdf_url
+    # Snapshot URLs/paths before deleting
+    pdf_path     = meta.get("pdf_path")
+    s3_audio_url = meta.get("s3_recording_url")
+    s3_pdf_url   = meta.get("s3_pdf_url")
 
     # ── 1. Delete local PDF from disk ─────────────────────────────────────────
     if pdf_path and os.path.exists(pdf_path):
@@ -650,13 +588,7 @@ def delete_report(report_id: int):
         except Exception as _e:
             logger.warning(f"[#{report_id}] Could not delete local PDF: {_e}")
 
-    # ── 2. Delete from SQLite ─────────────────────────────────────────────────
-    db.delete(report)
-    db.commit()
-    db.close()
-    logger.info(f"[#{report_id}] SQLite record deleted")
-
-    # ── 3. Delete audio file from S3 ─────────────────────────────────────────
+    # ── 2. Delete audio file from S3 ─────────────────────────────────────────
     if s3_audio_url:
         try:
             s3_delete_file(s3_audio_url)
@@ -664,7 +596,7 @@ def delete_report(report_id: int):
         except Exception as _e:
             logger.warning(f"[#{report_id}] S3 audio delete failed (non-fatal): {_e}")
 
-    # ── 4. Delete PDF from S3 ─────────────────────────────────────────────────
+    # ── 3. Delete PDF from S3 ─────────────────────────────────────────────────
     if s3_pdf_url:
         try:
             s3_delete_file(s3_pdf_url)
@@ -672,18 +604,18 @@ def delete_report(report_id: int):
         except Exception as _e:
             logger.warning(f"[#{report_id}] S3 PDF delete failed (non-fatal): {_e}")
 
-    # ── 5. Delete all MongoDB collections for this meeting ────────────────────
+    # ── 4. Delete all MongoDB collections for this meeting ────────────────────
     try:
         delete_meeting_data(report_id)
+        logger.info(f"[#{report_id}] MongoDB records deleted")
     except Exception as _e:
         logger.warning(f"[#{report_id}] MongoDB cleanup failed (non-fatal): {_e}")
 
-    # ── 6. Invalidate caches ──────────────────────────────────────────────────
+    # ── 5. Invalidate caches ──────────────────────────────────────────────────
     _cache.invalidate()
 
-    logger.info(f"[#{report_id}] Report fully deleted (SQLite + local PDF + S3 + MongoDB)")
+    logger.info(f"[#{report_id}] Report fully deleted (local PDF + S3 + MongoDB)")
 
-    # Audit log is non-fatal — don't let MongoDB errors break the response
     try:
         audit_log("report_deleted", meeting_id=report_id,
                   details={"report_id": report_id})
@@ -694,10 +626,8 @@ def delete_report(report_id: int):
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
-def _load_report_for_notify(report_id: int) -> AudioAnalysis:
-    db = SessionLocal()
-    report = db.query(AudioAnalysis).filter(AudioAnalysis.id == report_id).first()
-    db.close()
+def _load_report_for_notify(report_id: int) -> Dict[str, Any]:
+    report = get_full_report(report_id)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     return report
@@ -712,20 +642,20 @@ def _parse_json_field(val, default):
 
 @app.post("/notify/alert/{report_id}")
 def notify_alert(report_id: int, body: NotifyRequest = NotifyRequest()):
-    report = _load_report_for_notify(report_id)
-    findings = _parse_json_field(report.findings, [])
-    stats    = _parse_json_field(report.stats, {})
+    report   = _load_report_for_notify(report_id)
+    findings = _parse_json_field(report.get("findings"), [])
+    stats    = _parse_json_field(report.get("stats"), {})
     result = send_alert_email(
-        report_id=report_id, filename=report.filename,
-        severity=report.severity or "Unknown", risk_score=report.risk_score or 0,
-        findings=findings, summary=report.llm_summary or report.summary or "",
-        stats=stats, pdf_path=report.pdf_path,
+        report_id=report_id, filename=report.get("filename", ""),
+        severity=report.get("severity") or "Unknown", risk_score=report.get("risk_score") or 0,
+        findings=findings, summary=report.get("llm_summary") or report.get("summary") or "",
+        stats=stats, pdf_path=report.get("pdf_path"),
         recipients=body.recipients or None, app_url=APP_URL,
     )
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["message"])
-    log_alert(report_id, report.filename, report.severity or "", report.risk_score or 0,
-              result["recipients"], email_type="alert")
+    log_alert(report_id, report.get("filename", ""), report.get("severity") or "",
+              report.get("risk_score") or 0, result["recipients"], email_type="alert")
     audit_log("alert_email_manual", meeting_id=report_id, user_action="send_alert",
               details={"recipients": result["recipients"]})
     return result
@@ -733,20 +663,21 @@ def notify_alert(report_id: int, body: NotifyRequest = NotifyRequest()):
 
 @app.post("/notify/summary/{report_id}")
 def notify_summary(report_id: int, body: NotifyRequest = NotifyRequest()):
-    report = _load_report_for_notify(report_id)
-    findings = _parse_json_field(report.findings, [])
-    stats    = _parse_json_field(report.stats, {})
+    report   = _load_report_for_notify(report_id)
+    findings = _parse_json_field(report.get("findings"), [])
+    stats    = _parse_json_field(report.get("stats"), {})
     result = send_summary_email(
-        report_id=report_id, filename=report.filename,
-        severity=report.severity or "Unknown", risk_score=report.risk_score or 0,
-        findings=findings, llm_summary=report.llm_summary or "",
-        rule_summary=report.summary or "", stats=stats, pdf_path=report.pdf_path,
+        report_id=report_id, filename=report.get("filename", ""),
+        severity=report.get("severity") or "Unknown", risk_score=report.get("risk_score") or 0,
+        findings=findings, llm_summary=report.get("llm_summary") or "",
+        rule_summary=report.get("summary") or "", stats=stats,
+        pdf_path=report.get("pdf_path"),
         recipients=body.recipients or None, app_url=APP_URL,
     )
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["message"])
-    log_alert(report_id, report.filename, report.severity or "", report.risk_score or 0,
-              result["recipients"], email_type="summary")
+    log_alert(report_id, report.get("filename", ""), report.get("severity") or "",
+              report.get("risk_score") or 0, result["recipients"], email_type="summary")
     audit_log("summary_email_sent", meeting_id=report_id, user_action="send_summary",
               details={"recipients": result["recipients"]})
     return result
@@ -756,79 +687,12 @@ def notify_summary(report_id: int, body: NotifyRequest = NotifyRequest()):
 
 @app.get("/analytics/summary")
 def get_analytics_summary():
-    """Aggregate analytics with TTL cache — only loads lightweight columns."""
+    """Aggregate analytics with TTL cache — reads from MongoDB."""
     cached = _cache.get("analytics")
     if cached is not None:
         return cached
 
-    db = SessionLocal()
-    reports = (
-        db.query(
-            AudioAnalysis.id, AudioAnalysis.severity,
-            AudioAnalysis.risk_score, AudioAnalysis.status, AudioAnalysis.stats,
-        ).all()
-    )
-    db.close()
-
-    severity_dist: dict = {}
-    status_dist: dict = {}
-    risk_histogram = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
-    category_totals: dict = {}
-    context_totals: dict = {}
-    ml_agreed = ml_disagreed = ml_total = 0
-    conf_histogram = {"0-25": 0, "25-50": 0, "50-75": 0, "75-100": 0}
-    total_findings = 0
-    risk_scores = []
-
-    for row in reports:
-        sev = (row.severity or "unknown").capitalize()
-        severity_dist[sev] = severity_dist.get(sev, 0) + 1
-        st = row.status or "unknown"
-        status_dist[st] = status_dist.get(st, 0) + 1
-        score = row.risk_score or 0
-        risk_scores.append(score)
-        if score <= 20:   risk_histogram["0-20"] += 1
-        elif score <= 40: risk_histogram["21-40"] += 1
-        elif score <= 60: risk_histogram["41-60"] += 1
-        elif score <= 80: risk_histogram["61-80"] += 1
-        else:             risk_histogram["81-100"] += 1
-
-        if row.stats:
-            try:
-                s = row.stats if isinstance(row.stats, dict) else json.loads(row.stats)
-                for cat, cnt in (s.get("categories") or {}).items():
-                    category_totals[cat] = category_totals.get(cat, 0) + cnt
-                for ctx, cnt in (s.get("context_type_distribution") or {}).items():
-                    context_totals[ctx] = context_totals.get(ctx, 0) + cnt
-                ml_s = s.get("ml_stats") or {}
-                ml_agreed    += ml_s.get("agreed", 0)
-                ml_disagreed += ml_s.get("disagreed", 0)
-                ml_total     += ml_s.get("total_with_ml", 0)
-                for bucket, cnt in (s.get("confidence_histogram") or {}).items():
-                    if bucket in conf_histogram:
-                        conf_histogram[bucket] += cnt
-                total_findings += s.get("finding_count", 0)
-            except Exception:
-                pass
-
-    avg_risk = round(sum(risk_scores) / len(risk_scores), 2) if risk_scores else 0.0
-    ml_rate  = round(ml_agreed / ml_total, 4) if ml_total > 0 else None
-    top_categories = sorted(
-        [{"category": k, "count": v} for k, v in category_totals.items()],
-        key=lambda x: x["count"], reverse=True,
-    )
-
-    result = {
-        "total_reports": len(reports), "total_findings": total_findings,
-        "avg_risk_score": avg_risk, "severity_distribution": severity_dist,
-        "status_distribution": status_dist, "risk_score_histogram": risk_histogram,
-        "top_categories": top_categories, "context_type_totals": context_totals,
-        "ml_agreement_totals": {
-            "agreed": ml_agreed, "disagreed": ml_disagreed,
-            "total": ml_total, "rate": ml_rate,
-        },
-        "confidence_histogram": conf_histogram,
-    }
+    result = mongo_analytics()
     _cache.set("analytics", result)
     return result
 
