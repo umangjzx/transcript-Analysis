@@ -12,6 +12,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/v1/, '')
+      },
+      // Auth routes live on the root backend (no /api/v1 prefix)
+      '/auth': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
       }
     }
   }

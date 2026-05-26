@@ -1,21 +1,25 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
-import { Shield, Home, UploadCloud, Settings, Bell, LogOut } from 'lucide-react';
+import { Shield, Home, UploadCloud, LogOut } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Report from './pages/Report';
 import Login from './pages/Login';
 import ErrorBoundary from './components/ErrorBoundary';
+import { getToken, getStoredUser, logout } from './api';
 import './App.css';
+
+// ── Navigation bar ────────────────────────────────────────────────────────────
 
 const Navigation = () => {
   const location = useLocation();
-  const navigate = useNavigate();
-  const isActive = (path) => location.pathname === path ? 'active' : '';
+  const navigate  = useNavigate();
+  const isActive  = (path) => location.pathname === path ? 'active' : '';
+  const user      = getStoredUser();
 
-  const handleLogout = () => {
-    localStorage.removeItem('isAuthenticated');
-    navigate('/login');
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
   };
 
   return (
@@ -24,6 +28,7 @@ const Navigation = () => {
         <Shield className="brand-icon" size={28} />
         <span className="brand-text text-gradient heading-3">AuraSafety</span>
       </div>
+
       <div className="navbar-links">
         <Link to="/" className={`nav-link ${isActive('/')}`}>
           <Home size={18} /> Dashboard
@@ -32,25 +37,57 @@ const Navigation = () => {
           <UploadCloud size={18} /> Analyze Audio
         </Link>
       </div>
+
       <div className="navbar-actions">
-        <button className="btn-icon"><Bell size={20} /></button>
-        <button className="btn-icon" onClick={handleLogout} title="Logout"><LogOut size={20} /></button>
-        <div className="avatar">AD</div>
+        {/* Username badge */}
+        {user?.username && (
+          <span style={{
+            fontSize: '0.8rem',
+            color: 'var(--text-secondary)',
+            padding: '0.25rem 0.6rem',
+            background: 'rgba(255,255,255,0.06)',
+            borderRadius: 'var(--radius-full)',
+            border: '1px solid var(--border-color)',
+          }}>
+            {user.username}
+          </span>
+        )}
+
+        <button
+          className="btn-icon"
+          onClick={handleLogout}
+          title="Sign out"
+          aria-label="Sign out"
+        >
+          <LogOut size={20} />
+        </button>
+
+        {/* Avatar initials */}
+        <div className="avatar" title={user?.username || 'Admin'}>
+          {(user?.username || 'AD').slice(0, 2).toUpperCase()}
+        </div>
       </div>
     </nav>
   );
 };
 
+// ── Protected route guard ─────────────────────────────────────────────────────
+
 const ProtectedRoute = ({ children }) => {
-  const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  const token = getToken();
+  return token ? children : <Navigate to="/login" replace />;
 };
+
+// ── App ───────────────────────────────────────────────────────────────────────
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Public */}
         <Route path="/login" element={<Login />} />
+
+        {/* Protected — everything else */}
         <Route path="*" element={
           <ProtectedRoute>
             <div className="app-container">
@@ -58,8 +95,8 @@ function App() {
               <main className="main-content">
                 <ErrorBoundary>
                   <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/upload" element={<Upload />} />
+                    <Route path="/"           element={<Dashboard />} />
+                    <Route path="/upload"     element={<Upload />} />
                     <Route path="/report/:id" element={<Report />} />
                   </Routes>
                 </ErrorBoundary>

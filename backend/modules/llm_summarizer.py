@@ -1,10 +1,11 @@
 """
-LLM Summarizer — Ollama Llama 3.1
+LLM Summarizer — Ollama Mistral
 
 Fixes applied:
 - findings are now included in the prompt (were silently ignored before)
 - long transcripts are truncated to ~3000 words to stay within context window
 - graceful fallback if Ollama is not running
+- switched from Llama 3.1 to Mistral for faster inference
 """
 
 import logging
@@ -15,7 +16,7 @@ import ollama
 logger = logging.getLogger(__name__)
 
 # Maximum words of transcript to send to the LLM.
-# Llama 3.1 8B has an 8k token context; ~3000 words ≈ 4000 tokens,
+# Mistral has a 32k token context; ~3000 words ≈ 4000 tokens,
 # leaving room for the prompt template and the response.
 _MAX_TRANSCRIPT_WORDS = 3000
 
@@ -107,11 +108,11 @@ Be factual and concise. Do not invent information not present in the transcript 
 
     try:
         response = ollama.chat(
-            model="llama3.1",
+            model="mistral",
             messages=[{"role": "user", "content": prompt}],
         )
         return response["message"]["content"]
 
     except Exception as e:
-        logger.warning(f"LLM summary failed (Ollama may not be running): {e}")
+        logger.warning(f"LLM summary failed (Ollama may not be running or mistral model not pulled): {e}")
         return f"LLM Summary unavailable — Ollama error: {e}"

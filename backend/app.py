@@ -6,7 +6,8 @@ Fixes applied:
 - File size limit enforced (env: MAX_UPLOAD_MB, default 200 MB)
 - Secure filename — UUID on disk, original name in DB
 - Request correlation ID middleware (X-Request-ID header)
-- API key authentication (env: API_KEY — leave blank to disable in dev)
+- JWT authentication — credentials stored in MongoDB, bcrypt-hashed
+- API key middleware kept for backward-compat with direct script access
 - Stuck-job recovery on startup (PROCESSING > 30 min → FAILED)
 - ML classifier warm-up on startup when ENABLE_ML_CLASSIFIER=true
 - Upload file cleanup daemon (env: UPLOAD_TTL_HOURS, default 24)
@@ -27,7 +28,7 @@ import threading
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, BackgroundTasks, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, BackgroundTasks, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -56,6 +57,7 @@ from modules.report_generator import generate_pdf_report
 from modules.chatbot import store_transcript, answer_question
 from modules.email_notifier import send_alert_email, send_summary_email, should_auto_alert
 from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
+from auth import get_current_user, authenticate_user, create_access_token
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -93,7 +95,10 @@ API_KEY: str = os.getenv("API_KEY", "")
 UPLOAD_TTL_HOURS: int = int(os.getenv("UPLOAD_TTL_HOURS", "24"))
 
 # LLM summarizer — set ENABLE_LLM_SUMMARY=false to skip (faster, no API calls).
-ENABLE_LLM_SUMMARY: bool = os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
+# Note: this is checked at runtime via the function below, not cached
+def _get_enable_llm_summary() -> bool:
+    """Read ENABLE_LLM_SUMMARY from environment (allows .env changes without restart)."""
+    return os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
 
 # ── TTL cache ─────────────────────────────────────────────────────────────────
 
@@ -663,6 +668,54 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+# ── Auth models ───────────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+
+@app.post("/auth/login")
+def login(body: LoginRequest):
+    """
+    Authenticate with username + password.
+    Returns a signed JWT on success.
+    """
+    from auth import authenticate_user, create_access_token
+    user = authenticate_user(body.username, body.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+        )
+    token = create_access_token(user["username"], user.get("role", "admin"))
+    audit_log("login_success", details={"username": user["username"]})
+    logger.info(f"Login: '{user['username']}' authenticated successfully.")
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "username": user["username"],
+        "role": user.get("role", "admin"),
+    }
+
+
+@app.post("/auth/logout")
+def logout():
+    """
+    Stateless logout — the client discards the token.
+    Logged for audit purposes.
+    """
+    audit_log("logout")
+    return {"message": "Logged out successfully."}
+
+
+@app.get("/auth/me")
+def me(current_user: dict = Depends(get_current_user)):
+    """Return the currently authenticated user's info."""
+    return current_user
+
 @app.get("/")
 def home():
     return {"message": "Audio Safety Analyzer Running", "version": "2.1.0"}
@@ -679,6 +732,16 @@ def health():
         "s3": s3_ping(),
         "mongodb": {"connected": mongo_ping()},
     }
+
+
+@app.post("/collect")
+@app.options("/collect")
+def collect_telemetry():
+    """
+    Vite analytics endpoint — silently accept and discard telemetry.
+    Prevents 400 errors in logs when frontend tries to send analytics data.
+    """
+    return {"status": "ok"}
 
 
 @app.post("/analyze")

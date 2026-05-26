@@ -3,15 +3,79 @@ import axios from 'axios';
 // All API calls go through the Vite proxy: /api/v1 → http://localhost:8000
 const api = axios.create({
   baseURL: '/api/v1',
-  timeout: 30000, // 30 s default timeout for regular requests
+  timeout: 30000,
 });
 
-// Attach X-API-Key header if VITE_API_KEY is set in the frontend .env
-// (create frontend/.env with VITE_API_KEY=your-key to enable)
-const _apiKey = import.meta.env?.VITE_API_KEY;
-if (_apiKey) {
-  api.defaults.headers.common['X-API-Key'] = _apiKey;
-}
+// ── Auth token helpers ────────────────────────────────────────────────────────
+
+export const getToken = () => localStorage.getItem('auth_token');
+export const getStoredUser = () => {
+  try { return JSON.parse(localStorage.getItem('auth_user') || 'null'); }
+  catch { return null; }
+};
+
+export const saveAuth = (token, user) => {
+  localStorage.setItem('auth_token', token);
+  localStorage.setItem('auth_user', JSON.stringify(user));
+};
+
+export const clearAuth = () => {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+  // Legacy key cleanup
+  localStorage.removeItem('isAuthenticated');
+};
+
+// ── Attach JWT to every request ───────────────────────────────────────────────
+
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) config.headers['Authorization'] = `Bearer ${token}`;
+
+  // Legacy X-API-Key support (if set in frontend .env)
+  const apiKey = import.meta.env?.VITE_API_KEY;
+  if (apiKey) config.headers['X-API-Key'] = apiKey;
+
+  return config;
+});
+
+// ── Global 401 handler — redirect to login ────────────────────────────────────
+
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      clearAuth();
+      // Only redirect if not already on the login page
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(err);
+  },
+);
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Log in with username + password.
+ * Stores the JWT and user info in localStorage on success.
+ */
+export const login = async (username, password) => {
+  // Auth routes are on the root backend, not under /api/v1
+  const response = await axios.post('/auth/login', { username, password });
+  const { access_token, username: user, role } = response.data;
+  saveAuth(access_token, { username: user, role });
+  return response.data;
+};
+
+/**
+ * Log out — clears local storage and notifies the server (fire-and-forget).
+ */
+export const logout = async () => {
+  try { await api.post('/auth/logout'); } catch { /* ignore */ }
+  clearAuth();
+};
 
 // ── History ───────────────────────────────────────────────────────────────────
 

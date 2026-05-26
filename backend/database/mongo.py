@@ -86,6 +86,8 @@ def _ensure_indexes(db) -> None:
         db["processing_status"].create_index([("meeting_id", ASCENDING)], unique=True)
         db["audit_logs"].create_index([("meeting_id", ASCENDING)])
         db["audit_logs"].create_index([("timestamp", DESCENDING)])
+        # users — unique username index for fast login lookups
+        db["users"].create_index([("username", ASCENDING)], unique=True)
         # counters collection — no extra index needed (_id is already indexed)
     except Exception as e:
         logger.warning(f"MongoDB index creation warning: {e}")
