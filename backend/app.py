@@ -411,8 +411,12 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
         except Exception as _e:
             logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
 
-        # Invalidate caches so next /history and /analytics reflect new data
+        # Invalidate both cache layers so next /history and /analytics reflect new data
         _cache.invalidate()
+        from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
+        _h_cache.invalidate()
+        _r_cache.invalidate()
+        _e_cache.invalidate()
 
         # Auto-alert email
         if should_auto_alert(severity):
@@ -526,6 +530,10 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
             logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
 
         _cache.invalidate()
+        from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
+        _h_cache.invalidate()
+        _r_cache.invalidate()
+        _e_cache.invalidate()
 
         # Auto-alert email
         if should_auto_alert(severity):
@@ -627,6 +635,10 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
             logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
 
         _cache.invalidate()
+        from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
+        _h_cache.invalidate()
+        _r_cache.invalidate()
+        _e_cache.invalidate()
 
         # Auto-alert email
         if should_auto_alert(severity):
@@ -980,6 +992,10 @@ def delete_report(report_id: int):
 
     # ── 5. Invalidate caches ──────────────────────────────────────────────────
     _cache.invalidate()
+    from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
+    _h_cache.invalidate()
+    _r_cache.invalidate()
+    _e_cache.invalidate()
 
     logger.info(f"[#{report_id}] Report fully deleted (local PDF + S3 + MongoDB)")
 

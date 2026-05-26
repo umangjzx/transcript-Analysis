@@ -94,6 +94,9 @@ const Dashboard = () => {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
+  const [datePreset, setDatePreset] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate]     = useState('');
   const [sortKey, setSortKey]     = useState('id');
   const [sortDir, setSortDir]     = useState('desc');
   // Delete state
@@ -149,6 +152,30 @@ const Dashboard = () => {
 
   const filtered = history
     .filter(h => (h.filename || '').toLowerCase().includes(search.toLowerCase()))
+    .filter(h => {
+      if (datePreset === 'all') return true;
+      if (!h.created_at) return false;
+      const hDateObj = new Date(h.created_at);
+      const hDate = hDateObj.getTime();
+      
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      
+      if (datePreset === 'today') {
+        return hDate >= todayStart;
+      }
+      if (datePreset === 'yesterday') {
+        const yesterdayStart = todayStart - 86400000;
+        return hDate >= yesterdayStart && hDate < todayStart;
+      }
+      if (datePreset === 'custom') {
+        if (!startDate && !endDate) return true;
+        const start = startDate ? new Date(startDate).getTime() : 0;
+        const end = endDate ? new Date(endDate).getTime() + 86400000 : Infinity;
+        return hDate >= start && hDate <= end;
+      }
+      return true;
+    })
     .sort((a, b) => {
       let va = a[sortKey], vb = b[sortKey];
       if (typeof va === 'string') va = va.toLowerCase();
@@ -215,7 +242,7 @@ const Dashboard = () => {
 
       {/* Stat Cards */}
       <div className="stats-grid">
-        <div className="stat-card glass-panel">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-100">
           <div className="flex-between">
             <span className="stat-title">Total Analyzed</span>
             <FileAudio size={20} style={{ color: 'var(--accent-primary)' }} />
@@ -224,7 +251,7 @@ const Dashboard = () => {
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>audio files processed</span>
         </div>
 
-        <div className="stat-card glass-panel">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-200">
           <div className="flex-between">
             <span className="stat-title">High / Critical Risk</span>
             <ShieldAlert size={20} style={{ color: 'var(--status-high)' }} />
@@ -235,7 +262,7 @@ const Dashboard = () => {
           </span>
         </div>
 
-        <div className="stat-card glass-panel">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-300">
           <div className="flex-between">
             <span className="stat-title">Average Risk Score</span>
             <TrendingUp size={20} style={{ color: 'var(--status-moderate)' }} />
@@ -244,7 +271,7 @@ const Dashboard = () => {
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>out of 100</span>
         </div>
 
-        <div className="stat-card glass-panel">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-400">
           <div className="flex-between">
             <span className="stat-title">Safe / Low Risk</span>
             <CheckCircle size={20} style={{ color: 'var(--status-safe)' }} />
@@ -255,7 +282,7 @@ const Dashboard = () => {
 
         {analytics && (
           <>
-            <div className="stat-card glass-panel">
+            <div className="stat-card glass-panel hover-lift animate-slide-up delay-500">
               <div className="flex-between">
                 <span className="stat-title">Total Findings</span>
                 <Activity size={20} style={{ color: 'var(--accent-secondary)' }} />
@@ -264,7 +291,7 @@ const Dashboard = () => {
               <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>across all reports</span>
             </div>
 
-            <div className="stat-card glass-panel">
+            <div className="stat-card glass-panel hover-lift animate-slide-up delay-600">
               <div className="flex-between">
                 <span className="stat-title">ML Agreement Rate</span>
                 <Brain size={20} style={{ color: 'var(--accent-primary)' }} />
@@ -469,18 +496,68 @@ const Dashboard = () => {
       )}
 
       {/* Table Panel */}
-      <div className="glass-panel">
-        <div className="flex-between" style={{ padding: 'var(--spacing-lg) var(--spacing-xl)', borderBottom: '1px solid var(--border-color)' }}>
+      <div className="glass-panel animate-slide-up delay-400">
+        <div className="flex-between" style={{ padding: 'var(--spacing-lg) var(--spacing-xl)', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap', gap: '1rem' }}>
           <h2 className="heading-3">Analysis History</h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-color)' }}>
-            <Search size={15} style={{ color: 'var(--text-tertiary)' }} />
-            <input
-              type="text"
-              placeholder="Search files..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ background: 'transparent', border: 'none', color: 'white', outline: 'none', width: 180 }}
-            />
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            {/* Date Filters */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <select
+                value={datePreset}
+                onChange={(e) => setDatePreset(e.target.value)}
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}
+              >
+                <option value="all" style={{ background: 'var(--bg-primary)' }}>All Time</option>
+                <option value="today" style={{ background: 'var(--bg-primary)' }}>Today</option>
+                <option value="yesterday" style={{ background: 'var(--bg-primary)' }}>Yesterday</option>
+                <option value="custom" style={{ background: 'var(--bg-primary)' }}>Custom Range</option>
+              </select>
+
+              {datePreset === 'custom' && (
+                <>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem' }}
+                    title="Start Date"
+                  />
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>to</span>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={e => setEndDate(e.target.value)}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem' }}
+                    title="End Date"
+                  />
+                  {(startDate || endDate) && (
+                    <button 
+                      className="btn-icon" 
+                      onClick={() => { setStartDate(''); setEndDate(''); }}
+                      title="Clear custom dates"
+                      style={{ padding: '0.3rem' }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Search */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-color)', transition: 'all 0.3s ease' }}>
+              <Search size={15} style={{ color: 'var(--text-tertiary)' }} />
+              <input
+                type="text"
+                placeholder="Search files..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{ background: 'transparent', border: 'none', color: 'white', outline: 'none', width: 180 }}
+                onFocus={(e) => e.target.parentElement.style.borderColor = 'var(--accent-primary)'}
+                onBlur={(e) => e.target.parentElement.style.borderColor = 'var(--border-color)'}
+              />
+            </div>
           </div>
         </div>
 

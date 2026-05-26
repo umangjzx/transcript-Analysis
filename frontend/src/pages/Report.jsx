@@ -460,9 +460,9 @@ const Report = () => {
   const flaggedTexts = new Set(findings.map(f => (f.evidence || f.text || '').toLowerCase().trim()));
 
   return (
-    <div className="report-wrapper animate-fade-in">
+    <div className="report-wrapper">
       {/* ── Header ── */}
-      <div className="report-header">
+      <div className="report-header animate-slide-up delay-100">
         <div className="report-header-left">
           <button className="btn btn-icon" onClick={() => navigate('/')} title="Back to Dashboard">
             <ArrowLeft size={18} />
@@ -535,7 +535,7 @@ const Report = () => {
       </div>
 
       {/* ── Top Stats Bar ── */}
-      <div className="report-stats-bar glass-panel">
+      <div className="report-stats-bar glass-panel animate-slide-up delay-200">
         <StatPill label="Total Findings" value={findings.length} color="var(--text-primary)" />
         <div className="stats-bar-divider" />
         <StatPill label="Evidence Items" value={evidence.length} color="var(--accent-primary)" />
@@ -553,7 +553,7 @@ const Report = () => {
       <div className={`report-main-layout ${chatOpen ? 'chat-open' : ''}`}>
         <div className="report-content">
           {/* Tab Navigation */}
-          <div className="report-tabs glass-panel">
+          <div className="report-tabs glass-panel animate-slide-up delay-300">
             <TabButton active={activeTab === 'overview'}  onClick={() => handleTabChange('overview')}  icon={Activity}    label="Overview" />
             <TabButton active={activeTab === 'findings'}  onClick={() => handleTabChange('findings')}  icon={ShieldAlert} label="Findings Debugger" count={findings.length} />
             <TabButton active={activeTab === 'evidence'}  onClick={() => handleTabChange('evidence')}  icon={Eye}         label="Evidence Log" count={evidence.length} />

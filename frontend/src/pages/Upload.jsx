@@ -302,20 +302,20 @@ const Upload = () => {
       </div>
 
       {/* Mode tabs */}
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
+      <div className="animate-slide-up delay-100" style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
         <ModeTab active={mode === 'audio'}      onClick={() => switchMode('audio')}      icon={FileAudio} label="Audio File" />
         <ModeTab active={mode === 'video'}      onClick={() => switchMode('video')}      icon={FileVideo} label="Video File" />
         <ModeTab active={mode === 'transcript'} onClick={() => switchMode('transcript')} icon={FileText}  label="Transcript Text" />
       </div>
 
-      <div className="glass-panel" style={{ padding: 'var(--spacing-2xl)' }}>
+      <div className="glass-panel animate-slide-up delay-200" style={{ padding: 'var(--spacing-2xl)' }}>
 
         {/* ── Audio / Video upload ── */}
         {(mode === 'audio' || mode === 'video') && (
           <>
             {!file ? (
               <div
-                className={`upload-zone ${isDragging ? 'drag-active' : ''}`}
+                className={`upload-zone hover-lift ${isDragging ? 'drag-active pulse-glow' : ''}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
