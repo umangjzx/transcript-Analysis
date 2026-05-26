@@ -58,6 +58,36 @@ export const uploadAudio = async (file, onUploadProgress) => {
   return response.data;
 };
 
+/**
+ * Upload a video file for analysis.
+ * Audio is extracted server-side; uses a longer timeout for large video files.
+ */
+export const uploadVideo = async (file, onUploadProgress) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post('/analyze/video', formData, {
+    timeout: 1_800_000, // 30 minutes — 500 MB video on slow connections
+    onUploadProgress,
+  });
+
+  return response.data;
+};
+
+/**
+ * Submit a plain-text transcript directly for analysis (skips transcription).
+ * @param {string} transcript - The transcript text
+ * @param {string} filename   - Optional display name (e.g. "interview.txt")
+ */
+export const analyzeTranscript = async (transcript, filename = 'transcript_input.txt') => {
+  const response = await api.post(
+    '/analyze/transcript',
+    { transcript, filename },
+    { timeout: 600_000 },
+  );
+  return response.data;
+};
+
 // ── Chatbot ───────────────────────────────────────────────────────────────────
 
 /**

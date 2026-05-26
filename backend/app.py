@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
-from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, APP_URL
+from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, ALLOWED_VIDEO_EXTENSIONS, APP_URL
 from database.mongo import (
     save_full_analysis, save_processing_status,
     update_meeting_status, audit_log, log_alert,
@@ -421,6 +421,211 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
         audit_log("analysis_failed", meeting_id=record_id, details={"error": str(_e)})
         logger.error(f"[#{record_id}] Background processing FAILED: {_e}", exc_info=True)
 
+def process_video_background(record_id: int, audio_filepath: str, filename: str):
+    """
+    Analysis pipeline for video-sourced audio.
+    - Skips S3 audio upload (we never store the video or its extracted audio)
+    - Deletes the temporary WAV file immediately after transcription
+    - Stores only transcript text + analysis results in MongoDB
+    """
+    started_at = datetime.utcnow()
+    save_processing_status(record_id, "PROCESSING", "transcription", started_at=started_at)
+    audit_log("video_analysis_started", meeting_id=record_id, details={"filename": filename})
+    pdf_path: Optional[str] = None
+    s3_pdf_url: Optional[str] = None
+
+    try:
+        # Transcription — use the temp WAV, then delete it immediately
+        try:
+            transcript, timeline = transcribe_audio(audio_filepath)
+            logger.info(f"[#{record_id}] Transcription complete: {len(transcript)} chars")
+        finally:
+            # Always remove the temp audio file — video source is never stored
+            try:
+                os.remove(audio_filepath)
+                logger.info(f"[#{record_id}] Temp audio file deleted: {audio_filepath}")
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] Could not delete temp audio: {_e}")
+
+        save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
+
+        # Detection
+        analysis_result = grooming_detector.analyze_transcript(transcript=transcript, speaker_aware=True)
+        findings = analysis_result.get("grouped_findings", [])
+        evidence = extract_evidence(findings)
+        save_processing_status(record_id, "PROCESSING", "scoring", started_at=started_at)
+
+        # Scoring & severity
+        risk_result = risk_scorer.calculate_score(findings)
+        risk_score = risk_result.get("score", 0)
+        severity = classify_severity(risk_score)
+        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} → {severity}")
+
+        # Stats & summaries
+        stats = generate_stats(transcript, findings, severity, risk_score)
+        summary = generate_summary(transcript, findings, risk_score, severity)
+        save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
+
+        try:
+            llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
+        except Exception as _e:
+            logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
+            llm_summary = f"LLM Summary unavailable: {_e}"
+
+        # Vector store
+        try:
+            store_transcript(record_id, transcript)
+        except Exception as _e:
+            logger.warning(f"[#{record_id}] Vector store failed: {_e}")
+
+        # PDF
+        try:
+            pdf_path = generate_pdf_report(
+                report_id=record_id, filename=filename, severity=severity,
+                risk_score=risk_score, findings=findings, summary=llm_summary,
+            )
+            update_pdf_path(record_id, pdf_path)
+            try:
+                s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
+                if s3_pdf_url:
+                    update_s3_urls(record_id, s3_pdf_url=s3_pdf_url)
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
+        except Exception as _e:
+            logger.error(f"[#{record_id}] PDF generation failed: {_e}", exc_info=True)
+
+        # MongoDB — save transcript + analysis, no s3_url for audio
+        try:
+            save_full_analysis(
+                meeting_id=record_id, filename=filename, transcript=transcript,
+                timeline=timeline, findings=findings, risk_score=risk_score,
+                severity=severity, llm_summary=llm_summary, rule_summary=summary,
+                stats=stats, started_at=started_at, s3_url=None,
+                evidence=evidence, pdf_path=pdf_path, s3_pdf_url=s3_pdf_url,
+            )
+        except Exception as _e:
+            logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
+
+        _cache.invalidate()
+
+        # Auto-alert email
+        if should_auto_alert(severity):
+            try:
+                send_alert_email(
+                    report_id=record_id, filename=filename, severity=severity,
+                    risk_score=risk_score, findings=findings, summary=llm_summary,
+                    stats=stats, pdf_path=pdf_path, app_url=APP_URL,
+                )
+                audit_log("alert_email_sent", meeting_id=record_id,
+                          details={"severity": severity, "risk_score": risk_score})
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] Auto-alert email failed: {_e}")
+
+        logger.info(f"[#{record_id}] Video analysis COMPLETED — severity={severity}, score={risk_score:.1f}")
+
+    except Exception as _e:
+        save_processing_status(record_id, "FAILED", "error",
+                               started_at=started_at, completed_at=datetime.utcnow(), error=str(_e))
+        update_meeting_status(record_id, "FAILED")
+        audit_log("video_analysis_failed", meeting_id=record_id, details={"error": str(_e)})
+        logger.error(f"[#{record_id}] Video background processing FAILED: {_e}", exc_info=True)
+
+
+
+    """
+    Analysis pipeline for a pre-supplied transcript — skips transcription.
+    Writes to MongoDB + S3 only (no audio file to upload).
+    """
+    started_at = datetime.utcnow()
+    save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
+    audit_log("transcript_analysis_started", meeting_id=record_id, details={"filename": filename})
+    pdf_path: Optional[str] = None
+    s3_pdf_url: Optional[str] = None
+
+    try:
+        # Build a minimal timeline (no timestamps available for raw text)
+        timeline = [{"start": 0.0, "end": 0.0, "text": transcript, "speaker": "UNKNOWN"}]
+
+        # Detection
+        analysis_result = grooming_detector.analyze_transcript(transcript=transcript, speaker_aware=True)
+        findings = analysis_result.get("grouped_findings", [])
+        evidence = extract_evidence(findings)
+        save_processing_status(record_id, "PROCESSING", "scoring", started_at=started_at)
+
+        # Scoring & severity
+        risk_result = risk_scorer.calculate_score(findings)
+        risk_score = risk_result.get("score", 0)
+        severity = classify_severity(risk_score)
+        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} → {severity}")
+
+        # Stats & summaries
+        stats = generate_stats(transcript, findings, severity, risk_score)
+        summary = generate_summary(transcript, findings, risk_score, severity)
+        save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
+
+        try:
+            llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
+        except Exception as _e:
+            logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
+            llm_summary = f"LLM Summary unavailable: {_e}"
+
+        # Vector store
+        try:
+            store_transcript(record_id, transcript)
+        except Exception as _e:
+            logger.warning(f"[#{record_id}] Vector store failed: {_e}")
+
+        # PDF
+        try:
+            pdf_path = generate_pdf_report(
+                report_id=record_id, filename=filename, severity=severity,
+                risk_score=risk_score, findings=findings, summary=llm_summary,
+            )
+            update_pdf_path(record_id, pdf_path)
+            try:
+                s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
+                if s3_pdf_url:
+                    update_s3_urls(record_id, s3_pdf_url=s3_pdf_url)
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
+        except Exception as _e:
+            logger.error(f"[#{record_id}] PDF generation failed: {_e}", exc_info=True)
+
+        # MongoDB — full analysis save
+        try:
+            save_full_analysis(
+                meeting_id=record_id, filename=filename, transcript=transcript,
+                timeline=timeline, findings=findings, risk_score=risk_score,
+                severity=severity, llm_summary=llm_summary, rule_summary=summary,
+                stats=stats, started_at=started_at, s3_url=None,
+                evidence=evidence, pdf_path=pdf_path, s3_pdf_url=s3_pdf_url,
+            )
+        except Exception as _e:
+            logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
+
+        _cache.invalidate()
+
+        # Auto-alert email
+        if should_auto_alert(severity):
+            try:
+                send_alert_email(
+                    report_id=record_id, filename=filename, severity=severity,
+                    risk_score=risk_score, findings=findings, summary=llm_summary,
+                    stats=stats, pdf_path=pdf_path, app_url=APP_URL,
+                )
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] Auto-alert email failed: {_e}")
+
+        logger.info(f"[#{record_id}] Transcript analysis COMPLETED — severity={severity}, score={risk_score:.1f}")
+
+    except Exception as _e:
+        save_processing_status(record_id, "FAILED", "error",
+                               started_at=started_at, completed_at=datetime.utcnow(), error=str(_e))
+        update_meeting_status(record_id, "FAILED")
+        audit_log("transcript_analysis_failed", meeting_id=record_id, details={"error": str(_e)})
+        logger.error(f"[#{record_id}] Transcript background processing FAILED: {_e}", exc_info=True)
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -482,6 +687,145 @@ async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = Fi
 
     return {"id": record_id, "filename": original_filename,
             "status": "PROCESSING", "message": "Analysis started in background"}
+
+
+MAX_VIDEO_UPLOAD_BYTES = int(os.getenv("MAX_VIDEO_UPLOAD_MB", "500")) * 1024 * 1024
+_VIDEO_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks — never loads full file into memory
+
+
+@app.post("/analyze/video")
+async def analyze_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """
+    Upload a video file, extract its audio track, then run the full analysis pipeline.
+    Supported formats: .mp4, .mkv, .avi, .mov, .webm, .flv, .wmv
+
+    The video is streamed to disk in 1 MB chunks — the full file is never held
+    in memory. The video file is deleted immediately after audio extraction.
+    Only the transcript text and analysis results are stored.
+    """
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    if extension not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported video format '{extension}'. Allowed: {', '.join(ALLOWED_VIDEO_EXTENSIONS)}",
+        )
+
+    safe_disk_name = f"{uuid.uuid4().hex}{extension}"
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    video_filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
+    original_filename = file.filename or safe_disk_name
+
+    # Stream to disk in chunks — avoids loading 500 MB into memory
+    file_size = 0
+    try:
+        with open(video_filepath, "wb") as buffer:
+            while True:
+                chunk = await file.read(size=_VIDEO_CHUNK_SIZE)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > MAX_VIDEO_UPLOAD_BYTES:
+                    # Exceeded limit — clean up and reject
+                    buffer.close()
+                    try:
+                        os.remove(video_filepath)
+                    except Exception:
+                        pass
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum allowed size for video is {MAX_VIDEO_UPLOAD_BYTES // (1024*1024)} MB.",
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            os.remove(video_filepath)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to save video file: {str(e)}")
+
+    # Extract audio from video to a WAV file
+    audio_disk_name = f"{uuid.uuid4().hex}.wav"
+    audio_filepath = os.path.join(UPLOAD_FOLDER, audio_disk_name)
+    try:
+        from modules.transcriber import extract_audio_from_video
+        extract_audio_from_video(video_filepath, audio_filepath)
+    except Exception as e:
+        try:
+            os.remove(video_filepath)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not extract audio from video: {str(e)}",
+        )
+
+    # Remove the original video file immediately — never stored
+    try:
+        os.remove(video_filepath)
+        logger.info(f"Video file deleted after extraction: {video_filepath}")
+    except Exception as _e:
+        logger.warning(f"Could not delete video file: {_e}")
+
+    from database.mongo import save_meeting_metadata as _save_meta
+    record_id = next_meeting_id()
+    _save_meta(
+        meeting_id=record_id,
+        filename=original_filename,
+        file_size_bytes=file_size,
+        status="PROCESSING",
+    )
+
+    background_tasks.add_task(process_video_background, record_id, audio_filepath, original_filename)
+    audit_log("video_uploaded", meeting_id=record_id, user_action="upload",
+              details={"filename": original_filename, "size_bytes": file_size})
+    logger.info(f"[#{record_id}] Video upload accepted, audio extracted: {original_filename} ({file_size // 1024} KB)")
+
+    return {"id": record_id, "filename": original_filename,
+            "status": "PROCESSING", "message": "Video audio extracted, analysis started in background"}
+
+
+@app.post("/analyze/transcript")
+async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Request):
+    """
+    Submit a plain-text transcript directly and run the analysis pipeline,
+    skipping the transcription step.
+
+    Accepts JSON body: { "transcript": "...", "filename": "optional-name.txt" }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON.")
+
+    transcript_text: str = body.get("transcript", "").strip()
+    if not transcript_text:
+        raise HTTPException(status_code=400, detail="'transcript' field is required and must not be empty.")
+
+    if len(transcript_text) > 500_000:
+        raise HTTPException(status_code=413, detail="Transcript too large. Maximum 500,000 characters.")
+
+    original_filename: str = body.get("filename", "transcript_input.txt").strip() or "transcript_input.txt"
+
+    from database.mongo import save_meeting_metadata as _save_meta
+    record_id = next_meeting_id()
+    _save_meta(
+        meeting_id=record_id,
+        filename=original_filename,
+        file_size_bytes=len(transcript_text.encode("utf-8")),
+        status="PROCESSING",
+    )
+
+    background_tasks.add_task(
+        process_transcript_background, record_id, transcript_text, original_filename
+    )
+    audit_log("transcript_submitted", meeting_id=record_id, user_action="upload",
+              details={"filename": original_filename, "char_count": len(transcript_text)})
+    logger.info(f"[#{record_id}] Transcript submitted: {original_filename} ({len(transcript_text)} chars)")
+
+    return {"id": record_id, "filename": original_filename,
+            "status": "PROCESSING", "message": "Transcript received, analysis started in background"}
 
 
 @app.get("/report/{report_id}/status")

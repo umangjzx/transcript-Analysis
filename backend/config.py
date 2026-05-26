@@ -15,6 +15,16 @@ ALLOWED_EXTENSIONS = [
     ".ogg"
 ]
 
+ALLOWED_VIDEO_EXTENSIONS = [
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".webm",
+    ".flv",
+    ".wmv",
+]
+
 # ── Email / SMTP ──────────────────────────────────────────────────────────────
 SMTP_HOST        = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT        = int(os.getenv("SMTP_PORT", "587"))
