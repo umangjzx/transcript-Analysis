@@ -1,6 +1,6 @@
-# Audio Safety Analyzer
+# AuraSafety — Backend
 
-A production-grade backend system for detecting grooming behaviour, explicit content, and harmful language in audio conversations. Supports Discord voice chats, WhatsApp calls, Zoom meetings, gaming voice chats, podcasts, workplace calls, and any general audio source.
+Production-grade FastAPI backend for detecting grooming behaviour, explicit content, and harmful language in audio conversations. Supports Discord voice chats, WhatsApp calls, Zoom meetings, gaming voice chats, and any general audio source.
 
 ---
 
@@ -13,95 +13,69 @@ flowchart TD
     end
 
     subgraph TRANSCRIPTION["② TRANSCRIPTION"]
-        B[faster-whisper\nWhisper Base Model]
+        B[faster-whisper\nWhisper Base Model · CPU · int8]
         B1[(Transcript Text)]
-        B2[(Timeline\nstart/end/text)]
+        B2[(Timeline\nstart / end / text / speaker)]
     end
 
     subgraph DETECTION["③ GROOMING DETECTION PIPELINE"]
-        direction TB
         C[Sentence Splitter\nSpeaker Label Parser]
-        subgraph PATTERNS["Pattern Detection — patterns.py"]
-            P1[parent_monitoring] P2[secrecy] P3[trust_building]
-            P4[relationship_building] P5[manipulation] P6[video_call]
-            P7[meeting] P8[address] P9[school] P10[routine]
-            P11[explicit_content] P12[bad_language]
-        end
-        subgraph CONTEXT["Context Classification — context_analyzer.py"]
-            CT1[ADMINISTRATIVE -0.40] CT2[SECRECY +0.40]
-            CT3[EXPLICIT_CONTENT +0.50] CT4[MANIPULATION +0.30]
-            CT5[MEETING +0.35] CT6[ESCALATION +0.35]
-        end
-        subgraph FILTERS["Filters — filters.py"]
-            F1[NegationFilter token-scoped ±5]
-            F2[JokeFilter ±2 sentence window]
-        end
-        subgraph CONFIDENCE["Confidence Scoring — confidence.py"]
-            CS1[Base + Exact Phrase +0.15 + Keyword +0.10]
-            CS2[± Context Multiplier]
-            CS3[- Negation -0.40 / Joke -0.50]
-            CS4[Clamp 0.0 – 1.0]
-        end
-        subgraph ML["ML Classifier — ml_classifier.py"]
-            ML1[distilbert-base-uncased-mnli Zero-Shot NLI]
-            ML2[13 Labels · fuse_with_regex 25% weight]
-        end
-        EG[Evidence Grouping\nDeduplication + Category Merge]
+        PAT[patterns.py · 20 compiled regex categories]
+        CTX[context_analyzer.py · 13 ContextTypes · −0.40 to +0.50]
+        FIL[filters.py · NegationFilter ±5 tokens · JokeFilter ±2 sentences]
+        CONF[confidence.py · base + bonuses ± multipliers − penalties]
+        ML[ml_classifier.py · distilbert-base-uncased-mnli · 25% fusion]
+        EG[evidence_grouping.py · dedup + category merge]
     end
 
     subgraph SCORING["④ RISK SCORING"]
-        RS1[WeightedRiskScorer\nDiminishing Returns · cap 100]
-        RS2{Risk Level}
+        RS[risk_scorer.py · weighted · diminishing returns · cap 100]
     end
 
-    subgraph STORAGE["⑤ STORAGE"]
-        DB[(SQLite\nanalysis.db)]
-        MDB[(MongoDB\n7 collections)]
-        S3[(AWS S3\n5 storage types)]
-        VEC[(ChromaDB\nVector Store)]
+    subgraph OUTPUT["⑤ OUTPUT"]
+        SV[severity_classifier.py]
+        SUM[summarizer.py · rule-based]
+        LLM[llm_summarizer.py · Ollama Llama 3.1]
+        PDF[report_generator.py · PDF]
+        BOT[chatbot.py · RAG · ChromaDB + Ollama]
+        EMAIL[email_notifier.py · alert + summary]
     end
 
-    subgraph OUTPUT["⑥ OUTPUT"]
-        SV[Severity Classifier]
-        ST[Stats Generator]
-        SUM[Rule Summary]
-        LLM[LLM Summary\nOllama llama3.1]
-        PDF[PDF Report]
-        BOT[RAG Chatbot]
-        EMAIL[Email Notifier\nAlert + Summary]
+    subgraph STORAGE["⑥ STORAGE"]
+        DB[(SQLite · analysis.db)]
+        MDB[(MongoDB · 7 collections)]
+        S3[(AWS S3 · 5 storage types)]
+        VEC[(ChromaDB · vectors/)]
     end
 
-    subgraph API["⑦ API — FastAPI"]
+    subgraph API["⑦ REST API · FastAPI :8000"]
         EP1[POST /analyze]
-        EP2[GET /history]
-        EP3[GET /report/id]
-        EP4[GET /report/id/pdf]
-        EP5[POST /chat]
-        EP6[POST /notify/alert/id]
-        EP7[POST /notify/summary/id]
-        EP8[GET /analytics/summary]
+        EP2[GET /report/id/status]
+        EP3[GET /history · /report/id · /report/id/pdf]
+        EP4[POST /chat]
+        EP5[POST /notify/alert/id · /notify/summary/id]
+        EP6[GET /analytics/summary]
     end
 
     A --> B --> B1 & B2
-    B1 --> C --> PATTERNS --> CONTEXT --> FILTERS --> CONFIDENCE --> EG
-    CONFIDENCE --> ML --> EG
-    EG --> RS1 --> RS2
-    RS1 --> SV & ST & SUM & LLM & PDF
-    B1 --> VEC --> BOT
-    SV & ST & SUM & LLM & PDF --> DB & MDB
+    B1 --> C --> PAT --> CTX --> FIL --> CONF --> EG
+    CONF --> ML --> EG
+    EG --> RS --> SV & SUM & LLM
+    SV & SUM & LLM --> PDF
+    PDF --> DB & MDB & S3
     A --> S3
-    PDF --> S3
-    DB --> EP2 & EP3 & EP4
-    BOT --> EP5
-    EMAIL --> EP6 & EP7
-    DB --> EP8
+    B1 --> VEC --> BOT
+    EG --> DB & MDB
+    DB & MDB --> EP3 & EP6
+    BOT --> EP4
+    EMAIL --> EP5
+    EP1 & EP2 & EP3 & EP4 & EP5 & EP6 --> API
 ```
 
 ---
 
 ## Table of Contents
 
-- [Overview](#overview)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Detection Categories](#detection-categories)
@@ -111,7 +85,7 @@ flowchart TD
 - [Risk Scoring](#risk-scoring)
 - [Filters](#filters)
 - [Evidence Grouping](#evidence-grouping)
-- [Storage — SQLite + MongoDB + S3](#storage--sqlite--mongodb--s3)
+- [Storage](#storage)
 - [Email Notifications](#email-notifications)
 - [Modules Reference](#modules-reference)
 - [API Endpoints](#api-endpoints)
@@ -124,44 +98,23 @@ flowchart TD
 
 ---
 
-## Overview
-
-The Audio Safety Analyzer processes audio files through a multi-stage pipeline:
-
-1. **Transcribe** audio using Faster-Whisper
-2. **Detect** harmful patterns across 12 categories using compiled regex
-3. **Classify** the semantic context of each sentence
-4. **Filter** false positives caused by negation or jokes
-5. **Score** confidence per finding using context multipliers
-6. **Classify (ML)** each finding with a zero-shot NLI model — 13 labels, confidence fusion
-7. **Group** duplicate evidence across categories
-8. **Score** overall risk on a 0–100 weighted scale
-9. **Summarize** findings with both rule-based and LLM (Llama 3.1) summaries
-10. **Persist** results to SQLite, MongoDB (7 collections), and AWS S3
-11. **Generate** a PDF report (also uploaded to S3)
-12. **Notify** via email — automatic alert on High/Critical, on-demand summary
-13. **Serve** everything through a FastAPI REST API with a RAG chatbot
-
-> **No role-based assumptions.** The system never adjusts scores based on speaker labels. It evaluates *what is said*, not *who says it*.
-
----
-
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| API Framework | FastAPI |
-| Audio Transcription | Faster-Whisper (Whisper Base, CPU, int8) |
-| Pattern Detection | Python `re` — compiled regex |
+| API Framework | FastAPI 0.136 + Uvicorn 0.47 |
+| Audio Transcription | faster-whisper 1.2 (Whisper Base, CPU, int8) |
+| Speaker Diarization | pyannote.audio 3.3 (optional — requires `HF_TOKEN`) |
+| Pattern Detection | Python `re` — 20 compiled regex categories |
 | ML Classifier | `typeform/distilbert-base-uncased-mnli` — Zero-Shot NLI |
-| LLM Summary | Ollama — Llama 3.1 |
+| LLM Summary | Ollama — Llama 3.1 (optional, graceful fallback) |
 | Vector Store | ChromaDB (persistent) |
 | Embeddings | SentenceTransformers `all-MiniLM-L6-v2` |
 | Primary Database | SQLite via SQLAlchemy ORM |
-| Analytics Database | MongoDB Atlas (7 collections) |
-| File Storage | AWS S3 (5 storage types, AES-256 encrypted) |
+| Analytics Database | MongoDB Atlas — 7 collections |
+| File Storage | AWS S3 — 5 storage types, AES-256 encrypted |
 | Email | SMTP (Gmail / any provider) — HTML alert + summary templates |
-| PDF Generation | ReportLab via `report_generator.py` |
+| PDF Generation | ReportLab |
 | Runtime | Python 3.10+ |
 
 ---
@@ -171,13 +124,17 @@ The Audio Safety Analyzer processes audio files through a multi-stage pipeline:
 ```
 backend/
 │
-├── app.py                          # FastAPI application entry point
-├── config.py                       # All config — paths, DB URL, SMTP, S3, MongoDB
+├── app.py                          # FastAPI application — all routes + background tasks
+├── config.py                       # Paths, DB URL, SMTP, S3, MongoDB config
+├── auth.py                         # API key authentication helpers
 ├── requirements.txt                # Python dependencies
 ├── test_pipeline.py                # Interactive CLI pipeline tester
+├── test_email.py                   # 4-step SMTP integration test
+├── debug_env.py                    # Low-level SMTP credential debugger
+├── .env.example                    # Environment variable template
 │
 ├── api/
-│   └── audio_analysis_routes.py   # Versioned route definitions (/api/v1/*)
+│   └── audio_analysis_routes.py   # Versioned router /api/v1/* (Pydantic, pagination)
 │
 ├── services/
 │   └── audio_safety_service.py    # Async pipeline orchestration service
@@ -186,86 +143,108 @@ backend/
 │   └── audio_analysis_schemas.py  # Pydantic request/response models
 │
 ├── modules/
-│   ├── patterns.py                # Compiled regex pattern library (12 categories)
+│   ├── patterns.py                # 20-category compiled regex library
 │   ├── context_analyzer.py        # ContextType enum + multipliers
 │   ├── confidence.py              # Confidence scoring engine
 │   ├── filters.py                 # NegationFilter + JokeFilter
-│   ├── ml_classifier.py           # Zero-shot NLI classifier
+│   ├── ml_classifier.py           # Zero-shot NLI (distilbert-mnli), LRU cache
+│   ├── grooming_detector.py       # Main pipeline orchestrator
 │   ├── evidence_grouping.py       # Deduplication + category merging
-│   ├── grooming_detector.py       # Main detection pipeline orchestrator
-│   ├── risk_scorer.py             # Weighted risk scoring + diminishing returns
-│   ├── severity_classifier.py     # Score → Safe/Low/Moderate/High/Critical
+│   ├── risk_scorer.py             # Weighted risk scoring (0–100) + diminishing returns
+│   ├── severity_classifier.py     # Score → Safe / Low / Moderate / High / Critical
 │   ├── summarizer.py              # Rule-based summary generator
 │   ├── llm_summarizer.py          # Ollama Llama 3.1 summary
 │   ├── report_generator.py        # PDF report generation
-│   ├── transcriber.py             # Faster-Whisper transcription
-│   ├── evidence_extractor.py      # Evidence list extraction
-│   ├── stats.py                   # Statistics generation
+│   ├── transcriber.py             # faster-whisper transcription → (transcript, timeline)
+│   ├── evidence_extractor.py      # Evidence list extraction from grouped findings
+│   ├── stats.py                   # Statistics + timeline + ML agreement
 │   ├── chatbot.py                 # RAG chatbot (ChromaDB + Ollama)
-│   ├── email_notifier.py          # SMTP alert + summary email sender
-│   └── s3_storage.py              # AWS S3 upload/download/presign/delete
+│   ├── email_notifier.py          # SMTP alert + summary HTML emails
+│   ├── s3_storage.py              # AWS S3 upload / presign / delete
+│   ├── cache.py                   # TTL in-memory cache helpers
+│   └── file_cleanup.py            # Upload file cleanup daemon
 │
 ├── database/
-│   ├── db.py                      # SQLAlchemy engine + session
+│   ├── db.py                      # SQLAlchemy engine + session factory
 │   ├── models.py                  # AudioAnalysis ORM model
 │   └── mongo.py                   # MongoDB client — 7-collection schema
 │
 ├── examples/
-│   ├── test_script_bad.txt        # High-risk grooming transcript (CRITICAL)
-│   ├── test_script_medium.txt     # Ambiguous online chat transcript (MODERATE)
-│   ├── test_script_good.txt       # Safe classroom transcript (LOW)
+│   ├── test_script_bad.txt        # CRITICAL — all categories triggered
+│   ├── test_script_medium.txt     # MODERATE — ambiguous online gaming chat
+│   ├── test_script_good.txt       # LOW — safe classroom exchange
 │   └── run_test_scripts.py        # Pipeline test runner
 │
-└── (runtime — auto-created, git-ignored)
+└── (auto-created on first run, git-ignored)
     ├── uploads/                   # Uploaded audio files
     ├── reports/                   # Generated PDF reports
     ├── vectors/                   # ChromaDB persistent vector store
     ├── analysis.db                # SQLite database
-    └── logs/app.log               # Application logs
+    └── logs/app.log               # Application log (UTF-8, stdout + file)
 ```
 
 ---
 
 ## Detection Categories
 
-| Category | Severity | Base Confidence | Risk Weight | Description |
-|---|---|---|---|---|
-| `explicit_content` | Critical | 0.98 | 25 | Sexual solicitation, nude requests, explicit language |
-| `meeting` | Critical | 0.95 | 20 | Arranging in-person contact |
-| `address` | Critical | 0.90 | 20 | Requesting physical location or address |
-| `secrecy` | Critical | 0.95 | 15 | Demands to hide, delete, or not disclose |
-| `parent_monitoring` | High | 0.85 | 15 | Questions about parental supervision |
-| `school` | High | 0.75 | 10 | School name, grade, dismissal time |
-| `routine` | High | 0.80 | 10 | Daily schedule, walk home, route |
-| `video_call` | High | 0.80 | 10 | Video call requests, camera requests |
-| `manipulation` | Critical | 0.90 | 10 | Coercion, conditional threats, peer pressure |
-| `bad_language` | Medium | 0.85 | 8 | Profanity, slurs, threats, harassment |
-| `trust_building` | Medium | 0.80 | 5 | Emotional trust establishment |
-| `relationship_building` | High | 0.75 | 5 | Deepening personal dependency |
+The pipeline detects **20 categories** across the full grooming lifecycle.
+
+### Critical Severity
+
+| Category | Weight | Description |
+|---|---|---|
+| `explicit_content` | 25 | Sexual solicitation, nude requests, sexting, CSAM references |
+| `threats_coercion` | 22 | Blackmail, photo threats, reputation threats, "do it or else" |
+| `emotional_exploitation` | 18 | Guilt-tripping, "you're all I have", self-harm threats as control |
+| `isolation` | 16 | Discrediting friends/family, "you only need me", encouraging withdrawal |
+| `secrecy` | 15 | "Don't tell anyone", "delete these messages", "our secret" |
+| `meeting` | 20 | Arranging in-person contact, "sneak out", "come to my place" |
+| `address` | 20 | Requesting physical location, home address, zip code |
+| `manipulation` | 10 | Coercion, conditional threats, peer pressure, proof demands |
+
+### High Severity
+
+| Category | Weight | Description |
+|---|---|---|
+| `personal_information` | 18 | Phone numbers, email, social handles, real name, age, passwords |
+| `parent_monitoring` | 15 | Questions about parental supervision of messages/phone |
+| `age_deception` | 14 | "I'm the same age", "age is just a number", "you're mature for your age" |
+| `desensitization` | 14 | "It's normal", "everyone does it", minimising inappropriate behaviour |
+| `gift_bribery` | 12 | Gift offers, money, gaming currency, "I'll buy you anything" |
+| `video_call` | 10 | Video call requests, camera requests, selfie demands |
+| `school` | 10 | School name, grade, dismissal time, teacher names |
+| `routine` | 10 | Daily schedule, walk-home route, when alone at home |
+| `relationship_building` | 5 | Building personal dependency, "you're special to me" |
+
+### Medium Severity
+
+| Category | Weight | Description |
+|---|---|---|
+| `gaming_luring` | 10 | Roblox/Fortnite contact, "join my private server", moving to DMs |
+| `bad_language` | 8 | Profanity, slurs, hate speech, aggressive/threatening language |
+| `trust_building` | 5 | "Trust me", "I'm here for you", "you can tell me anything" |
 
 ---
 
 ## Context Classification
 
-Every sentence is classified into one or more `ContextType` values. The type drives a **confidence multiplier** — no speaker identity is ever consulted.
+Every sentence is classified into one or more `ContextType` values before confidence scoring. The type drives a multiplier — no speaker identity is ever consulted.
 
-```
-ContextType              Multiplier   Meaning
-──────────────────────────────────────────────────────────────────
-ADMINISTRATIVE             -0.40      Event logistics, forms, schedules → suppresses FPs
-INFORMATION_GATHERING      +0.15      Collecting personal details
-TRUST_BUILDING             +0.20      "I care about you", "trust me"
-RELATIONSHIP_BUILDING      +0.15      "special connection", "best friends"
-MANIPULATION               +0.30      "they won't understand", coercion
-SECRECY                    +0.40      "don't tell anyone", "our secret"
-ESCALATION                 +0.35      Private call, move to another platform
-MEETING                    +0.35      Meet up, in person, hang out
-PERSONAL_INFORMATION       +0.30      Address, phone, email, route
-VIDEO_CALL                 +0.25      Video chat, FaceTime, camera requests
-EXPLICIT_CONTENT           +0.50      Sexual language (highest multiplier)
-BAD_LANGUAGE               +0.20      Profanity, slurs, threats
-NEUTRAL                     0.00      No strong signal
-```
+| ContextType | Multiplier | Meaning |
+|---|---|---|
+| `ADMINISTRATIVE` | −0.40 | Event logistics, forms, schedules — suppresses false positives |
+| `INFORMATION_GATHERING` | +0.15 | Collecting personal details |
+| `TRUST_BUILDING` | +0.20 | "I care about you", "trust me" |
+| `RELATIONSHIP_BUILDING` | +0.15 | "special connection", "best friends" |
+| `MANIPULATION` | +0.30 | "they won't understand", coercion |
+| `SECRECY` | +0.40 | "don't tell anyone", "our secret" |
+| `ESCALATION` | +0.35 | Private call, move to another platform |
+| `MEETING` | +0.35 | Meet up, in person, hang out |
+| `PERSONAL_INFORMATION` | +0.30 | Address, phone, email, route |
+| `VIDEO_CALL` | +0.25 | Video chat, FaceTime, camera requests |
+| `EXPLICIT_CONTENT` | +0.50 | Sexual language — highest multiplier |
+| `BAD_LANGUAGE` | +0.20 | Profanity, slurs, threats |
+| `NEUTRAL` | 0.00 | No strong signal |
 
 ---
 
@@ -275,13 +254,13 @@ NEUTRAL                     0.00      No strong signal
 score = pattern_strength
       + exact_phrase_bonus      (+0.15 if matched text is a known exact phrase)
       + keyword_bonus           (+0.10 if ≥2 supporting keywords present)
-      + context_multiplier      (from ContextType, -0.40 to +0.50)
-      - negation_penalty        (up to -0.40, token-scoped within 5 tokens)
-      - joke_penalty            (up to -0.50, ±2 sentence window)
+      + context_multiplier      (from ContextType above, −0.40 to +0.50)
+      − negation_penalty        (up to −0.40, token-scoped within ±5 tokens)
+      − joke_penalty            (up to −0.50, ±2 sentence window)
 
 regex_confidence = clamp(score, 0.0, 1.0)
 
-# ML fusion (25% weight)
+# ML fusion (25% weight, when enabled)
 fused_confidence = 0.75 × regex_confidence + 0.25 × ml_category_score
 ```
 
@@ -293,45 +272,36 @@ fused_confidence = 0.75 × regex_confidence + 0.25 × ml_category_score
 - 13 labels mapped to detection categories
 - Temperature calibration T=1.3 for better-calibrated probabilities
 - Multi-label detection threshold: ≥0.15
-- Agreement/disagreement signal surfaced in finding output
-- LRU cache: 512 entries — repeated sentences are free
+- Agreement/disagreement signal surfaced in each finding under `finding["ml"]`
+- LRU cache: 512 entries — repeated sentences are free after first inference
 - Fused at 25% weight into the final confidence score
-- Disabled by default (`enable_ml_classifier=False`) — enable once model is cached (~400 MB)
+- **Disabled by default** (`ENABLE_ML_CLASSIFIER=false`) — enable once model is cached (~400 MB download on first run)
 
 ---
 
 ## Risk Scoring
 
 ```
-effective_score = weight × confidence × diminishing_return_factor
-total           = Σ effective_scores
-final           = min(total, 100)
+effective_score = weight × confidence          (1st occurrence)
+effective_score = weight × confidence × DR     (repeated occurrences)
+total_score     = Σ effective_scores, capped at 100
 ```
 
-**Diminishing returns (same category, repeated occurrences):**
+Diminishing returns — repeated occurrences of the same category are progressively down-weighted (100% → 50% → 25% → 12.5% → …) so a single repeated phrase cannot dominate the score.
 
-| Occurrence | Factor |
-|---|---|
-| 1st | 1.000 |
-| 2nd | 0.500 |
-| 3rd | 0.250 |
-| 4th+ | continues halving |
-
-**Risk levels:**
-
-| Level | Score Range |
-|---|---|
-| Safe | 0 – 20 |
-| Low | 21 – 40 |
-| Moderate | 41 – 60 |
-| High | 61 – 80 |
-| Critical | 81 – 100 |
+| Risk Level | Score Range | Meaning |
+|---|---|---|
+| Safe | 0–20 | No significant indicators |
+| Low | 21–40 | Minor concerns, may warrant monitoring |
+| Moderate | 41–60 | Multiple indicators, increased monitoring recommended |
+| High | 61–80 | Significant patterns, immediate review recommended |
+| Critical | 81–100 | Severe behaviour, urgent intervention required |
 
 ---
 
 ## Filters
 
-**NegationFilter** — token-scoped: negation only suppresses a finding if the negation word is within 5 tokens of the matched phrase. Secrecy phrases like "nobody needs to know" are exempt.
+**NegationFilter** — token-scoped: negation only suppresses a finding if the negation word is within 5 tokens of the matched phrase. Secrecy phrases like "nobody needs to know" are exempt because the negation is part of the threat.
 
 **JokeFilter** — ±2 sentence window. Joke indicators (`lol`, `jk`, `just kidding`, `😂`, etc.) in the current or neighbouring sentence apply up to −0.50 confidence penalty.
 
@@ -343,33 +313,35 @@ When a single sentence matches multiple categories, `EvidenceGroupingEngine` mer
 
 ---
 
-## Storage — SQLite + MongoDB + S3
+## Storage
 
 ### SQLite (`analysis.db`)
 
-Primary operational store. Every analysis result is written here.
+Primary operational store — every analysis result is written here. Created automatically on first run.
 
-```sql
-CREATE TABLE audio_analysis (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename    TEXT,
-    transcript  TEXT,
-    findings    TEXT,   -- JSON array
-    evidence    TEXT,   -- JSON array
-    stats       TEXT,   -- JSON object
-    summary     TEXT,
-    llm_summary TEXT,
-    severity    TEXT,
-    risk_score  REAL,
-    pdf_path    TEXT,
-    status      TEXT,
-    error_message TEXT
-);
+```
+audio_analysis
+├── id             INTEGER  PRIMARY KEY AUTOINCREMENT
+├── filename       TEXT
+├── transcript     TEXT
+├── findings       TEXT     JSON array of grouped findings
+├── evidence       TEXT     JSON array of evidence items
+├── stats          TEXT     JSON stats object
+├── summary        TEXT     Rule-based summary
+├── llm_summary    TEXT     Ollama LLM summary (or rule summary if Ollama unavailable)
+├── severity       TEXT     Safe / Low / Moderate / High / Critical
+├── risk_score     REAL     0.0 – 100.0
+├── pdf_path       TEXT     Local path to generated PDF
+├── diarization    TEXT     JSON timeline array
+├── status         TEXT     PENDING / PROCESSING / COMPLETED / FAILED
+├── error_message  TEXT     Populated only on FAILED status
+├── created_at     DATETIME
+└── updated_at     DATETIME
 ```
 
-### MongoDB (`database/mongo.py`)
+### MongoDB (7 collections)
 
-Analytics and audit store — 7 collections written on every completed analysis:
+Analytics and audit store written on every completed analysis:
 
 | Collection | Contents |
 |---|---|
@@ -381,15 +353,13 @@ Analytics and audit store — 7 collections written on every completed analysis:
 | `processing_status` | Pipeline stage, started_at, completed_at, errors |
 | `audit_logs` | All events — uploads, completions, failures, emails sent |
 
-All 7 collections are written atomically via `save_full_analysis()`. Individual helpers (`save_meeting_metadata`, `save_transcript`, etc.) are also available.
+### AWS S3 (5 storage types)
 
-### AWS S3 (`modules/s3_storage.py`)
-
-Five storage types, all AES-256 server-side encrypted:
+All files are AES-256 server-side encrypted:
 
 | Type | S3 Prefix | Description |
 |---|---|---|
-| Audio recordings | `recordings/YYYY/MM/` | Original uploaded audio files |
+| Audio recordings | `recordings/YYYY/MM/` | Original uploaded audio |
 | Extracted audio | `recordings/YYYY/MM/` | Converted/extracted audio |
 | PDF reports | `reports/YYYY/MM/` | Generated analysis PDFs |
 | Exports | `exports/YYYY/MM/` | CSV / JSON / XLSX exports |
@@ -401,27 +371,13 @@ Presigned URLs and deletion are also supported. S3 is non-blocking — a failure
 
 ## Email Notifications
 
-`modules/email_notifier.py` sends two types of HTML emails via SMTP.
+Two email types are supported, both rendered as dark-themed HTML with a risk score circle, severity badge, and findings summary.
 
-### Automatic Alert (High / Critical)
+**Automatic alert** — sent at the end of every analysis where severity meets or exceeds `ALERT_SEVERITY` (default: `High`). Includes top 5 findings and a PDF attachment.
 
-Triggered automatically at the end of every analysis where severity meets or exceeds `ALERT_SEVERITY` (default: `High`). Contains:
-- Risk score circle, severity badge, report ID
-- AI executive summary
-- Top 5 findings with confidence bars
-- "View Full Report" button linking to `APP_URL`
-- PDF attached if available
+**On-demand summary** — triggered via `POST /notify/summary/{id}`. Includes LLM summary, rule-based summary, and category breakdown table.
 
-### On-Demand Summary
-
-Triggered via `POST /notify/summary/{report_id}`. Contains:
-- Full LLM summary + rule-based summary
-- Category breakdown table
-- Stat row: word count, finding count, average confidence
-
-### Manual Re-send Alert
-
-Triggered via `POST /notify/alert/{report_id}`. Sends the alert email regardless of severity. Accepts an optional `recipients` override in the request body.
+**Manual re-send** — `POST /notify/alert/{id}` re-sends the alert email for any report regardless of severity. Accepts an optional `recipients` override.
 
 Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "message": str, "recipients": [...]}`.
 
@@ -431,7 +387,7 @@ Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "messag
 
 | Module | Purpose |
 |---|---|
-| `patterns.py` | Compiled regex library — 12 categories, `CATEGORY_METADATA`, `match_patterns()` |
+| `patterns.py` | 20-category compiled regex library, `CATEGORY_METADATA`, `match_patterns()` |
 | `context_analyzer.py` | `ContextType` enum, `CONTEXT_MULTIPLIERS`, `ContextAnalyzer.classify()` |
 | `confidence.py` | `ConfidenceCalculator` — full scoring breakdown per finding |
 | `filters.py` | `NegationFilter`, `JokeFilter`, `CombinedFilter` |
@@ -443,12 +399,14 @@ Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "messag
 | `summarizer.py` | Rule-based summary from findings + risk score |
 | `llm_summarizer.py` | Ollama Llama 3.1 executive summary — fails gracefully |
 | `report_generator.py` | PDF report with findings, score, severity, LLM summary |
-| `transcriber.py` | Faster-Whisper — returns `(transcript, timeline)` |
+| `transcriber.py` | faster-whisper — returns `(transcript, timeline)` |
 | `evidence_extractor.py` | Clean evidence list from grouped findings |
 | `stats.py` | Statistics dict — categories, confidence histogram, ML stats, context distribution |
 | `chatbot.py` | RAG chatbot — ChromaDB + SentenceTransformers + Ollama |
 | `email_notifier.py` | SMTP alert + summary emails, `should_auto_alert()`, `send_alert_email()`, `send_summary_email()` |
-| `s3_storage.py` | `upload_audio()`, `upload_pdf_report()`, `upload_export_*()`, `get_presigned_url()`, `delete_file()`, `ping()` |
+| `s3_storage.py` | `upload_audio()`, `upload_pdf_report()`, `get_presigned_url()`, `delete_file()`, `ping()` |
+| `cache.py` | TTL in-memory cache helpers |
+| `file_cleanup.py` | Upload file cleanup daemon |
 
 ---
 
@@ -458,100 +416,95 @@ Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "messag
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/` | Service name |
-| `GET` | `/health` | S3 + MongoDB + service health |
-| `POST` | `/analyze` | Upload audio, run full pipeline (background task) |
-| `GET` | `/report/{id}/status` | Poll processing status |
-| `GET` | `/history` | All reports — id, filename, severity, risk_score |
-| `GET` | `/report/{id}` | Full report — transcript, findings, evidence, stats, summaries |
-| `GET` | `/report/{id}/evidence` | Evidence list only |
-| `GET` | `/report/{id}/stats` | Statistics only |
-| `GET` | `/report/{id}/pdf` | Download PDF |
-| `POST` | `/chat` | RAG chatbot — ask a question about a report |
+| `GET` | `/` | Service name + version |
+| `GET` | `/health` | S3 + MongoDB + ML classifier health |
+| `POST` | `/analyze` | Upload audio — returns immediately, runs pipeline in background |
+| `GET` | `/report/{id}/status` | Poll status: `PROCESSING` / `COMPLETED` / `FAILED` |
+| `GET` | `/history` | Paginated history — `id`, `filename`, `severity`, `risk_score`, `status`, `created_at` |
+| `GET` | `/report/{id}` | Full report — transcript, findings, evidence, stats, summaries, timeline |
+| `GET` | `/report/{id}/evidence` | Evidence list with `severity`, `risk_score`, `context_type`, `speaker` |
+| `GET` | `/report/{id}/stats` | Full stats object |
+| `GET` | `/report/{id}/pdf` | Download PDF report |
+| `DELETE` | `/report/{id}` | Delete report record and associated PDF file |
+| `POST` | `/chat` | RAG chatbot — returns `{answer, sources, confidence}` |
 
 ### Notifications
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/notify/alert/{id}` | Send (or re-send) a red-alert email for any report |
+| `POST` | `/notify/alert/{id}` | Send (or re-send) a red-alert email |
 | `POST` | `/notify/summary/{id}` | Send a full analysis summary email |
 
-Both accept an optional body `{"recipients": ["email@example.com"]}` to override `ALERT_RECIPIENTS`.
+Both accept `{"recipients": ["email@example.com"]}` to override `ALERT_RECIPIENTS`.
 
 ### Analytics
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/analytics/summary` | Cross-report aggregation — severity distribution, risk histogram, top categories, ML agreement, confidence histogram |
+| `GET` | `/analytics/summary` | Cross-report aggregation — severity distribution, risk histogram, top categories, ML agreement, confidence histogram, status distribution |
 
-### Versioned Routes (`/api/v1/`)
+### Versioned Router (`/api/v1/`)
 
-A second router at `/api/v1/` mirrors the core endpoints with Pydantic response models, pagination on `/history`, and a `DELETE /report/{id}` endpoint.
+Mirrors the core endpoints with Pydantic response models and pagination. Used by the React frontend.
 
-### POST `/analyze` — example
-
-```bash
-curl -X POST http://localhost:8000/analyze \
-  -F "file=@conversation.mp3"
-```
-
-Response:
-```json
-{
-  "id": 16,
-  "filename": "conversation.mp3",
-  "status": "PROCESSING",
-  "message": "Analysis started in background"
-}
-```
-
-Poll status at `GET /report/16/status` until `"status": "COMPLETED"`, then fetch the full report at `GET /report/16`.
-
-### POST `/chat` — example
-
-```json
-{ "report_id": 16, "question": "What secrecy phrases were used?" }
-```
-
-### POST `/notify/alert/{id}` — example
+### Examples
 
 ```bash
-curl -X POST http://localhost:8000/notify/alert/16 \
+# Upload and analyze
+curl -X POST http://localhost:8000/analyze -F "file=@conversation.mp3"
+# → {"id": 12, "status": "PROCESSING", "message": "Analysis started in background"}
+
+# Poll until complete
+curl http://localhost:8000/report/12/status
+# → {"id": 12, "status": "COMPLETED", "error_message": null}
+
+# Get full report
+curl http://localhost:8000/report/12
+
+# Ask the chatbot
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"report_id": 12, "question": "What secrecy phrases were used?"}'
+
+# Send alert email
+curl -X POST http://localhost:8000/notify/alert/12 \
   -H "Content-Type: application/json" \
   -d '{"recipients": ["analyst@example.com"]}'
+
+# Delete a report
+curl -X DELETE http://localhost:8000/report/12
+
+# Cross-report analytics
+curl http://localhost:8000/analytics/summary
 ```
 
 ---
 
 ## Configuration
 
-```python
-# config.py — key settings
-
-UPLOAD_FOLDER      = "uploads"
-DATABASE_URL       = "sqlite:///analysis.db"
-ALLOWED_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".ogg"]
-APP_URL            = "http://localhost:5173"   # used in email links
-```
+Key runtime parameters you can tune without touching the pipeline code:
 
 ```python
 # grooming_detector.py — constructor defaults
-
 GroomingDetector(
-    min_confidence_threshold = 0.15,   # findings below this are dropped
-    enable_context_analysis  = True,
-    enable_filters           = True,
-    enable_grouping          = True,
+    min_confidence_threshold = 0.15,   # drop findings below this (API default: 0.30)
+    enable_context_analysis  = True,   # apply ContextType multipliers
+    enable_filters           = True,   # apply negation + joke penalties
+    enable_grouping          = True,   # deduplicate via EvidenceGroupingEngine
     enable_ml_classifier     = False,  # set True once model is cached (~400 MB)
 )
-```
 
-```python
 # risk_scorer.py — weight overrides
-
-scorer = WeightedRiskScorer(
-    custom_weights = {"explicit_content": 30},
+WeightedRiskScorer(
+    custom_weights = {"explicit_content": 30, "threats_coercion": 25},
     enable_diminishing_returns = True,
+)
+
+# audio_safety_service.py — service-level flags
+AudioSafetyService(
+    min_confidence_threshold = 0.30,
+    enable_llm_summary       = True,   # set False to skip Ollama entirely
+    enable_vector_storage    = True,   # set False to skip ChromaDB indexing
 )
 ```
 
@@ -559,31 +512,42 @@ scorer = WeightedRiskScorer(
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in your values. The `.env` file is git-ignored.
+Copy `.env.example` to `.env` and fill in your values. All three integrations (MongoDB, S3, SMTP) are optional — the core analysis pipeline runs without them.
 
 ```env
-# SMTP — email alerts and summaries
+# ── SMTP ──────────────────────────────────────────────────────────────────────
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-16-char-app-password
+SMTP_PASSWORD=your-16-char-app-password   # Gmail: use an App Password, not your account password
 SMTP_FROM_NAME=AuraSafety
 ALERT_RECIPIENTS=analyst@yourorg.com,supervisor@yourorg.com
-ALERT_SEVERITY=High          # High or Critical
-APP_URL=http://localhost:5173
+ALERT_SEVERITY=High          # High or Critical — threshold for auto-alerts
+APP_URL=http://localhost:5173 # used in "View Report" email links
 
-# MongoDB — analytics store
+# ── MongoDB ───────────────────────────────────────────────────────────────────
 MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority
 MONGO_DB_NAME=audio_safety_db
 
-# AWS S3 — file storage
+# ── AWS S3 ────────────────────────────────────────────────────────────────────
 AWS_ACCESS_KEY_ID=your-access-key-id
 AWS_SECRET_ACCESS_KEY=your-secret-access-key
 AWS_REGION=us-east-1
-S3_BUCKET=your-bucket-name
+S3_BUCKET_NAME=your-bucket-name
+
+# ── Speaker Diarization ───────────────────────────────────────────────────────
+HF_TOKEN=your-huggingface-token   # required for pyannote.audio
+ENABLE_DIARIZATION=false          # adds ~90s per 3-min file on CPU
+
+# ── Feature Flags ─────────────────────────────────────────────────────────────
+ENABLE_ML_CLASSIFIER=false        # set true after ~400 MB model is cached
+MAX_UPLOAD_MB=200
+ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+API_KEY=                          # leave blank to disable auth in dev
+UPLOAD_TTL_HOURS=24               # 0 = disable upload cleanup
 ```
 
-All three integrations (MongoDB, S3, SMTP) are **optional** — the analysis pipeline runs fully without them. Missing credentials are logged as warnings and the relevant step is skipped gracefully.
+> **Gmail tip:** Generate a 16-character App Password at https://myaccount.google.com/apppasswords — 2FA must be enabled first.
 
 ---
 
@@ -594,7 +558,7 @@ All three integrations (MongoDB, S3, SMTP) are **optional** — the analysis pip
 ```bash
 pip install -r requirements.txt
 
-# Ollama (optional — for LLM summary and chatbot)
+# Ollama (optional — for LLM summaries and chatbot)
 # Install from https://ollama.com then:
 ollama pull llama3.1
 ```
@@ -604,8 +568,6 @@ ollama pull llama3.1
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```
-
-### API Docs
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
@@ -624,11 +586,11 @@ python examples/run_test_scripts.py
 
 | Script | Expected Score | Severity | Description |
 |---|---|---|---|
-| `test_script_bad.txt` | 100 | CRITICAL | All 12 categories triggered |
+| `test_script_bad.txt` | 100 | CRITICAL | All 20 categories triggered |
 | `test_script_medium.txt` | ~53 | MODERATE | Trust-building, routine probing, video call |
 | `test_script_good.txt` | 0 | LOW | Safe classroom exchange — zero findings |
 
-Set `ENABLE_ML = True` in `run_test_scripts.py` to include the ML classifier layer (requires model cache, ~400 MB).
+Set `ENABLE_ML = True` in `run_test_scripts.py` to include the ML classifier layer (~400 MB model download on first run).
 
 ---
 
@@ -638,15 +600,48 @@ Set `ENABLE_ML = True` in `run_test_scripts.py` to include the ML classifier lay
 python test_pipeline.py
 ```
 
+Runs any sentence or multi-line transcript through the full detection pipeline interactively. Each input prints:
+
+1. **Context classification** — matched ContextType(s) and multiplier
+2. **Filter results** — negation score, joke score, combined penalty
+3. **Per-category findings** — category, confidence, matched text, severity
+4. **Risk breakdown** — weighted score per category, total risk score, risk level
+
 ```
 pipeline> keep this between us, nobody needs to know
-pipeline> what time does the science exhibition finish?
-pipeline> send me your nudes right now
-pipeline> haha just kidding, lets meet up lol
-pipeline> multi        ← enter multi-line transcript mode
+pipeline> age is just a number
+pipeline> I'll buy you whatever you want
+pipeline> clear          ← clears the screen
 ```
 
-Each input shows context classification, filter penalties, per-category confidence breakdown, and the final risk score bar.
+Uses a lower confidence threshold (0.15) than the API default (0.30) to surface borderline matches during development.
+
+---
+
+## Utility Scripts
+
+### `test_email.py` — Email Integration Test
+
+Verifies the full SMTP setup in 4 steps without needing a real audio file:
+
+```bash
+python test_email.py
+```
+
+1. Config check — validates `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_RECIPIENTS` are set
+2. SMTP connection — connects to the server, runs STARTTLS, authenticates
+3. Alert email — sends a real red-alert email with mock Critical findings
+4. Summary email — sends a real summary email with mock data
+
+### `debug_env.py` — SMTP Credential Debugger
+
+Low-level SMTP auth debugger for diagnosing Gmail App Password issues:
+
+```bash
+python debug_env.py
+```
+
+Prints raw credential values (length, leading/trailing chars, presence of spaces or quotes) and attempts a direct `smtplib` login.
 
 ---
 
@@ -654,12 +649,12 @@ Each input shows context classification, filter penalties, per-category confiden
 
 **No role-based assumptions** — speaker labels are stored for audit only. The same sentence scores identically regardless of who said it.
 
-**Content-based context** — risk adjustment is driven entirely by what is said. Administrative language reduces confidence; secrecy, manipulation, and explicit language increase it.
+**Token-scoped negation** — "I did not ask for your address" is negated. "I never lie but I want your address" is not — the negation word is too far from the matched phrase.
 
-**Token-scoped negation** — negation only suppresses a finding when the negation word is within 5 tokens of the matched phrase. Secrecy phrases containing negation words are explicitly exempt.
+**Diminishing returns** — the first occurrence of any category gets full weight. Repeated occurrences are progressively down-weighted (50%, 25%, 12.5%, …) so a single repeated phrase cannot dominate the score.
 
-**Diminishing returns** — the first occurrence of any category always receives full weight. Repeated occurrences are progressively down-weighted (50%, 25%, 12.5%, …) to prevent a single repeated phrase from dominating the score.
+**Administrative suppression** — sentences classified as `ADMINISTRATIVE` receive a −0.40 confidence multiplier, suppressing false positives from legitimate institutional language.
 
-**Graceful degradation** — MongoDB, S3, SMTP, and Ollama are all optional. A failure in any of them is logged as a warning and the pipeline continues. The core analysis (transcription → detection → scoring → SQLite) always runs.
+**Graceful degradation** — MongoDB, S3, SMTP, and Ollama are all optional. A failure in any of them is logged as a warning and the pipeline continues. The core analysis always runs.
 
-**Background processing** — audio analysis runs in a FastAPI `BackgroundTask`. The `/analyze` endpoint returns immediately with a record ID; the client polls `/report/{id}/status` until completion.
+**Background processing** — `/analyze` returns immediately with a record ID. The client polls `/report/{id}/status` until `COMPLETED`.

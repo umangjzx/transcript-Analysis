@@ -132,7 +132,9 @@ AuraSafety/
 │   │   ├── stats.py                # Statistics + timeline + ML agreement
 │   │   ├── chatbot.py              # RAG chatbot (ChromaDB + Ollama)
 │   │   ├── email_notifier.py       # SMTP alert + summary HTML emails
-│   │   └── s3_storage.py           # AWS S3 upload / presign / delete
+│   │   ├── s3_storage.py           # AWS S3 upload / presign / delete
+│   │   ├── cache.py                # TTL in-memory cache helpers
+│   │   └── file_cleanup.py         # Upload file cleanup daemon
 │   │
 │   ├── database/
 │   │   ├── db.py                   # SQLAlchemy engine + session
@@ -421,7 +423,7 @@ The app exposes two route sets. The root routes (`/analyze`, `/report/…`, etc.
 | `GET` | `/report/{id}/evidence` | Evidence list with `severity`, `risk_score`, `context_type`, `speaker` |
 | `GET` | `/report/{id}/stats` | Full stats object — see Stats Object below |
 | `GET` | `/report/{id}/pdf` | Download PDF report |
-| `DELETE` | `/api/v1/report/{id}` | Delete report record and associated PDF file |
+| `DELETE` | `/report/{id}` | Delete report record and associated PDF file |
 | `POST` | `/chat` | RAG chatbot — returns `{answer, sources, confidence}` |
 
 ### Notifications
