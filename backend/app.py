@@ -824,24 +824,60 @@ async def analyze_video(background_tasks: BackgroundTasks, file: UploadFile = Fi
 @app.post("/analyze/transcript")
 async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Request):
     """
-    Submit a plain-text transcript directly and run the analysis pipeline,
+    Submit a plain-text transcript and run the analysis pipeline,
     skipping the transcription step.
 
-    Accepts JSON body: { "transcript": "...", "filename": "optional-name.txt" }
+    Accepts either:
+      - JSON body:  { "transcript": "...", "filename": "optional-name.txt" }
+      - File upload: multipart/form-data with a .txt file field named "file"
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Request body must be valid JSON.")
+    content_type = request.headers.get("content-type", "")
 
-    transcript_text: str = body.get("transcript", "").strip()
-    if not transcript_text:
-        raise HTTPException(status_code=400, detail="'transcript' field is required and must not be empty.")
+    # ── Multipart file upload (.txt) ──────────────────────────────────────────
+    if "multipart/form-data" in content_type:
+        from fastapi import Form
+        form = await request.form()
+        uploaded_file = form.get("file")
+        if uploaded_file is None:
+            raise HTTPException(status_code=400, detail="No file field found in form data.")
+
+        original_filename = uploaded_file.filename or "transcript_input.txt"
+        ext = os.path.splitext(original_filename)[1].lower()
+        if ext not in (".txt",):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type '{ext}'. Only .txt files are accepted for transcript upload.",
+            )
+
+        raw_bytes = await uploaded_file.read()
+        if len(raw_bytes) > 10 * 1024 * 1024:  # 10 MB limit for text files
+            raise HTTPException(status_code=413, detail="Text file too large. Maximum 10 MB.")
+
+        try:
+            transcript_text = raw_bytes.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            try:
+                transcript_text = raw_bytes.decode("latin-1").strip()
+            except Exception:
+                raise HTTPException(status_code=422, detail="Could not decode file as text. Ensure it is UTF-8 encoded.")
+
+        if not transcript_text:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    # ── JSON body ─────────────────────────────────────────────────────────────
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Request body must be valid JSON.")
+
+        transcript_text = body.get("transcript", "").strip()
+        if not transcript_text:
+            raise HTTPException(status_code=400, detail="'transcript' field is required and must not be empty.")
+        original_filename = body.get("filename", "transcript_input.txt").strip() or "transcript_input.txt"
 
     if len(transcript_text) > 500_000:
         raise HTTPException(status_code=413, detail="Transcript too large. Maximum 500,000 characters.")
-
-    original_filename: str = body.get("filename", "transcript_input.txt").strip() or "transcript_input.txt"
 
     from database.mongo import save_meeting_metadata as _save_meta
     record_id = next_meeting_id()

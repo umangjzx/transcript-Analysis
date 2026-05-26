@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -669,13 +670,13 @@ const Dashboard = () => {
       </div>
 
       {/* ── Delete confirmation modal ─────────────────────────────────────── */}
-      {confirmDelete && (
+      {confirmDelete && createPortal(
         <div
           style={{
             position: 'fixed', inset: 0, zIndex: 9999,
             background: 'rgba(0,0,0,0.65)',
-            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-            padding: '10vh 1rem 1rem',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '1rem',
             overflowY: 'auto',
           }}
           onClick={() => setConfirmDelete(null)}
@@ -756,7 +757,7 @@ const Dashboard = () => {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 };

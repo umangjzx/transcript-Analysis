@@ -88,6 +88,20 @@ export const analyzeTranscript = async (transcript, filename = 'transcript_input
   return response.data;
 };
 
+/**
+ * Upload a .txt transcript file directly for analysis (skips transcription).
+ * @param {File} file - A .txt File object
+ */
+export const uploadTranscriptFile = async (file, onUploadProgress) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await api.post('/analyze/transcript', formData, {
+    timeout: 600_000,
+    onUploadProgress,
+  });
+  return response.data;
+};
+
 // ── Chatbot ───────────────────────────────────────────────────────────────────
 
 /**

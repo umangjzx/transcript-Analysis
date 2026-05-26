@@ -4,7 +4,7 @@ import {
   UploadCloud, FileAudio, FileVideo, FileText,
   AlertCircle, Loader2, CheckCircle,
 } from 'lucide-react';
-import { uploadAudio, uploadVideo, analyzeTranscript, getReportStatus } from '../api';
+import { uploadAudio, uploadVideo, analyzeTranscript, uploadTranscriptFile, getReportStatus } from '../api';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -17,6 +17,7 @@ const POLL_INTERVAL_MS = 3000;
 
 const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
 const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv'];
+const TEXT_EXTENSIONS  = ['.txt'];
 
 // ── Tab button ────────────────────────────────────────────────────────────────
 
@@ -111,8 +112,10 @@ const Upload = () => {
   // Transcript-mode state
   const [transcriptText, setTranscriptText] = useState('');
   const [transcriptFilename, setTranscriptFilename] = useState('');
+  const [transcriptFile, setTranscriptFile] = useState(null); // .txt file upload
 
   const fileInputRef = useRef(null);
+  const txtInputRef  = useRef(null);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -123,6 +126,7 @@ const Upload = () => {
     setStatusMsg('');
     setTranscriptText('');
     setTranscriptFilename('');
+    setTranscriptFile(null);
   };
 
   const switchMode = (newMode) => {
@@ -131,6 +135,25 @@ const Upload = () => {
   };
 
   const allowedExtensions = mode === 'video' ? VIDEO_EXTENSIONS : AUDIO_EXTENSIONS;
+
+  const handleTxtFileSelect = (selectedFile) => {
+    setError('');
+    const ext = '.' + selectedFile.name.split('.').pop().toLowerCase();
+    if (ext !== '.txt') {
+      setError('Only .txt files are supported for transcript upload.');
+      return;
+    }
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      setError('File is too large. Maximum 10 MB for text files.');
+      return;
+    }
+    setTranscriptFile(selectedFile);
+    setTranscriptFilename(selectedFile.name);
+    // Also read the file content into the textarea for preview
+    const reader = new FileReader();
+    reader.onload = (e) => setTranscriptText(e.target.result || '');
+    reader.readAsText(selectedFile);
+  };
 
   const handleFileSelect = (selectedFile) => {
     setError('');
@@ -224,8 +247,8 @@ const Upload = () => {
   };
 
   const handleTranscriptSubmit = async () => {
-    if (!transcriptText.trim()) {
-      setError('Please paste or type a transcript before submitting.');
+    if (!transcriptText.trim() && !transcriptFile) {
+      setError('Please paste a transcript or drop a .txt file before submitting.');
       return;
     }
     setIsProcessing(true);
@@ -239,10 +262,18 @@ const Upload = () => {
 
     let result;
     try {
-      result = await analyzeTranscript(
-        transcriptText.trim(),
-        transcriptFilename.trim() || 'transcript_input.txt',
-      );
+      if (transcriptFile) {
+        // File upload path — sends multipart/form-data
+        result = await uploadTranscriptFile(transcriptFile, (evt) => {
+          if (evt.total) setProgress(Math.round((evt.loaded / evt.total) * 40));
+        });
+      } else {
+        // JSON path — sends transcript text directly
+        result = await analyzeTranscript(
+          transcriptText.trim(),
+          transcriptFilename.trim() || 'transcript_input.txt',
+        );
+      }
     } catch (err) {
       clearInterval(progressInterval);
       const detail = err.response?.data?.detail;
@@ -360,6 +391,65 @@ const Upload = () => {
           <div>
             {error && <ErrorBox message={error} />}
 
+            {/* .txt file drop zone */}
+            {!isProcessing && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) handleTxtFileSelect(f);
+                }}
+                onClick={() => txtInputRef.current?.click()}
+                style={{
+                  border: '2px dashed rgba(255,255,255,0.18)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '1rem 1.25rem',
+                  marginBottom: '1.25rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                  cursor: 'pointer',
+                  background: transcriptFile ? 'rgba(99,255,180,0.06)' : 'rgba(255,255,255,0.03)',
+                  transition: 'background 0.2s',
+                }}
+              >
+                <input
+                  ref={txtInputRef}
+                  type="file"
+                  accept=".txt"
+                  style={{ display: 'none' }}
+                  onChange={(e) => { if (e.target.files?.[0]) handleTxtFileSelect(e.target.files[0]); }}
+                />
+                <FileText size={22} style={{ color: transcriptFile ? 'var(--status-safe)' : 'var(--text-tertiary)', flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {transcriptFile ? (
+                    <>
+                      <span style={{ fontWeight: 600, color: 'var(--status-safe)', fontSize: '0.9rem' }}>
+                        {transcriptFile.name}
+                      </span>
+                      <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                        ({(transcriptFile.size / 1024).toFixed(1)} KB) — content loaded below
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                      Drop a <strong>.txt</strong> file here or click to browse — content will be loaded automatically
+                    </span>
+                  )}
+                </div>
+                {transcriptFile && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setTranscriptFile(null); setTranscriptFilename(''); setTranscriptText(''); }}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', padding: '0.2rem' }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            )}
+
             <div style={{ marginBottom: '1rem' }}>
               <label
                 htmlFor="transcript-filename"
@@ -391,13 +481,16 @@ const Upload = () => {
                 style={{ display: 'block', marginBottom: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}
               >
                 Transcript <span style={{ color: '#fca5a5' }}>*</span>
+                <span style={{ marginLeft: '0.5rem', fontWeight: 400, color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>
+                  (paste text or drop a .txt file above)
+                </span>
               </label>
               <textarea
                 id="transcript-text"
                 rows={14}
                 placeholder="Paste or type the conversation transcript here…"
                 value={transcriptText}
-                onChange={(e) => setTranscriptText(e.target.value)}
+                onChange={(e) => { setTranscriptText(e.target.value); if (transcriptFile) setTranscriptFile(null); }}
                 disabled={isProcessing}
                 style={{
                   width: '100%', padding: '0.75rem 0.9rem',
@@ -423,7 +516,7 @@ const Upload = () => {
                 <button
                   className="btn btn-primary"
                   onClick={handleTranscriptSubmit}
-                  disabled={!transcriptText.trim()}
+                  disabled={!transcriptText.trim() && !transcriptFile}
                 >
                   Analyze Transcript
                 </button>

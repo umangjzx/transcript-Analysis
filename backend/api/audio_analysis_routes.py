@@ -162,6 +162,10 @@ async def analyze_audio(
             record_id=record_id,
         )
         logger.info(f"Analysis completed successfully for: {original_filename}")
+        # Invalidate all caches so the new report appears in /history immediately
+        history_cache.invalidate()
+        report_cache.invalidate()
+        evidence_cache.invalidate()
         return result
     except Exception as e:
         logger.error(f"Analysis failed: {str(e)}", exc_info=True)
