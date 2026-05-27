@@ -1,4 +1,4 @@
-"""
+﻿"""
 File Cleanup Module.
 
 Periodically removes uploaded audio files and temp files older than TTL.
@@ -7,7 +7,7 @@ Runs as a background thread on startup.
 
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import threading
 import time
@@ -37,7 +37,7 @@ def cleanup_old_files(upload_folder: str) -> dict:
         "errors": []
     }
     
-    cutoff_time = datetime.utcnow() - timedelta(days=FILE_TTL_DAYS)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(days=FILE_TTL_DAYS)
     
     for root, dirs, files in os.walk(upload_folder):
         for filename in files:

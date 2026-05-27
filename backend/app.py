@@ -1,4 +1,4 @@
-"""
+﻿"""
 Audio Safety Analyzer - FastAPI Application
 
 Fixes applied:
@@ -26,7 +26,7 @@ import logging
 import time
 import threading
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, BackgroundTasks, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -210,7 +210,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "error": "InternalServerError",
             "detail": "An unexpected error occurred. Please try again later.",
             "request_id": request_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -240,7 +240,7 @@ async def startup_event():
         from database.mongo import get_mongo_db as _get_db
         _mdb = _get_db()
         if _mdb is not None:
-            cutoff = datetime.utcnow() - timedelta(minutes=30)
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
             stuck_cursor = _mdb["processing_status"].find(
                 {"status": "PROCESSING", "started_at": {"$lt": cutoff}},
                 {"meeting_id": 1, "_id": 0},
@@ -331,7 +331,7 @@ class NotifyRequest(BaseModel):
 
 def process_audio_background(record_id: int, filepath: str, filename: str):
     """Full analysis pipeline — runs in a background thread. Writes to MongoDB + S3 only."""
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     save_processing_status(record_id, "PROCESSING", "transcription", started_at=started_at)
     audit_log("analysis_started", meeting_id=record_id, details={"filename": filename})
     s3_url: Optional[str] = None
@@ -440,7 +440,7 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
 
     except Exception as _e:
         save_processing_status(record_id, "FAILED", "error",
-                               started_at=started_at, completed_at=datetime.utcnow(), error=str(_e))
+                               started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(_e))
         update_meeting_status(record_id, "FAILED")
         audit_log("analysis_failed", meeting_id=record_id, details={"error": str(_e)})
         logger.error(f"[#{record_id}] Background processing FAILED: {_e}", exc_info=True)
@@ -452,7 +452,7 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
     - Deletes the temporary WAV file immediately after transcription
     - Stores only transcript text + analysis results in MongoDB
     """
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     save_processing_status(record_id, "PROCESSING", "transcription", started_at=started_at)
     audit_log("video_analysis_started", meeting_id=record_id, details={"filename": filename})
     pdf_path: Optional[str] = None
@@ -557,7 +557,7 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
 
     except Exception as _e:
         save_processing_status(record_id, "FAILED", "error",
-                               started_at=started_at, completed_at=datetime.utcnow(), error=str(_e))
+                               started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(_e))
         update_meeting_status(record_id, "FAILED")
         audit_log("video_analysis_failed", meeting_id=record_id, details={"error": str(_e)})
         logger.error(f"[#{record_id}] Video background processing FAILED: {_e}", exc_info=True)
@@ -568,7 +568,7 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
     Analysis pipeline for a pre-supplied transcript — skips transcription.
     Writes to MongoDB + S3 only (no audio file to upload).
     """
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
     audit_log("transcript_analysis_started", meeting_id=record_id, details={"filename": filename})
     pdf_path: Optional[str] = None
@@ -660,7 +660,7 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
 
     except Exception as _e:
         save_processing_status(record_id, "FAILED", "error",
-                               started_at=started_at, completed_at=datetime.utcnow(), error=str(_e))
+                               started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(_e))
         update_meeting_status(record_id, "FAILED")
         audit_log("transcript_analysis_failed", meeting_id=record_id, details={"error": str(_e)})
         logger.error(f"[#{record_id}] Transcript background processing FAILED: {_e}", exc_info=True)

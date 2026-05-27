@@ -1,10 +1,11 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
-import { Shield, Home, UploadCloud, LogOut } from 'lucide-react';
+import { Shield, Home, UploadCloud, LogOut, HardDrive } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Report from './pages/Report';
 import Login from './pages/Login';
+import GoogleDrive from './pages/GoogleDrive';
 import ErrorBoundary from './components/ErrorBoundary';
 import { getToken, getStoredUser, logout } from './api';
 import './App.css';
@@ -35,6 +36,9 @@ const Navigation = () => {
         </Link>
         <Link to="/upload" className={`nav-link ${isActive('/upload')}`}>
           <UploadCloud size={18} /> Analyze Audio
+        </Link>
+        <Link to="/google-drive" className={`nav-link ${isActive('/google-drive')}`}>
+          <HardDrive size={18} /> Google Drive
         </Link>
       </div>
 
@@ -95,9 +99,10 @@ function App() {
               <main className="main-content">
                 <ErrorBoundary>
                   <Routes>
-                    <Route path="/"           element={<Dashboard />} />
-                    <Route path="/upload"     element={<Upload />} />
-                    <Route path="/report/:id" element={<Report />} />
+                    <Route path="/"              element={<Dashboard />} />
+                    <Route path="/upload"        element={<Upload />} />
+                    <Route path="/report/:id"    element={<Report />} />
+                    <Route path="/google-drive"  element={<GoogleDrive />} />
                   </Routes>
                 </ErrorBoundary>
               </main>

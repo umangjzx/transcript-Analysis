@@ -1,4 +1,4 @@
-"""
+﻿"""
 Google Drive / Docs Integration Routes
 =======================================
 Prefix: /api/v1/google-drive
@@ -18,7 +18,7 @@ Endpoints:
 
 import logging
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, status
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -314,7 +314,6 @@ def _run_transcript_pipeline(record_id: int, transcript: str, filename: str):
     Runs the full analysis pipeline on a plain-text transcript.
     Mirrors process_audio_background() in app.py but skips transcription.
     """
-    from datetime import datetime
     from database.mongo import (
         save_full_analysis, save_processing_status,
         update_meeting_status, audit_log, update_pdf_path,
@@ -333,7 +332,7 @@ def _run_transcript_pipeline(record_id: int, transcript: str, filename: str):
     from modules.s3_storage import upload_pdf_report as s3_upload_pdf
     import os
 
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc)
     save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
     audit_log(
         "gdrive_transcript_analysis_started",
@@ -452,7 +451,7 @@ def _run_transcript_pipeline(record_id: int, transcript: str, filename: str):
         save_processing_status(
             record_id, "FAILED", "error",
             started_at=started_at,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(timezone.utc),
             error=str(_e),
         )
         update_meeting_status(record_id, "FAILED")

@@ -220,3 +220,86 @@ export const deleteReport = async (id) => {
 // ── PDF download ──────────────────────────────────────────────────────────────
 
 export const downloadPdfUrl = (reportId) => `/api/v1/report/${reportId}/pdf`;
+
+// ── Google Drive ──────────────────────────────────────────────────────────────
+
+/**
+ * Get the Google OAuth2 consent URL.
+ * Returns { auth_url: string }
+ */
+export const getDriveAuthUrl = async () => {
+  const response = await api.get('/google-drive/auth-url');
+  return response.data;
+};
+
+/**
+ * Check whether the backend is authenticated with Google Drive.
+ * Returns { authenticated: boolean, message: string }
+ */
+export const getDriveStatus = async () => {
+  const response = await api.get('/google-drive/status');
+  return response.data;
+};
+
+/**
+ * List importable files from Google Drive (.txt + Google Docs).
+ * @param {number} pageSize  - Max files to return (1–100, default 50)
+ * @param {string} search    - Optional filename search term
+ */
+export const getDriveFiles = async (pageSize = 50, search = undefined) => {
+  const params = { page_size: pageSize };
+  if (search) params.search = search;
+  const response = await api.get('/google-drive/files', { params });
+  return response.data;
+};
+
+/**
+ * Import a Google Drive file as a transcript and start the analysis pipeline.
+ * Returns { id, filename, status, message, source }
+ * @param {string} fileId    - Google Drive file ID
+ * @param {string} fileName  - Display name
+ * @param {string} mimeType  - 'text/plain' or 'application/vnd.google-apps.document'
+ */
+export const importDriveFile = async (fileId, fileName, mimeType) => {
+  const response = await api.post(
+    '/google-drive/import',
+    { file_id: fileId, file_name: fileName, mime_type: mimeType },
+    { timeout: 60_000 },
+  );
+  return response.data;
+};
+
+/**
+ * Revoke Google Drive credentials (disconnect).
+ */
+export const disconnectDrive = async () => {
+  const response = await api.delete('/google-drive/logout');
+  return response.data;
+};
+
+// ── Google Drive Watcher ──────────────────────────────────────────────────────
+
+/**
+ * Get the current auto-watcher status.
+ * Returns { running, last_checked, files_processed, errors, poll_interval_seconds }
+ */
+export const getDriveWatcherStatus = async () => {
+  const response = await api.get('/google-drive/watcher/status');
+  return response.data;
+};
+
+/**
+ * Start the background Drive polling watcher.
+ */
+export const startDriveWatcher = async () => {
+  const response = await api.post('/google-drive/watcher/start');
+  return response.data;
+};
+
+/**
+ * Stop the background Drive polling watcher.
+ */
+export const stopDriveWatcher = async () => {
+  const response = await api.post('/google-drive/watcher/stop');
+  return response.data;
+};

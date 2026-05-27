@@ -1,4 +1,4 @@
-"""
+﻿"""
 drive_watcher.py
 ================
 Background polling watcher for Google Drive.
@@ -55,7 +55,7 @@ def _mark_seen(file_id: str, filename: str) -> None:
             db["drive_watcher_seen"].update_one(
                 {"file_id": file_id},
                 {"$set": {"file_id": file_id, "filename": filename,
-                           "seen_at": datetime.utcnow()}},
+                           "seen_at": datetime.now(timezone.utc)}},
                 upsert=True,
             )
     except Exception as e:
@@ -81,7 +81,7 @@ def _poll_once() -> None:
     Single poll cycle:
     - Query Drive for files modified in the last POLL_INTERVAL * 2 seconds
       (double the interval to avoid missing files on slow polls)
-    - Skip already-seen files
+    - Skip already-seen files (tracked in MongoDB drive_watcher_seen)
     - Import new ones into the analysis pipeline
     """
     from services.google_drive_service import list_drive_files, read_drive_file, is_authenticated
@@ -91,11 +91,13 @@ def _poll_once() -> None:
         logger.debug("[DriveWatcher] Not authenticated — skipping poll.")
         return
 
-    # Build query: files modified recently, correct MIME types, not trashed
+    # Build query: files modified in the last POLL_INTERVAL * 2 seconds
+    # Subtract the lookback window so we catch files added since the last poll
+    from datetime import timedelta
     lookback_seconds = POLL_INTERVAL * 2
-    cutoff = datetime.now(timezone.utc)
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=lookback_seconds)
     # RFC 3339 format required by Drive API
-    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     mime_filter = (
         "(mimeType='text/plain' or mimeType='application/vnd.google-apps.document')"
@@ -185,7 +187,7 @@ def _watcher_loop() -> None:
             logger.error(f"[DriveWatcher] Unexpected error in poll loop: {e}", exc_info=True)
             watcher_status["errors"] += 1
 
-        watcher_status["last_checked"] = datetime.utcnow().isoformat()
+        watcher_status["last_checked"] = datetime.now(timezone.utc).isoformat()
         _stop_event.wait(timeout=POLL_INTERVAL)
 
     watcher_status["running"] = False

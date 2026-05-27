@@ -8,6 +8,12 @@ export default defineConfig({
   analytics: false,
   server: {
     proxy: {
+      // Google Drive routes keep their full /api/v1/google-drive prefix on the backend
+      '/api/v1/google-drive': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      // All other /api/v1/* routes — strip the /api/v1 prefix
       '/api/v1': {
         target: 'http://localhost:8000',
         changeOrigin: true,

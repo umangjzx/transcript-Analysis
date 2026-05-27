@@ -21,7 +21,7 @@ class ChatRequest(BaseModel):
     question: str = Field(..., description="Question to ask about the report", min_length=1)
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "report_id": 1,
                 "question": "What are the main concerns in this conversation?"
@@ -206,7 +206,7 @@ class AnalysisResponse(BaseModel):
     analysis_metadata: AnalysisMetadata = Field(..., description="Analysis metadata")
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "id": 1,
                 "filename": "conversation.mp3",
@@ -326,7 +326,7 @@ class ErrorResponse(BaseModel):
     timestamp: str
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "error": "AnalysisError",
                 "detail": "Transcription failed: Unsupported audio format",
