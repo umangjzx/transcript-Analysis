@@ -1,35 +1,35 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
 :root {
-  /* Color Palette - Ultra Premium Dark Theme */
-  --bg-primary: #050505;
-  --bg-secondary: #0a0a0b;
-  --bg-tertiary: #121214;
-  --bg-glass: rgba(10, 10, 11, 0.4);
-  --bg-glass-hover: rgba(18, 18, 20, 0.6);
+  /* Color Palette - Clean Light Theme */
+  --bg-primary: #fdfdfd;
+  --bg-secondary: #f4f6f8;
+  --bg-tertiary: #eaecf0;
+  --bg-glass: rgba(255, 255, 255, 0.85);
+  --bg-glass-hover: rgba(255, 255, 255, 0.95);
   
-  --text-primary: #ffffff;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #71717a;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #94a3b8;
   
-  --accent-primary: #818cf8; /* Indigo lighter */
-  --accent-secondary: #c084fc; /* Purple lighter */
-  --accent-tertiary: #38bdf8; /* Sky */
-  --accent-glow: rgba(129, 140, 248, 0.4);
+  --accent-primary: #38bdf8; /* Sky Blue */
+  --accent-secondary: #fb923c; /* Orange */
+  --accent-tertiary: #f472b6; /* Pink */
+  --accent-glow: rgba(56, 189, 248, 0.3);
   
   /* Status Colors */
-  --status-safe: #34d399;
-  --status-safe-bg: rgba(52, 211, 153, 0.15);
-  --status-safe-border: rgba(52, 211, 153, 0.3);
-  --status-low: #60a5fa;
-  --status-low-bg: rgba(96, 165, 250, 0.15);
-  --status-low-border: rgba(96, 165, 250, 0.3);
-  --status-moderate: #fbbf24;
-  --status-moderate-bg: rgba(251, 191, 36, 0.15);
-  --status-moderate-border: rgba(251, 191, 36, 0.3);
-  --status-high: #f87171;
-  --status-high-bg: rgba(248, 113, 113, 0.15);
-  --status-high-border: rgba(248, 113, 113, 0.3);
+  --status-safe: #10b981;
+  --status-safe-bg: rgba(16, 185, 129, 0.15);
+  --status-safe-border: rgba(16, 185, 129, 0.3);
+  --status-low: #3b82f6;
+  --status-low-bg: rgba(59, 130, 246, 0.15);
+  --status-low-border: rgba(59, 130, 246, 0.3);
+  --status-moderate: #f59e0b;
+  --status-moderate-bg: rgba(245, 158, 11, 0.15);
+  --status-moderate-border: rgba(245, 158, 11, 0.3);
+  --status-high: #f97316;
+  --status-high-bg: rgba(249, 115, 22, 0.15);
+  --status-high-border: rgba(249, 115, 22, 0.3);
   --status-critical: #ef4444;
   --status-critical-bg: rgba(239, 68, 68, 0.15);
   --status-critical-border: rgba(239, 68, 68, 0.4);
@@ -47,13 +47,13 @@
   --radius-md: 16px;
   --radius-lg: 24px;
   --radius-full: 9999px;
-  --border-color: rgba(255, 255, 255, 0.06);
-  --border-color-hover: rgba(255, 255, 255, 0.12);
+  --border-color: rgba(0, 0, 0, 0.06);
+  --border-color-hover: rgba(0, 0, 0, 0.12);
 
   /* Shadows - Layered & Smooth */
-  --shadow-sm: 0 2px 8px -2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --shadow-md: 0 4px 16px -4px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --shadow-lg: 0 8px 32px -8px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-sm: 0 4px 12px -2px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --shadow-md: 0 8px 24px -4px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 1);
   --shadow-glow: 0 0 24px var(--accent-glow);
 }
 
@@ -83,7 +83,7 @@ body::before, body::after {
   filter: blur(120px);
   z-index: -1;
   pointer-events: none;
-  opacity: 0.4;
+  opacity: 0.7;
   animation: floatBlobs 20s ease-in-out infinite alternate;
 }
 
@@ -92,7 +92,7 @@ body::before {
   left: -10%;
   width: 50vw;
   height: 50vw;
-  background: radial-gradient(circle, rgba(129, 140, 248, 0.15) 0%, rgba(5, 5, 5, 0) 70%);
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, rgba(250, 250, 250, 0) 70%);
 }
 
 body::after {
@@ -100,7 +100,7 @@ body::after {
   right: -10%;
   width: 60vw;
   height: 60vw;
-  background: radial-gradient(circle, rgba(192, 132, 252, 0.12) 0%, rgba(5, 5, 5, 0) 70%);
+  background: radial-gradient(circle, rgba(251, 146, 60, 0.12) 0%, rgba(250, 250, 250, 0) 70%);
   animation-delay: -10s;
 }
 
@@ -127,8 +127,8 @@ ul {
 /* Glassmorphism Utilities - Upgraded */
 .glass-panel {
   background: var(--bg-glass);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
@@ -143,19 +143,19 @@ ul {
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 100%);
+  background: linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0) 100%);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
-  opacity: 0.5;
+  opacity: 0.8;
   transition: opacity 0.4s ease;
 }
 
 .glass-panel:hover {
   background: var(--bg-glass-hover);
   border-color: var(--border-color-hover);
-  box-shadow: var(--shadow-lg), 0 0 30px rgba(129, 140, 248, 0.05);
+  box-shadow: var(--shadow-lg), 0 0 30px rgba(56, 189, 248, 0.08);
   transform: translateY(-2px);
 }
 
@@ -309,11 +309,11 @@ ul {
   backdrop-filter: blur(4px);
 }
 
-.badge-critical { background: var(--status-critical-bg); color: #fca5a5; border: 1px solid var(--status-critical-border); box-shadow: 0 0 12px rgba(239, 68, 68, 0.2), inset 0 1px 0 rgba(255,255,255,0.1); }
-.badge-high { background: var(--status-high-bg); color: #fca5a5; border: 1px solid var(--status-high-border); box-shadow: 0 0 12px rgba(248, 113, 113, 0.2), inset 0 1px 0 rgba(255,255,255,0.1); }
-.badge-moderate { background: var(--status-moderate-bg); color: #fde047; border: 1px solid var(--status-moderate-border); box-shadow: 0 0 12px rgba(251, 191, 36, 0.2), inset 0 1px 0 rgba(255,255,255,0.1); }
-.badge-low { background: var(--status-low-bg); color: #bfdbfe; border: 1px solid var(--status-low-border); box-shadow: 0 0 12px rgba(96, 165, 250, 0.2), inset 0 1px 0 rgba(255,255,255,0.1); }
-.badge-safe { background: var(--status-safe-bg); color: #a7f3d0; border: 1px solid var(--status-safe-border); box-shadow: 0 0 12px rgba(52, 211, 153, 0.2), inset 0 1px 0 rgba(255,255,255,0.1); }
+.badge-critical { background: #dc2626; color: #fff; border: 1px solid #b91c1c; box-shadow: 0 2px 8px rgba(220, 38, 38, 0.4); }
+.badge-high     { background: #ea580c; color: #fff; border: 1px solid #c2410c; box-shadow: 0 2px 8px rgba(234, 88, 12, 0.4); }
+.badge-moderate { background: #d97706; color: #fff; border: 1px solid #b45309; box-shadow: 0 2px 8px rgba(217, 119, 6, 0.35); }
+.badge-low      { background: #2563eb; color: #fff; border: 1px solid #1d4ed8; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35); }
+.badge-safe     { background: #059669; color: #fff; border: 1px solid #047857; box-shadow: 0 2px 8px rgba(5, 150, 105, 0.35); }
 
 /* Scrollbar */
 ::-webkit-scrollbar {
@@ -379,9 +379,35 @@ ul {
 
 /* Interactive Hover States for Cards */
 .hover-lift {
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s ease;
 }
 .hover-lift:hover {
-  transform: translateY(-4px) scale(1.01);
-  box-shadow: 0 12px 30px -10px rgba(129, 140, 248, 0.3);
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: 0 16px 40px -12px rgba(56, 189, 248, 0.2);
+}
+
+.hover-lift-3d {
+  transition: transform 0.5s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.5s ease;
+  transform-style: preserve-3d;
+}
+.hover-lift-3d:hover {
+  transform: translateY(-8px) scale(1.03) rotateX(2deg) rotateY(-2deg);
+  box-shadow: 20px 20px 60px rgba(0,0,0,0.05), -20px -20px 60px rgba(255,255,255,0.8);
+}
+
+.glow-progress-bar {
+  box-shadow: 0 0 12px var(--accent-glow);
+  position: relative;
+  overflow: hidden;
+}
+.glow-progress-bar::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
+  animation: shine 1.5s infinite;
+}
+@keyframes shine {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }

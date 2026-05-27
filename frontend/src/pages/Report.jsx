@@ -133,7 +133,7 @@ const FindingCard = ({ finding, index }) => {
   const categories = finding.categories || (finding.category ? [finding.category] : []);
 
   return (
-    <div className="finding-debug-card" style={{ borderLeftColor: color }}>
+    <div className="finding-debug-card hover-lift-3d" style={{ borderLeftColor: color }}>
       <div className="finding-debug-header" onClick={() => setExpanded(e => !e)}>
         <div className="finding-debug-left">
           <span className="finding-index">#{index + 1}</span>
@@ -568,7 +568,7 @@ const Report = () => {
             <div className="tab-content animate-fade-in">
               <div className="overview-top-grid">
                 {/* Risk Ring */}
-                <div className="glass-panel risk-ring-panel">
+                <div className="glass-panel risk-ring-panel hover-lift-3d">
                   <h3 className="panel-heading">Overall Risk Score</h3>
                   <div className="risk-ring-wrap">
                     <svg width="210" height="210" style={{ transform: 'rotate(-90deg)' }}>
@@ -615,7 +615,7 @@ const Report = () => {
                 {/* Summaries */}
                 <div className="summaries-col">
                   {/* LLM Summary */}
-                  <div className="glass-panel summary-panel">
+                  <div className="glass-panel summary-panel hover-lift-3d">
                     <div className="panel-heading-row">
                       <Brain size={18} style={{ color: 'var(--accent-primary)' }} />
                       <h3 className="panel-heading">AI Executive Summary</h3>
@@ -624,7 +624,7 @@ const Report = () => {
                     <div className="summary-text">{report.llm_summary || 'LLM summary not available.'}</div>
                   </div>
                   {/* Rule-Based Summary */}
-                  <div className="glass-panel summary-panel">
+                  <div className="glass-panel summary-panel hover-lift-3d">
                     <div className="panel-heading-row">
                       <Info size={18} style={{ color: 'var(--accent-secondary)' }} />
                       <h3 className="panel-heading">Rule-Based Summary</h3>
@@ -637,7 +637,7 @@ const Report = () => {
 
               {/* Top Category Bar Chart */}
               {categoryData.length > 0 && (
-                <div className="glass-panel chart-panel">
+                <div className="glass-panel chart-panel hover-lift-3d">
                   <div className="panel-heading-row">
                     <BarChart2 size={18} style={{ color: 'var(--accent-primary)' }} />
                     <h3 className="panel-heading">Risk Category Breakdown</h3>
@@ -703,7 +703,7 @@ const Report = () => {
                   {evidence.map((ev, i) => {
                     const sColor = getSeverityColor(ev.severity);
                     return (
-                      <div key={i} className="evidence-card glass-panel" style={{ borderLeftColor: sColor }}>
+                      <div key={i} className="evidence-card glass-panel hover-lift-3d" style={{ borderLeftColor: sColor }}>
                         <div className="evidence-header">
                           <div className="evidence-cats">
                             {(ev.categories || []).map((c, ci) => (

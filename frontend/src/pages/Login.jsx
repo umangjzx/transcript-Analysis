@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Lock, User, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { login, getToken } from '../api';
 
 const Login = () => {
@@ -49,11 +49,15 @@ const Login = () => {
 
         {/* Header */}
         <div className="auth-header">
-          <div className="flex-center" style={{ marginBottom: '1rem' }}>
-            <Shield className="brand-icon" size={48} />
+          <div className="flex-center" style={{ marginBottom: '0.75rem' }}>
+            <img
+              src="/unnamed.png"
+              alt="Melody Wings Safety"
+              style={{ height: '56px', width: 'auto' }}
+            />
           </div>
-          <h1 className="heading-2 text-gradient auth-title">AuraSafety</h1>
-          <p className="text-secondary">Sign in to access your dashboard</p>
+          <h1 className="heading-2 text-gradient auth-title">Melody Wings Safety</h1>
+          <p className="text-secondary" style={{ marginTop: '0.4rem' }}>Sign in to access your dashboard</p>
         </div>
 
         {/* Error */}

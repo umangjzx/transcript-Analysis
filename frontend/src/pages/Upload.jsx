@@ -33,8 +33,8 @@ const ModeTab = ({ active, onClick, icon: Icon, label }) => (
       padding: '0.75rem 1rem',
       background: active
         ? 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
-        : 'rgba(255,255,255,0.05)',
-      border: active ? 'none' : '1px solid rgba(255,255,255,0.1)',
+        : 'rgba(0,0,0,0.02)',
+      border: active ? 'none' : '1px solid var(--border-color)',
       borderRadius: 'var(--radius-md)',
       color: active ? '#fff' : 'var(--text-secondary)',
       cursor: 'pointer',
@@ -59,11 +59,12 @@ const ProgressBar = ({ progress, statusMsg }) => (
     <div
       style={{
         width: '100%', height: '8px',
-        background: 'rgba(255,255,255,0.1)',
+        background: 'rgba(0,0,0,0.05)',
         borderRadius: '4px', overflow: 'hidden', marginBottom: '2rem',
       }}
     >
       <div
+        className="glow-progress-bar"
         style={{
           height: '100%', width: `${progress}%`,
           background: 'linear-gradient(90deg, var(--accent-primary), var(--accent-secondary))',
@@ -346,11 +347,16 @@ const Upload = () => {
           <>
             {!file ? (
               <div
-                className={`upload-zone hover-lift ${isDragging ? 'drag-active pulse-glow' : ''}`}
+                className={`upload-zone hover-lift-3d ${isDragging ? 'drag-active' : ''}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
+                style={{
+                  border: isDragging ? '2px solid var(--accent-primary)' : '2px dashed var(--border-color)',
+                  background: isDragging ? 'rgba(56, 189, 248, 0.05)' : 'transparent',
+                  transition: 'all 0.3s ease'
+                }}
               >
                 <input
                   type="file"
@@ -466,11 +472,12 @@ const Upload = () => {
                 disabled={isProcessing}
                 style={{
                   width: '100%', padding: '0.6rem 0.9rem',
-                  background: 'rgba(255,255,255,0.07)',
-                  border: '1px solid rgba(255,255,255,0.15)',
+                  background: 'rgba(0,0,0,0.02)',
+                  border: '1px solid var(--border-color)',
                   borderRadius: 'var(--radius-md)',
                   color: 'var(--text-primary)', fontSize: '0.9rem',
                   outline: 'none', boxSizing: 'border-box',
+                  transition: 'all 0.2s ease',
                 }}
               />
             </div>
@@ -494,13 +501,14 @@ const Upload = () => {
                 disabled={isProcessing}
                 style={{
                   width: '100%', padding: '0.75rem 0.9rem',
-                  background: 'rgba(255,255,255,0.07)',
-                  border: '1px solid rgba(255,255,255,0.15)',
+                  background: 'rgba(0,0,0,0.02)',
+                  border: '1px solid var(--border-color)',
                   borderRadius: 'var(--radius-md)',
                   color: 'var(--text-primary)', fontSize: '0.9rem',
                   resize: 'vertical', outline: 'none',
                   fontFamily: 'inherit', lineHeight: 1.6,
                   boxSizing: 'border-box',
+                  transition: 'all 0.2s ease',
                 }}
               />
               <p style={{ marginTop: '0.3rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>

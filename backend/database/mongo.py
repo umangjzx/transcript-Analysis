@@ -829,7 +829,8 @@ def get_analytics_summary() -> Dict[str, Any]:
             {
                 "meeting_id": 1, "risk_score": 1, "severity": 1,
                 "category_breakdown": 1, "context_type_distribution": 1,
-                "ml_stats": 1, "finding_count": 1, "_id": 0,
+                "ml_stats": 1, "finding_count": 1,
+                "confidence_stats": 1, "_id": 0,
             },
         ))
 
@@ -845,6 +846,8 @@ def get_analytics_summary() -> Dict[str, Any]:
         ml_agreed = ml_disagreed = ml_total = 0
         total_findings = 0
         risk_scores: List[float] = []
+        # Confidence histogram aggregated across all reports (using avg confidence per report)
+        conf_histogram: Dict[str, int] = {"0-25": 0, "25-50": 0, "50-75": 0, "75-100": 0}
 
         for doc in ar_docs:
             sev = (doc.get("severity") or "unknown").capitalize()
@@ -874,12 +877,25 @@ def get_analytics_summary() -> Dict[str, Any]:
 
             total_findings += doc.get("finding_count", 0)
 
+            # Bucket average confidence per report into the histogram
+            conf_s = doc.get("confidence_stats") or {}
+            avg_conf = conf_s.get("average")
+            if avg_conf is not None:
+                pct = float(avg_conf) * 100
+                if pct <= 25:   conf_histogram["0-25"]   += 1
+                elif pct <= 50: conf_histogram["25-50"]  += 1
+                elif pct <= 75: conf_histogram["50-75"]  += 1
+                else:
+                    conf_histogram["75-100"] += 1
+
         avg_risk = round(sum(risk_scores) / len(risk_scores), 2) if risk_scores else 0.0
         ml_rate  = round(ml_agreed / ml_total, 4) if ml_total > 0 else None
         top_categories = sorted(
             [{"category": k, "count": v} for k, v in category_totals.items()],
             key=lambda x: x["count"], reverse=True,
         )
+        # High-confidence count: reports whose average confidence is in the 75-100% bucket
+        high_confidence_count = conf_histogram.get("75-100", 0)
 
         return {
             "total_reports":       len(ar_docs),
@@ -896,7 +912,8 @@ def get_analytics_summary() -> Dict[str, Any]:
                 "total":     ml_total,
                 "rate":      ml_rate,
             },
-            "confidence_histogram": {},
+            "confidence_histogram":   conf_histogram,
+            "high_confidence_count":  high_confidence_count,
         }
     except Exception as e:
         logger.warning(f"MongoDB get_analytics_summary failed: {e}")
@@ -910,7 +927,8 @@ def _empty_analytics() -> Dict[str, Any]:
         "risk_score_histogram": {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0},
         "top_categories": [], "context_type_totals": {},
         "ml_agreement_totals": {"agreed": 0, "disagreed": 0, "total": 0, "rate": None},
-        "confidence_histogram": {},
+        "confidence_histogram": {"0-25": 0, "25-50": 0, "50-75": 0, "75-100": 0},
+        "high_confidence_count": 0,
     }
 
 

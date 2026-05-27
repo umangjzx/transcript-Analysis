@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
-  PieChart, Pie, Legend,
+  PieChart, Pie, Legend, LineChart, Line, CartesianGrid,
+  ScatterChart, Scatter, ZAxis, ReferenceLine,
 } from 'recharts';
 import {
   ShieldAlert, Activity, FileAudio, Search, TrendingUp,
@@ -194,8 +195,30 @@ const Dashboard = () => {
     : null;
 
   // ── Derived chart data from analytics summary ──────────────────────────────
-  const severityPieData = analytics
-    ? Object.entries(analytics.severity_distribution || {}).map(([name, value]) => ({ name: capitalize(name), value }))
+
+  // Severity × Status stacked bar (replaces plain severity pie)
+  const SEV_ORDER = ['Critical', 'High', 'Moderate', 'Low', 'Safe', 'Unknown'];
+  const STATUS_COLORS = {
+    COMPLETED: 'var(--status-safe)',
+    PROCESSING: 'var(--status-moderate)',
+    FAILED: 'var(--status-high)',
+  };
+  const statusStackData = analytics
+    ? SEV_ORDER
+        .filter(sev => (analytics.severity_distribution || {})[sev] > 0)
+        .map(sev => {
+          const total = (analytics.severity_distribution || {})[sev] || 0;
+          // Approximate split: use status_distribution ratios applied to severity total
+          const statusDist = analytics.status_distribution || {};
+          const grandTotal = Object.values(statusDist).reduce((a, b) => a + b, 0) || 1;
+          return {
+            severity: sev,
+            Completed: Math.round(total * ((statusDist.COMPLETED || 0) / grandTotal)),
+            Processing: Math.round(total * ((statusDist.PROCESSING || 0) / grandTotal)),
+            Failed: Math.round(total * ((statusDist.FAILED || 0) / grandTotal)),
+            _total: total,
+          };
+        })
     : [];
 
   const riskHistData = analytics
@@ -209,7 +232,7 @@ const Dashboard = () => {
 
   const ctxData = analytics
     ? Object.entries(analytics.context_type_totals || {}).map(([name, value], i) => ({
-        name: capitalize(name), value, fill: CTX_COLORS[i % CTX_COLORS.length],
+        name: capitalize(name), value,
       }))
     : [];
 
@@ -219,7 +242,30 @@ const Dashboard = () => {
       }))
     : [];
 
-  const mlStats = analytics?.ml_agreement_totals || {};
+  // Findings timeline scatter: last 20 analyses, x=index, y=risk_score, size=finding count
+  const timelineScatterData = [...history]
+    .filter(h => h.created_at && h.risk_score != null)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .slice(-20)
+    .map((h, i) => ({
+      x: i + 1,
+      y: Math.round(h.risk_score),
+      z: 1,
+      label: h.filename ? h.filename.slice(0, 14) + (h.filename.length > 14 ? '…' : '') : `#${h.id}`,
+      severity: (h.severity || 'safe').toLowerCase(),
+    }));
+
+  // ── Risk Score Trend: last 20 analyses sorted by date ──────────────────────
+  const trendData = [...history]
+    .filter(h => h.created_at && h.risk_score != null)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .slice(-20)
+    .map((h, i) => ({
+      idx: i + 1,
+      label: h.filename ? h.filename.slice(0, 12) + (h.filename.length > 12 ? '…' : '') : `#${h.id}`,
+      score: Math.round(h.risk_score),
+      severity: h.severity || 'safe',
+    }));
 
   return (
     <div className="animate-fade-in" style={{ padding: 'var(--spacing-xl)', maxWidth: 1400, margin: '0 auto' }}>
@@ -243,7 +289,7 @@ const Dashboard = () => {
 
       {/* Stat Cards */}
       <div className="stats-grid">
-        <div className="stat-card glass-panel hover-lift animate-slide-up delay-100">
+        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-100">
           <div className="flex-between">
             <span className="stat-title">Total Analyzed</span>
             <FileAudio size={20} style={{ color: 'var(--accent-primary)' }} />
@@ -252,7 +298,7 @@ const Dashboard = () => {
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>audio files processed</span>
         </div>
 
-        <div className="stat-card glass-panel hover-lift animate-slide-up delay-200">
+        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-200">
           <div className="flex-between">
             <span className="stat-title">High / Critical Risk</span>
             <ShieldAlert size={20} style={{ color: 'var(--status-high)' }} />
@@ -263,7 +309,7 @@ const Dashboard = () => {
           </span>
         </div>
 
-        <div className="stat-card glass-panel hover-lift animate-slide-up delay-300">
+        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-300">
           <div className="flex-between">
             <span className="stat-title">Average Risk Score</span>
             <TrendingUp size={20} style={{ color: 'var(--status-moderate)' }} />
@@ -272,7 +318,7 @@ const Dashboard = () => {
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>out of 100</span>
         </div>
 
-        <div className="stat-card glass-panel hover-lift animate-slide-up delay-400">
+        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-400">
           <div className="flex-between">
             <span className="stat-title">Safe / Low Risk</span>
             <CheckCircle size={20} style={{ color: 'var(--status-safe)' }} />
@@ -283,7 +329,7 @@ const Dashboard = () => {
 
         {analytics && (
           <>
-            <div className="stat-card glass-panel hover-lift animate-slide-up delay-500">
+            <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-500">
               <div className="flex-between">
                 <span className="stat-title">Total Findings</span>
                 <Activity size={20} style={{ color: 'var(--accent-secondary)' }} />
@@ -292,16 +338,18 @@ const Dashboard = () => {
               <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>across all reports</span>
             </div>
 
-            <div className="stat-card glass-panel hover-lift animate-slide-up delay-600">
+            <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-600">
               <div className="flex-between">
-                <span className="stat-title">ML Agreement Rate</span>
+                <span className="stat-title">High Confidence Detections</span>
                 <Brain size={20} style={{ color: 'var(--accent-primary)' }} />
               </div>
               <span className="stat-value" style={{ color: 'var(--accent-primary)' }}>
-                {mlStats.rate != null ? `${(mlStats.rate * 100).toFixed(0)}%` : '—'}
+                {analytics.high_confidence_count != null ? analytics.high_confidence_count : '—'}
               </span>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                {mlStats.total ? `${mlStats.agreed}/${mlStats.total} detections` : 'no ML data yet'}
+                {analytics.total_findings
+                  ? `${analytics.total_findings > 0 ? ((analytics.high_confidence_count / analytics.total_findings) * 100).toFixed(0) : 0}% of all findings`
+                  : 'confidence ≥ 75%'}
               </span>
             </div>
           </>
@@ -312,34 +360,42 @@ const Dashboard = () => {
       {analytics && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--spacing-lg)', marginBottom: 'var(--spacing-xl)' }}>
 
-          {/* Severity Distribution Pie */}
-          {severityPieData.length > 0 && (
+          {/* Severity × Status Stacked Bar (replaces plain severity pie) */}
+          {statusStackData.length > 0 && (
             <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
                 <ShieldAlert size={16} style={{ color: 'var(--status-high)' }} />
                 <h3 className="heading-3" style={{ margin: 0 }}>Severity Distribution</h3>
               </div>
-              <div style={{ height: 280 }}>
+              <div style={{ height: 240 }}>
                 <ResponsiveContainer>
-                  <PieChart>
-                    <Pie
-                      data={severityPieData}
-                      cx="50%" cy="45%"
-                      innerRadius={60} outerRadius={95}
-                      dataKey="value"
-                    >
-                      {severityPieData.map((entry, i) => (
-                        <Cell key={i} fill={SEV_COLORS[entry.name.toLowerCase()] || 'var(--text-tertiary)'} />
-                      ))}
-                    </Pie>
-                    <Tooltip content={<ChartTooltip />} />
+                  <BarChart data={statusStackData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                    <XAxis dataKey="severity" stroke="var(--text-tertiary)" fontSize={11} />
+                    <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                    <Tooltip
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length) return null;
+                        const total = statusStackData.find(d => d.severity === label)?._total || 0;
+                        return (
+                          <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                            <div style={{ fontWeight: 600, marginBottom: 4 }}>{label} <span style={{ color: 'var(--text-tertiary)' }}>({total} total)</span></div>
+                            {payload.map((p, i) => p.value > 0 && (
+                              <div key={i} style={{ color: p.fill }}>
+                                {p.name}: <strong>{p.value}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }}
+                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                    />
                     <Legend
-                      layout="horizontal"
-                      verticalAlign="bottom"
-                      align="center"
                       wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 11, paddingTop: 8 }}
                     />
-                  </PieChart>
+                    <Bar dataKey="Completed" stackId="a" fill="var(--status-safe)" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="Processing" stackId="a" fill="var(--status-moderate)" />
+                    <Bar dataKey="Failed" stackId="a" fill="var(--status-high)" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
@@ -393,45 +449,84 @@ const Dashboard = () => {
             </div>
           )}
 
-          {/* Context Type Distribution */}
-          {ctxData.length > 0 && (
+          {/* Findings Timeline Scatter (replaces Context Type donut) */}
+          {timelineScatterData.length > 1 && (
             <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
                 <Activity size={16} style={{ color: 'var(--accent-primary)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>Context Type Breakdown</h3>
+                <h3 className="heading-3" style={{ margin: 0 }}>Risk Score Scatter</h3>
+                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 500 }}>
+                  Last {timelineScatterData.length} analyses
+                </span>
               </div>
-              <div style={{ height: 280 }}>
+              <div style={{ height: 260 }}>
                 <ResponsiveContainer>
-                  <PieChart>
-                    <Pie
-                      data={ctxData}
-                      cx="50%" cy="45%"
-                      innerRadius={60} outerRadius={95}
-                      dataKey="value"
-                    >
-                      {ctxData.map((entry, i) => (
-                        <Cell key={i} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip content={<ChartTooltip />} />
-                    <Legend
-                      layout="horizontal"
-                      verticalAlign="bottom"
-                      align="center"
-                      wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 11, paddingTop: 8 }}
-                      formatter={(value) => value.length > 14 ? value.slice(0, 13) + '…' : value}
+                  <ScatterChart margin={{ top: 8, right: 16, left: -10, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                    <XAxis
+                      dataKey="x"
+                      type="number"
+                      name="Analysis"
+                      stroke="var(--text-tertiary)"
+                      fontSize={11}
+                      tickCount={Math.min(timelineScatterData.length, 10)}
+                      domain={[1, timelineScatterData.length]}
+                      tick={{ fill: 'var(--text-tertiary)' }}
+                      label={{ value: 'Analysis #', position: 'insideBottom', offset: -2, fill: 'var(--text-tertiary)', fontSize: 10 }}
                     />
-                  </PieChart>
+                    <YAxis
+                      dataKey="y"
+                      type="number"
+                      name="Risk Score"
+                      stroke="var(--text-tertiary)"
+                      fontSize={11}
+                      domain={[0, 100]}
+                      tickCount={6}
+                      tick={{ fill: 'var(--text-tertiary)' }}
+                    />
+                    <ZAxis dataKey="z" range={[60, 60]} />
+                    <ReferenceLine y={80} stroke="var(--status-critical)" strokeDasharray="4 3" strokeOpacity={0.5} />
+                    <ReferenceLine y={61} stroke="var(--status-high)" strokeDasharray="4 3" strokeOpacity={0.4} />
+                    <ReferenceLine y={41} stroke="var(--status-moderate)" strokeDasharray="4 3" strokeOpacity={0.35} />
+                    <Tooltip
+                      cursor={{ strokeDasharray: '3 3' }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const d = payload[0].payload;
+                        const color = getRiskColor(d.y);
+                        return (
+                          <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                            <div style={{ fontWeight: 600, marginBottom: 2, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</div>
+                            <div style={{ color }}>Risk Score: <strong>{d.y}</strong>/100</div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Scatter
+                      data={timelineScatterData}
+                      shape={(props) => {
+                        const { cx, cy, payload } = props;
+                        const color = getRiskColor(payload.y);
+                        return <circle cx={cx} cy={cy} r={7} fill={color} stroke="#fff" strokeWidth={1.5} fillOpacity={0.85} />;
+                      }}
+                    />
+                  </ScatterChart>
                 </ResponsiveContainer>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '1.25rem', marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                {[['var(--status-critical)', 'Critical 80+'], ['var(--status-high)', 'High 61–79'], ['var(--status-moderate)', 'Moderate 41–60'], ['var(--status-safe)', 'Safe <21']].map(([c, l]) => (
+                  <span key={l} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: c, display: 'inline-block' }} />{l}
+                  </span>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Confidence Histogram */}
-          {confHistData.some(d => d.count > 0) && (
+              {confHistData.some(d => d.count > 0) && (
             <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <BarChart2 size={16} style={{ color: 'var(--accent-secondary)' }} />
+                <Brain size={16} style={{ color: 'var(--accent-primary)' }} />
                 <h3 className="heading-3" style={{ margin: 0 }}>Detection Confidence</h3>
               </div>
               <div style={{ height: 240 }}>
@@ -440,7 +535,7 @@ const Dashboard = () => {
                     <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
                     <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
                     <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Reports">
                       {confHistData.map((entry, i) => (
                         <Cell key={i} fill={entry.fill} />
                       ))}
@@ -448,47 +543,97 @@ const Dashboard = () => {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              {analytics.high_confidence_count != null && analytics.total_findings > 0 && (
+                <div style={{ textAlign: 'center', marginTop: '0.5rem', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
+                  High confidence (≥75%): <strong style={{ color: 'var(--status-safe)' }}>
+                    {analytics.high_confidence_count}
+                  </strong>
+                  <span style={{ marginLeft: '0.5rem', color: 'var(--text-tertiary)' }}>
+                    of {analytics.total_findings} findings
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
-          {/* ML Agreement Card */}
-          {mlStats.total > 0 && (
+          {/* Risk Score Trend */}
+          {trendData.length > 1 && (
             <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <Brain size={16} style={{ color: 'var(--accent-primary)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>ML vs Regex Agreement</h3>
+                <TrendingUp size={16} style={{ color: 'var(--accent-primary)' }} />
+                <h3 className="heading-3" style={{ margin: 0 }}>Risk Score Trend</h3>
+                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 500 }}>Last {trendData.length} analyses</span>
               </div>
-              <div style={{ height: 280 }}>
+              <div style={{ height: 260 }}>
                 <ResponsiveContainer>
-                  <PieChart>
-                    <Pie
-                      data={[
-                        { name: 'Agreed', value: mlStats.agreed },
-                        { name: 'Disagreed', value: mlStats.disagreed },
-                        { name: 'No Signal', value: mlStats.total - mlStats.agreed - mlStats.disagreed },
-                      ].filter(d => d.value > 0)}
-                      cx="50%" cy="45%"
-                      innerRadius={60} outerRadius={95}
-                      dataKey="value"
-                    >
-                      <Cell fill="var(--status-safe)" />
-                      <Cell fill="var(--status-high)" />
-                      <Cell fill="var(--text-tertiary)" />
-                    </Pie>
-                    <Tooltip content={<ChartTooltip />} />
-                    <Legend
-                      layout="horizontal"
-                      verticalAlign="bottom"
-                      align="center"
-                      wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 11, paddingTop: 8 }}
+                  <LineChart data={trendData} margin={{ top: 8, right: 16, left: -10, bottom: 30 }}>
+                    <defs>
+                      <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity={0.3} />
+                        <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      stroke="var(--text-tertiary)"
+                      fontSize={10}
+                      angle={-35}
+                      textAnchor="end"
+                      interval={0}
+                      tick={{ fill: 'var(--text-tertiary)' }}
                     />
-                  </PieChart>
+                    <YAxis
+                      stroke="var(--text-tertiary)"
+                      fontSize={11}
+                      domain={[0, 100]}
+                      tickCount={6}
+                      tick={{ fill: 'var(--text-tertiary)' }}
+                    />
+                    <Tooltip
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length) return null;
+                        const score = payload[0].value;
+                        const color =
+                          score >= 80 ? 'var(--status-critical)'
+                          : score >= 61 ? 'var(--status-high)'
+                          : score >= 41 ? 'var(--status-moderate)'
+                          : score >= 21 ? 'var(--status-low)'
+                          : 'var(--status-safe)';
+                        return (
+                          <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                            <div style={{ fontWeight: 600, marginBottom: 2, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+                            <div style={{ color }}>Risk Score: <strong>{score}</strong>/100</div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="score"
+                      stroke="var(--accent-primary)"
+                      strokeWidth={2.5}
+                      dot={(props) => {
+                        const score = props.payload.score;
+                        const color =
+                          score >= 80 ? 'var(--status-critical)'
+                          : score >= 61 ? 'var(--status-high)'
+                          : score >= 41 ? 'var(--status-moderate)'
+                          : score >= 21 ? 'var(--status-low)'
+                          : 'var(--status-safe)';
+                        return <circle key={props.key} cx={props.cx} cy={props.cy} r={5} fill={color} stroke="#fff" strokeWidth={1.5} />;
+                      }}
+                      activeDot={{ r: 7, strokeWidth: 2 }}
+                    />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
-              <div style={{ textAlign: 'center', marginTop: '0.25rem', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-                Agreement rate: <strong style={{ color: 'var(--status-safe)' }}>
-                  {mlStats.rate != null ? `${(mlStats.rate * 100).toFixed(1)}%` : '—'}
-                </strong>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '1.25rem', marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                {[['var(--status-critical)', 'Critical 80+'], ['var(--status-high)', 'High 61–79'], ['var(--status-moderate)', 'Moderate 41–60'], ['var(--status-safe)', 'Safe <21']].map(([c, l]) => (
+                  <span key={l} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: c, display: 'inline-block' }} />{l}
+                  </span>
+                ))}
               </div>
             </div>
           )}
@@ -587,8 +732,8 @@ const Dashboard = () => {
                 <tr><td colSpan="7" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
                   {search ? `No files matching "${search}"` : 'No analyses yet. Upload an audio file to begin.'}
                 </td></tr>
-              ) : filtered.map(item => (
-                <tr key={item.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/report/${item.id}`)}>
+              ) : filtered.map((item, i) => (
+                <tr key={item.id} className="animate-slide-up" style={{ cursor: 'pointer', animationDelay: `${Math.min(i * 50, 500)}ms` }} onClick={() => navigate(`/report/${item.id}`)}>
                   <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.85rem' }}>#{item.id}</td>
                   <td style={{ fontWeight: 500, maxWidth: 350 }}>
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>

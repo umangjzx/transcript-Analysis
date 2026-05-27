@@ -1,4 +1,4 @@
-﻿"""
+"""
 Audio Safety Analyzer - FastAPI Application
 
 Fixes applied:
@@ -8,7 +8,7 @@ Fixes applied:
 - Request correlation ID middleware (X-Request-ID header)
 - JWT authentication — credentials stored in MongoDB, bcrypt-hashed
 - API key middleware kept for backward-compat with direct script access
-- Stuck-job recovery on startup (PROCESSING > 30 min → FAILED)
+- Stuck-job recovery on startup (PROCESSING > 30 min ? FAILED)
 - ML classifier warm-up on startup when ENABLE_ML_CLASSIFIER=true
 - Upload file cleanup daemon (env: UPLOAD_TTL_HOURS, default 24)
 - TTL in-memory cache for /history and /analytics/summary (60 s)
@@ -59,7 +59,7 @@ from modules.email_notifier import send_alert_email, send_summary_email, should_
 from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
 from auth import get_current_user, authenticate_user, create_access_token
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# -- Logging -------------------------------------------------------------------
 
 os.makedirs("logs", exist_ok=True)
 os.makedirs("reports", exist_ok=True)
@@ -81,7 +81,7 @@ for _handler in logging.root.handlers:
 
 logger = logging.getLogger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# -- Config --------------------------------------------------------------------
 
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "200")) * 1024 * 1024
 
@@ -100,7 +100,7 @@ def _get_enable_llm_summary() -> bool:
     """Read ENABLE_LLM_SUMMARY from environment (allows .env changes without restart)."""
     return os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
 
-# ── TTL cache ─────────────────────────────────────────────────────────────────
+# -- TTL cache -----------------------------------------------------------------
 
 _CACHE_TTL = 60  # seconds
 
@@ -135,7 +135,7 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
-# ── Database init ─────────────────────────────────────────────────────────────
+# -- Database init -------------------------------------------------------------
 
 try:
     from database.mongo import get_mongo_db as _mongo_init
@@ -144,7 +144,7 @@ try:
 except Exception as _e:
     logger.warning(f"MongoDB init warning (non-fatal): {_e}")
 
-# ── FastAPI app ───────────────────────────────────────────────────────────────
+# -- FastAPI app ---------------------------------------------------------------
 
 app = FastAPI(
     title="Audio Safety Analyzer",
@@ -152,7 +152,7 @@ app = FastAPI(
     version="2.1.0",
 )
 
-# ── Request ID middleware ─────────────────────────────────────────────────────
+# -- Request ID middleware -----------------------------------------------------
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -164,7 +164,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestIDMiddleware)
 
-# ── API Key auth middleware ────────────────────────────────────────────────────
+# -- API Key auth middleware ----------------------------------------------------
 
 _PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
 
@@ -188,7 +188,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(APIKeyMiddleware)
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+# -- CORS ----------------------------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -198,7 +198,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Global exception handler ──────────────────────────────────────────────────
+# -- Global exception handler --------------------------------------------------
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -214,7 +214,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-# ── Pipeline components ───────────────────────────────────────────────────────
+# -- Pipeline components -------------------------------------------------------
 
 _enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "false").lower() == "true"
 grooming_detector = GroomingDetector(
@@ -223,7 +223,7 @@ grooming_detector = GroomingDetector(
 )
 risk_scorer = WeightedRiskScorer()
 
-# ── Startup / shutdown ────────────────────────────────────────────────────────
+# -- Startup / shutdown --------------------------------------------------------
 
 @app.on_event("startup")
 async def startup_event():
@@ -267,6 +267,19 @@ async def startup_event():
                 logger.warning(f"ML warm-up failed (non-fatal): {_e}")
         threading.Thread(target=_warmup, daemon=True).start()
 
+    # Chatbot warm-up — pre-load SentenceTransformer + ChromaDB so the first
+    # import doesn't pay the cold-start cost mid-request (~4s on CPU).
+    def _warmup_chatbot():
+        try:
+            logger.info("Chatbot warm-up: loading SentenceTransformer + ChromaDB...")
+            from modules.chatbot import _get_embedding_model, _get_collection
+            _get_embedding_model()
+            _get_collection()
+            logger.info("Chatbot warm-up complete")
+        except Exception as _e:
+            logger.warning(f"Chatbot warm-up failed (non-fatal): {_e}")
+    threading.Thread(target=_warmup_chatbot, daemon=True).start()
+
     # Upload cleanup daemon
     if UPLOAD_TTL_HOURS > 0:
         def _cleanup():
@@ -304,7 +317,7 @@ async def startup_event():
 async def shutdown_event():
     logger.info("Audio Safety Analyzer shutting down...")
 
-# ── Register versioned router ─────────────────────────────────────────────────
+# -- Register versioned router -------------------------------------------------
 
 from api.audio_analysis_routes import router as v1_router  # noqa: E402
 from api.google_drive_routes import router as gdrive_router  # noqa: E402
@@ -316,7 +329,7 @@ if _enable_ml:
 else:
     logger.info("ML classifier DISABLED — set ENABLE_ML_CLASSIFIER=true in .env to enable")
 
-# ── Request models ────────────────────────────────────────────────────────────
+# -- Request models ------------------------------------------------------------
 
 class ChatRequest(BaseModel):
     report_id: int
@@ -327,7 +340,7 @@ class NotifyRequest(BaseModel):
     recipients: Optional[list] = None
 
 
-# ── Background pipeline ───────────────────────────────────────────────────────
+# -- Background pipeline -------------------------------------------------------
 
 def process_audio_background(record_id: int, filepath: str, filename: str):
     """Full analysis pipeline — runs in a background thread. Writes to MongoDB + S3 only."""
@@ -364,13 +377,13 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
         risk_result = risk_scorer.calculate_score(findings)
         risk_score = risk_result.get("score", 0)
         severity = classify_severity(risk_score)
-        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} → {severity}")
+        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} ? {severity}")
 
         # Stats & summaries
         stats = generate_stats(transcript, findings, severity, risk_score)
         summary = generate_summary(transcript, findings, risk_score, severity)
 
-        if ENABLE_LLM_SUMMARY:
+        if _get_enable_llm_summary():
             save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
             try:
                 llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
@@ -483,13 +496,13 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
         risk_result = risk_scorer.calculate_score(findings)
         risk_score = risk_result.get("score", 0)
         severity = classify_severity(risk_score)
-        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} → {severity}")
+        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} ? {severity}")
 
         # Stats & summaries
         stats = generate_stats(transcript, findings, severity, risk_score)
         summary = generate_summary(transcript, findings, risk_score, severity)
 
-        if ENABLE_LLM_SUMMARY:
+        if _get_enable_llm_summary():
             save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
             try:
                 llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
@@ -588,13 +601,13 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
         risk_result = risk_scorer.calculate_score(findings)
         risk_score = risk_result.get("score", 0)
         severity = classify_severity(risk_score)
-        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} → {severity}")
+        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} ? {severity}")
 
         # Stats & summaries
         stats = generate_stats(transcript, findings, severity, risk_score)
         summary = generate_summary(transcript, findings, risk_score, severity)
 
-        if ENABLE_LLM_SUMMARY:
+        if _get_enable_llm_summary():
             save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
             try:
                 llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
@@ -666,16 +679,16 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
         logger.error(f"[#{record_id}] Transcript background processing FAILED: {_e}", exc_info=True)
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# -- Routes --------------------------------------------------------------------
 
-# ── Auth models ───────────────────────────────────────────────────────────────
+# -- Auth models ---------------------------------------------------------------
 
 class LoginRequest(BaseModel):
     username: str
     password: str
 
 
-# ── Auth endpoints ────────────────────────────────────────────────────────────
+# -- Auth endpoints ------------------------------------------------------------
 
 @app.post("/auth/login")
 def login(body: LoginRequest):
@@ -896,7 +909,7 @@ async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Re
     """
     content_type = request.headers.get("content-type", "")
 
-    # ── Multipart file upload (.txt) ──────────────────────────────────────────
+    # -- Multipart file upload (.txt) ------------------------------------------
     if "multipart/form-data" in content_type:
         from fastapi import Form
         form = await request.form()
@@ -927,7 +940,7 @@ async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Re
         if not transcript_text:
             raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
-    # ── JSON body ─────────────────────────────────────────────────────────────
+    # -- JSON body -------------------------------------------------------------
     else:
         try:
             body = await request.json()
@@ -1058,7 +1071,7 @@ def delete_report(report_id: int):
     s3_audio_url = meta.get("s3_recording_url")
     s3_pdf_url   = meta.get("s3_pdf_url")
 
-    # ── 1. Delete local PDF from disk ─────────────────────────────────────────
+    # -- 1. Delete local PDF from disk -----------------------------------------
     if pdf_path and os.path.exists(pdf_path):
         try:
             os.remove(pdf_path)
@@ -1066,7 +1079,7 @@ def delete_report(report_id: int):
         except Exception as _e:
             logger.warning(f"[#{report_id}] Could not delete local PDF: {_e}")
 
-    # ── 2. Delete audio file from S3 ─────────────────────────────────────────
+    # -- 2. Delete audio file from S3 -----------------------------------------
     if s3_audio_url:
         try:
             s3_delete_file(s3_audio_url)
@@ -1074,7 +1087,7 @@ def delete_report(report_id: int):
         except Exception as _e:
             logger.warning(f"[#{report_id}] S3 audio delete failed (non-fatal): {_e}")
 
-    # ── 3. Delete PDF from S3 ─────────────────────────────────────────────────
+    # -- 3. Delete PDF from S3 -------------------------------------------------
     if s3_pdf_url:
         try:
             s3_delete_file(s3_pdf_url)
@@ -1082,14 +1095,14 @@ def delete_report(report_id: int):
         except Exception as _e:
             logger.warning(f"[#{report_id}] S3 PDF delete failed (non-fatal): {_e}")
 
-    # ── 4. Delete all MongoDB collections for this meeting ────────────────────
+    # -- 4. Delete all MongoDB collections for this meeting --------------------
     try:
         delete_meeting_data(report_id)
         logger.info(f"[#{report_id}] MongoDB records deleted")
     except Exception as _e:
         logger.warning(f"[#{report_id}] MongoDB cleanup failed (non-fatal): {_e}")
 
-    # ── 5. Invalidate caches ──────────────────────────────────────────────────
+    # -- 5. Invalidate caches --------------------------------------------------
     _cache.invalidate()
     from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
     _h_cache.invalidate()
@@ -1106,7 +1119,7 @@ def delete_report(report_id: int):
 
     return Response(status_code=204)
 
-# ── Notifications ─────────────────────────────────────────────────────────────
+# -- Notifications -------------------------------------------------------------
 
 def _load_report_for_notify(report_id: int) -> Dict[str, Any]:
     report = get_full_report(report_id)
@@ -1165,7 +1178,7 @@ def notify_summary(report_id: int, body: NotifyRequest = NotifyRequest()):
     return result
 
 
-# ── Analytics ─────────────────────────────────────────────────────────────────
+# -- Analytics -----------------------------------------------------------------
 
 @app.get("/analytics/summary")
 def get_analytics_summary():
@@ -1179,7 +1192,7 @@ def get_analytics_summary():
     return result
 
 
-# ── Chatbot ───────────────────────────────────────────────────────────────────
+# -- Chatbot -------------------------------------------------------------------
 
 @app.post("/chat")
 def chat(request: ChatRequest):

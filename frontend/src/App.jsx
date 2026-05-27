@@ -26,8 +26,8 @@ const Navigation = () => {
   return (
     <nav className="navbar glass-panel animate-slide-up" style={{ animationName: 'slideDownFade' }}>
       <div className="navbar-brand">
-        <Shield className="brand-icon" size={28} />
-        <span className="brand-text text-gradient heading-3">AuraSafety</span>
+        <img src="/unnamed.png" alt="MelodyWings" className="brand-logo" style={{ height: '32px', width: 'auto', marginRight: '8px' }} />
+        <span className="brand-text heading-3" style={{ color: 'var(--text-primary)', fontWeight: '700' }}>Melody Wings Safety</span>
       </div>
 
       <div className="navbar-links">

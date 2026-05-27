@@ -366,13 +366,18 @@ def _run_transcript_pipeline(record_id: int, transcript: str, filename: str):
         # Stats & summaries
         stats = generate_stats(transcript, findings, severity, risk_score)
         summary = generate_summary(transcript, findings, risk_score, severity)
-        save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
 
-        try:
-            llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-            llm_summary = f"LLM Summary unavailable: {_e}"
+        enable_llm = os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
+        if enable_llm:
+            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
+            try:
+                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
+            except Exception as _e:
+                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
+                llm_summary = f"LLM Summary unavailable: {_e}"
+        else:
+            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
+            llm_summary = summary
 
         # Vector store
         try:
