@@ -8,9 +8,11 @@ React 19 + Vite 8 dashboard for the AuraSafety audio grooming detection system.
 
 | Route | Page | Description |
 |---|---|---|
+| `/login` | Login | JWT login form — username + password with show/hide toggle; auto-redirects to dashboard if already authenticated; public route |
 | `/` | Dashboard | Analysis history table with live search, sortable columns, 4 stat cards, and delete action |
 | `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio or video) with real-time progress bar; polls status until complete then redirects to the report |
 | `/report/:id` | Report | Full analysis view — 6 tabs + chatbot sidebar (see below) |
+| `/google-drive` | Google Drive | Connect Google Drive via OAuth2, browse importable `.txt` and Google Docs files, trigger imports, and manage the auto-watcher |
 
 ### Report Page Tabs
 
@@ -32,6 +34,16 @@ React 19 + Vite 8 dashboard for the AuraSafety audio grooming detection system.
 | `Chatbot.jsx` | AI chatbot sidebar on the Report page — sends questions to `POST /chat` and displays the answer with source excerpts |
 | `ErrorBoundary.jsx` | React error boundary wrapping all routes — catches render errors and shows a fallback UI |
 
+### Pages
+
+| Page | Description |
+|---|---|
+| `Dashboard.jsx` | History table with live search, sortable columns, stat cards, and delete action |
+| `Upload.jsx` | Drag-and-drop audio/video upload with real-time progress bar and status polling |
+| `Report.jsx` | 6-tab analysis report with chatbot sidebar |
+| `Login.jsx` | JWT login form — username/password with show/hide toggle, error display, loading state |
+| `GoogleDrive.jsx` | Google Drive OAuth2 connect flow, file browser, import trigger, and watcher controls |
+
 ---
 
 ## Setup
@@ -45,6 +57,30 @@ npm run lint      # ESLint
 ```
 
 The Vite dev server proxies all `/api/v1/*` requests to `http://localhost:8000` — the backend must be running.
+
+---
+
+## Authentication
+
+The frontend uses **JWT Bearer tokens** stored in `localStorage`.
+
+### Flow
+
+1. Unauthenticated users are redirected to `/login` by the `ProtectedRoute` guard in `App.jsx`
+2. On successful login, the JWT is stored in `localStorage` and the user is redirected to `/`
+3. Every Axios request automatically attaches the token as `Authorization: Bearer <token>`
+4. On logout, the token is removed from `localStorage` and the user is redirected to `/login`
+
+### Protected routes
+
+All routes except `/login` are wrapped in a `ProtectedRoute` component that checks for a valid token. If no token is found, the user is redirected to `/login`.
+
+### Navbar
+
+The navigation bar shows:
+- The logged-in username (from the stored JWT payload)
+- A logout button (clears token, redirects to `/login`)
+- An avatar with the user's initials
 
 ---
 
@@ -67,6 +103,10 @@ All backend calls go through a single Axios instance with `baseURL: '/api/v1'` a
 
 | Function | Method | Description |
 |---|---|---|
+| `login(username, password)` | `POST /auth/login` | Authenticates and stores the JWT + username in `localStorage` |
+| `logout()` | — | Removes JWT from `localStorage` |
+| `getToken()` | — | Returns the stored JWT string, or `null` |
+| `getStoredUser()` | — | Returns `{username}` from `localStorage`, or `null` |
 | `getHistory(skip, limit)` | `GET /history` | Paginated analysis history |
 | `getReport(id)` | `GET /report/:id` | Full report object |
 | `getReportStatus(id)` | `GET /report/:id/status` | Poll PROCESSING / COMPLETED / FAILED |
@@ -110,3 +150,5 @@ Create `frontend/.env` to override defaults:
 ```env
 VITE_API_KEY=your-api-key   # optional — must match API_KEY in backend/.env
 ```
+
+> **Note:** `VITE_API_KEY` attaches an `X-API-Key` header to every request. This is the legacy API key auth. For the JWT-based login flow used by the frontend, set `JWT_SECRET` in the backend `.env` and run `python create_admin.py` to create the admin user.

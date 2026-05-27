@@ -127,6 +127,58 @@ flowchart TD
 
 ---
 
+## Authentication
+
+AuraSafety uses **JWT (HS256)** for frontend authentication and a legacy **X-API-Key** header for direct API/script access.
+
+### Strategy
+
+- Admin credentials stored in MongoDB (`users` collection), passwords bcrypt-hashed (12 rounds)
+- Login issues a signed JWT valid for `JWT_EXPIRE_MINUTES` (default 8 hours)
+- `get_current_user` FastAPI dependency validates the Bearer JWT on protected routes
+- If `JWT_SECRET` is not set, auth is disabled (dev mode — all requests pass through)
+- X-API-Key middleware is kept for backward-compat with direct script access
+
+### JWT payload
+
+```json
+{ "sub": "<username>", "role": "admin", "exp": <unix timestamp> }
+```
+
+### Login endpoint
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → `{"access_token": "...", "token_type": "bearer", "username": "..."}` |
+
+### First-time setup
+
+```bash
+# 1. Add to .env:
+JWT_SECRET=<python -c "import secrets; print(secrets.token_hex(32))">
+JWT_EXPIRE_MINUTES=480
+
+# 2. Create the admin user:
+python create_admin.py
+```
+
+`create_admin.py` connects to MongoDB, prompts for username + password (min 8 chars), bcrypt-hashes the password, and upserts the user document. Run once on first setup or to reset the admin password.
+
+### `auth.py` functions
+
+| Function | Description |
+|---|---|
+| `hash_password(plaintext)` | Returns a bcrypt hash (12 rounds) |
+| `verify_password(plaintext, hashed)` | Checks plaintext against stored hash |
+| `create_access_token(username, role)` | Issues a signed HS256 JWT |
+| `decode_access_token(token)` | Validates JWT, raises 401 on failure |
+| `get_user(username)` | Fetches user document from MongoDB |
+| `create_user(username, password, role)` | Inserts new user with hashed password |
+| `authenticate_user(username, password)` | Verifies credentials, returns user doc or None |
+| `get_current_user` | FastAPI dependency — validates Bearer JWT |
+
+---
+
 ## Project Structure
 
 ```
@@ -134,7 +186,8 @@ backend/
 │
 ├── app.py                          # FastAPI application — all routes + background tasks
 ├── config.py                       # Paths, SMTP, S3, MongoDB, Google Drive config
-├── auth.py                         # API key authentication helpers
+├── auth.py                         # JWT + bcrypt authentication helpers
+├── create_admin.py                 # CLI script to create/reset the admin user in MongoDB
 ├── requirements.txt                # Python dependencies
 ├── test_pipeline.py                # Interactive CLI pipeline tester
 ├── test_email.py                   # 4-step SMTP integration test
@@ -336,6 +389,8 @@ MongoDB is the sole data store. All analysis results, transcripts, findings, and
 | `action_items` | High/critical findings requiring action, topics, keywords |
 | `processing_status` | Pipeline stage, started_at, completed_at, errors |
 | `audit_logs` | All events — uploads, completions, failures, emails sent |
+| `users` | Admin user accounts — bcrypt-hashed passwords, roles, created_at |
+| `counters` | Atomic auto-increment ID counter for meeting IDs (findOneAndUpdate) |
 
 A `counters` collection provides atomic auto-increment meeting IDs via `findOneAndUpdate`.
 
@@ -458,6 +513,7 @@ Set `DRIVE_AUTO_WATCH=true` in `.env` to automatically start polling Drive on se
 |---|---|---|
 | `GET` | `/` | Service name + version |
 | `GET` | `/health` | S3 + MongoDB + ML classifier health |
+| `POST` | `/auth/login` | Authenticate and receive a JWT — `{"username": "...", "password": "..."}` |
 | `POST` | `/analyze` | Upload audio file — returns immediately, runs pipeline in background |
 | `POST` | `/analyze/video` | Upload video file — audio extracted server-side, then analyzed |
 | `POST` | `/analyze/transcript` | Submit plain-text transcript — skips transcription step |
@@ -605,6 +661,10 @@ S3_BUCKET_NAME=your-bucket-name
 # ── Speaker Diarization ───────────────────────────────────────────────────────
 HF_TOKEN=your-huggingface-token   # required for pyannote.audio
 ENABLE_DIARIZATION=false          # adds ~90s per 3-min file on CPU
+
+# ── Authentication ────────────────────────────────────────────────────────────
+JWT_SECRET=your-long-random-secret   # required — generate: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_EXPIRE_MINUTES=480               # JWT token lifetime in minutes (default 8 hours)
 
 # ── Feature Flags ─────────────────────────────────────────────────────────────
 ENABLE_ML_CLASSIFIER=false        # set true after ~400 MB model is cached

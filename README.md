@@ -168,11 +168,13 @@ AuraSafety/
     │   │   ├── Dashboard.jsx       # History table — search, sort, stat cards
     │   │   ├── Report.jsx          # 6-tab report — Overview, Findings, Evidence,
     │   │   │                       #   Timeline, Analytics, Raw Data + Chatbot sidebar
-    │   │   └── Upload.jsx          # Drag-and-drop upload (audio + video) with progress bar
+    │   │   ├── Upload.jsx          # Drag-and-drop upload (audio + video) with progress bar
+    │   │   ├── Login.jsx           # JWT login page — username/password form
+    │   │   └── GoogleDrive.jsx     # Google Drive OAuth2 connect + file browser + watcher
     │   ├── components/
     │   │   ├── Chatbot.jsx         # AI chatbot sidebar (RAG)
     │   │   └── ErrorBoundary.jsx   # React error boundary
-    │   └── api.js                  # Axios client — all API calls
+    │   └── api.js                  # Axios client — all API calls + JWT token helpers
     └── vite.config.js              # Dev proxy /api/v1/* → :8000
 ```
 
@@ -361,6 +363,8 @@ ENABLE_ML_CLASSIFIER=false        # set true after ~400 MB model is cached
 ENABLE_LLM_SUMMARY=true           # set false to skip Ollama entirely (faster)
 MAX_UPLOAD_MB=200                 # max audio upload size in MB
 MAX_VIDEO_UPLOAD_MB=500           # max video upload size in MB
+JWT_SECRET=your-long-random-secret  # required for JWT auth — generate with: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_EXPIRE_MINUTES=480            # JWT token lifetime in minutes (default 8 hours)
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 API_KEY=                          # leave blank to disable auth in dev
 UPLOAD_TTL_HOURS=24               # 0 = disable upload cleanup
@@ -379,6 +383,46 @@ DRIVE_WATCH_FOLDER_ID=            # optional: restrict to a specific Drive folde
 ```
 
 > **Gmail tip:** Generate a 16-character App Password at https://myaccount.google.com/apppasswords — do not use your account password. 2FA must be enabled on the Google account first.
+
+---
+
+## Authentication
+
+AuraSafety uses **JWT (JSON Web Token)** authentication for the frontend and a legacy **X-API-Key** header for direct API/script access.
+
+### How it works
+
+- Admin credentials are stored in MongoDB (`users` collection), passwords bcrypt-hashed (12 rounds)
+- On login, the server issues a signed HS256 JWT valid for `JWT_EXPIRE_MINUTES` (default 8 hours)
+- The frontend stores the token in `localStorage` and attaches it as a `Bearer` token on every request
+- The `get_current_user` FastAPI dependency validates the JWT on protected routes
+- If `JWT_SECRET` is not set, auth is disabled entirely (dev mode — all requests pass through)
+
+### Setup
+
+```bash
+# 1. Add to backend/.env:
+JWT_SECRET=<run: python -c "import secrets; print(secrets.token_hex(32))">
+JWT_EXPIRE_MINUTES=480
+
+# 2. Create the admin user:
+cd backend
+python create_admin.py
+```
+
+`create_admin.py` connects to MongoDB, prompts for a username and password (minimum 8 characters), bcrypt-hashes the password, and upserts the user document. Run it once on first setup, or any time you need to reset the admin password.
+
+### JWT payload
+
+```json
+{ "sub": "<username>", "role": "admin", "exp": <unix timestamp> }
+```
+
+### Login endpoint
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/auth/login` | Accepts `{"username": "...", "password": "..."}` — returns `{"access_token": "...", "token_type": "bearer", "username": "..."}` |
 
 ---
 
@@ -671,9 +715,11 @@ The React 19 dashboard has three routes:
 
 | Route | Page | Description |
 |---|---|---|
+| `/login` | Login | JWT login form — username + password with show/hide toggle; redirects to dashboard on success; public route (no auth required) |
 | `/` | Dashboard | Analysis history table with live search, sortable columns (filename, severity, risk score), and 4 stat cards — total analyses, average risk score, critical findings, high findings |
 | `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio or video files) with real-time progress bar; polls status until complete then redirects to the report |
 | `/report/:id` | Report | Full analysis view — see tabs below |
+| `/google-drive` | Google Drive | Connect Google Drive via OAuth2, browse importable files, trigger imports, and manage the auto-watcher |
 
 ### Report Page Tabs
 
