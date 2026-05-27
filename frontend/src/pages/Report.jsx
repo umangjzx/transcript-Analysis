@@ -13,6 +13,7 @@ import {
   Users, Mail, Bell, Trash2, X,
 } from 'lucide-react';
 import { getReport, downloadPdfUrl, sendAlertEmail, sendSummaryEmail, deleteReport } from '../api';
+import toast from 'react-hot-toast';
 import Chatbot from '../components/Chatbot';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -287,9 +288,7 @@ const Report = () => {
     }
   };
 
-  // Email notification state
-  const [emailStatus, setEmailStatus] = useState(null); // null | 'sending' | 'sent' | 'error'
-  const [emailMsg, setEmailMsg]       = useState('');
+  // Email notification state (removed custom state, using toast)
 
   // Delete state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -299,38 +298,33 @@ const Report = () => {
     setIsDeleting(true);
     try {
       await deleteReport(id);
+      toast.success('Report deleted successfully');
       navigate('/', { replace: true });
     } catch (e) {
       setIsDeleting(false);
       setShowDeleteConfirm(false);
-      alert(`Failed to delete report: ${e?.response?.data?.detail || e.message}`);
+      toast.error(`Failed to delete report: ${e?.response?.data?.detail || e.message}`);
     }
   };
 
   const handleSendAlert = async () => {
-    setEmailStatus('sending');
+    const toastId = toast.loading('Sending alert email...');
     try {
       await sendAlertEmail(id);
-      setEmailStatus('sent');
-      setEmailMsg('Alert email sent');
+      toast.success('Alert email sent', { id: toastId });
     } catch (e) {
-      setEmailStatus('error');
-      setEmailMsg(e?.response?.data?.detail || 'Failed to send alert');
+      toast.error(e?.response?.data?.detail || 'Failed to send alert', { id: toastId });
     }
-    setTimeout(() => setEmailStatus(null), 4000);
   };
 
   const handleSendSummary = async () => {
-    setEmailStatus('sending');
+    const toastId = toast.loading('Sending summary email...');
     try {
       await sendSummaryEmail(id);
-      setEmailStatus('sent');
-      setEmailMsg('Summary email sent');
+      toast.success('Summary email sent', { id: toastId });
     } catch (e) {
-      setEmailStatus('error');
-      setEmailMsg(e?.response?.data?.detail || 'Failed to send summary');
+      toast.error(e?.response?.data?.detail || 'Failed to send summary', { id: toastId });
     }
-    setTimeout(() => setEmailStatus(null), 4000);
   };
 
   useEffect(() => {
@@ -507,20 +501,18 @@ const Report = () => {
           <button
             className="btn btn-secondary"
             onClick={handleSendAlert}
-            disabled={emailStatus === 'sending'}
             title="Send red-alert email to configured recipients"
           >
             <Bell size={16} style={{ color: 'var(--status-high)' }} />
-            {emailStatus === 'sending' ? 'Sending…' : 'Send Alert'}
+            Send Alert
           </button>
           <button
             className="btn btn-secondary"
             onClick={handleSendSummary}
-            disabled={emailStatus === 'sending'}
             title="Send full analysis summary email"
           >
             <Mail size={16} />
-            {emailStatus === 'sending' ? 'Sending…' : 'Email Summary'}
+            Email Summary
           </button>
           <button className="btn btn-secondary" onClick={() => setChatOpen(o => !o)}>
             <MessageSquare size={16} /> {chatOpen ? 'Close Chat' : 'Ask AI'}
@@ -538,22 +530,6 @@ const Report = () => {
           >
             <Trash2 size={15} /> Delete
           </button>
-
-          {/* Email toast */}
-          {emailStatus && emailStatus !== 'sending' && (
-            <div style={{
-              position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-              background: emailStatus === 'sent' ? 'var(--status-safe)' : 'var(--status-high)',
-              color: '#fff', padding: '10px 18px', borderRadius: 8,
-              fontSize: '0.85rem', fontWeight: 600,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-              display: 'flex', alignItems: 'center', gap: '0.5rem',
-              animation: 'fadeIn 0.2s ease',
-            }}>
-              {emailStatus === 'sent' ? <CheckCircle size={15} /> : <XCircle size={15} />}
-              {emailMsg}
-            </div>
-          )}
         </div>
       </div>
 

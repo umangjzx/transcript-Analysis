@@ -8,6 +8,7 @@ import Login from './pages/Login';
 import GoogleDrive from './pages/GoogleDrive';
 import ErrorBoundary from './components/ErrorBoundary';
 import { getToken, getStoredUser, logout } from './api';
+import { Toaster } from 'react-hot-toast';
 import './App.css';
 
 // ── Navigation bar ────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ const ProtectedRoute = ({ children }) => {
 function App() {
   return (
     <BrowserRouter>
+      <Toaster position="bottom-right" toastOptions={{ style: { background: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' } }} />
       <Routes>
         {/* Public */}
         <Route path="/login" element={<Login />} />

@@ -145,11 +145,13 @@ Melody Wings Safety uses **JWT (HS256)** for frontend authentication and a legac
 { "sub": "<username>", "role": "admin", "exp": <unix timestamp> }
 ```
 
-### Login endpoint
+### Auth endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → `{"access_token": "...", "token_type": "bearer", "username": "..."}` |
+| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → `{"access_token", "token_type", "username", "role"}` |
+| `POST` | `/auth/logout` | Stateless logout (client discards token) |
+| `GET` | `/auth/me` | Current user from Bearer JWT (`Depends(get_current_user)`) |
 
 ### First-time setup
 
@@ -192,6 +194,7 @@ backend/
 ├── test_pipeline.py                # Interactive CLI pipeline tester
 ├── test_email.py                   # 4-step SMTP integration test
 ├── debug_env.py                    # Low-level SMTP credential debugger
+├── run_server.py                   # Alternative uvicorn launcher
 ├── .env.example                    # Environment variable template
 │
 ├── api/
@@ -439,7 +442,7 @@ Both endpoints log to MongoDB `audit_logs` and return `{"success": bool, "messag
 
 ## Google Drive Integration
 
-AuraSafety can connect to Google Drive to import `.txt` files and Google Docs directly as transcripts, bypassing the audio upload step entirely.
+Melody Wings Safety can connect to Google Drive to import `.txt` files and Google Docs directly as transcripts, bypassing the audio upload step entirely.
 
 ### Setup
 
@@ -507,13 +510,25 @@ Set `DRIVE_AUTO_WATCH=true` in `.env` to automatically start polling Drive on se
 ---
 ## API Endpoints
 
-### Core
+Two route layers exist:
+
+| Layer | Prefix | Notes |
+|---|---|---|
+| **Root** (`app.py`) | `/analyze`, `/report/…`, `/notify/…`, `/auth/…` | Background uploads, video/transcript analysis, notifications, analytics. React dev proxy strips `/api/v1` and hits these routes. |
+| **Versioned** (`audio_analysis_routes.py`) | `/api/v1/…` | Sync `POST /api/v1/analyze`, Pydantic models, JWT on history/report when `JWT_SECRET` is set. |
+| **Google Drive** (`google_drive_routes.py`) | `/api/v1/google-drive/…` | Always full prefix (Vite does not rewrite these). |
+
+`DELETE /report/{id}` is implemented only on the root app (not duplicated on `/api/v1`).
+
+### Core (root routes)
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | Service name + version |
 | `GET` | `/health` | S3 + MongoDB + ML classifier health |
-| `POST` | `/auth/login` | Authenticate and receive a JWT — `{"username": "...", "password": "..."}` |
+| `POST` | `/auth/login` | Authenticate and receive a JWT |
+| `POST` | `/auth/logout` | Logout (stateless; audit only) |
+| `GET` | `/auth/me` | Current user (JWT required when `JWT_SECRET` set) |
 | `POST` | `/analyze` | Upload audio file — returns immediately, runs pipeline in background |
 | `POST` | `/analyze/video` | Upload video file — audio extracted server-side, then analyzed |
 | `POST` | `/analyze/transcript` | Submit plain-text transcript — skips transcription step |
@@ -547,7 +562,11 @@ See [Google Drive Integration](#google-drive-integration) for the full endpoint 
 
 ### Versioned Router (`/api/v1/`)
 
-Mirrors the core endpoints with Pydantic response models and pagination. Used by the React frontend.
+Subset of the API with Pydantic response models. Includes: `/health`, `/analyze` (sync), `/history`, `/report/{id}`, `/report/{id}/evidence`, `/report/{id}/stats`, `/report/{id}/pdf`, `/chat`.
+
+Does **not** include: `/analyze/video`, `/analyze/transcript`, `/report/{id}/status`, `/notify/*`, `/analytics/summary`, or `DELETE /report/{id}` — use root routes for those.
+
+In local dev, the React app calls `/api/v1/*` but the Vite proxy rewrites most paths to root routes (except `/api/v1/google-drive/*`).
 
 ### Examples
 
@@ -643,7 +662,7 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@gmail.com
 SMTP_PASSWORD=your-16-char-app-password   # Gmail: use an App Password, not your account password
-SMTP_FROM_NAME=AuraSafety
+SMTP_FROM_NAME=Melody Wings Safety
 ALERT_RECIPIENTS=analyst@yourorg.com,supervisor@yourorg.com
 ALERT_SEVERITY=High          # High or Critical — threshold for auto-alerts
 APP_URL=http://localhost:5173 # used in "View Report" email links
@@ -670,7 +689,7 @@ JWT_EXPIRE_MINUTES=480               # JWT token lifetime in minutes (default 8 
 ENABLE_ML_CLASSIFIER=false        # set true after ~400 MB model is cached
 ENABLE_LLM_SUMMARY=true           # set false to skip Ollama entirely (faster)
 MAX_UPLOAD_MB=200                 # max audio upload size in MB
-MAX_VIDEO_UPLOAD_MB=500           # max video upload size in MB
+MAX_VIDEO_UPLOAD_MB=500           # max video upload size in MB (root /analyze/video only)
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 API_KEY=                          # leave blank to disable auth in dev
 UPLOAD_TTL_HOURS=24               # 0 = disable upload cleanup

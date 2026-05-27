@@ -15,7 +15,7 @@
 
 ## What it does
 
-Melody Wings Safety accepts audio files, video files, plain-text transcripts, or Google Drive documents, and runs them through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception. Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. All data is persisted to MongoDB (7 collections) and AWS S3.
+Melody Wings Safety accepts audio files, video files, plain-text transcripts, or Google Drive documents, and runs them through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception. Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. All data is persisted to MongoDB (7 core collections, plus `users` and `counters` for auth and IDs) and AWS S3.
 
 ---
 
@@ -111,6 +111,7 @@ Melody Wings Safety/
 │   ├── config.py                   # Paths, SMTP, S3, MongoDB, Google Drive config
 │   ├── requirements.txt
 │   ├── start.bat                   # Windows one-click server start
+│   ├── run_server.py               # Alternative uvicorn launcher
 │   ├── test_pipeline.py            # Interactive CLI pipeline tester
 │   ├── test_email.py               # 4-step SMTP integration test
 │   ├── debug_env.py                # Low-level SMTP credential debugger
@@ -279,8 +280,8 @@ total_score     = Σ effective_scores, capped at 100
 ### 1. Clone
 
 ```bash
-git clone https://github.com/your-username/aurasafety.git
-cd aurasafety
+git clone https://github.com/umangjzx/transcript-Analysis.git
+cd transcript-Analysis
 ```
 
 ### 2. Backend
@@ -323,7 +324,7 @@ npm run dev
 
 Frontend runs at **http://localhost:5173**
 
-The Vite dev server proxies `/api/v1/*` → `http://localhost:8000` automatically.
+The Vite dev server proxies API traffic to the backend (see [Frontend ↔ Backend routing](#frontend--backend-routing) below).
 
 ### 4. Ollama (optional)
 
@@ -345,7 +346,7 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@gmail.com
 SMTP_PASSWORD=your-16-char-app-password   # Gmail: use an App Password, not your account password
-SMTP_FROM_NAME=AuraSafety
+SMTP_FROM_NAME=Melody Wings Safety
 ALERT_RECIPIENTS=analyst@yourorg.com,supervisor@yourorg.com
 ALERT_SEVERITY=High          # High or Critical — threshold for auto-alerts
 APP_URL=http://localhost:5173 # used in "View Report" email links
@@ -390,7 +391,7 @@ DRIVE_WATCH_FOLDER_ID=            # optional: restrict to a specific Drive folde
 
 ## Authentication
 
-AuraSafety uses **JWT (JSON Web Token)** authentication for the frontend and a legacy **X-API-Key** header for direct API/script access.
+Melody Wings Safety uses **JWT (JSON Web Token)** authentication for the frontend and an optional **X-API-Key** header for direct API/script access.
 
 ### How it works
 
@@ -420,19 +421,23 @@ python create_admin.py
 { "sub": "<username>", "role": "admin", "exp": <unix timestamp> }
 ```
 
-### Login endpoint
+### Auth endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/auth/login` | Accepts `{"username": "...", "password": "..."}` — returns `{"access_token": "...", "token_type": "bearer", "username": "..."}` |
+| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → `{"access_token", "token_type", "username", "role"}` |
+| `POST` | `/auth/logout` | Stateless logout (client discards token); logged to audit |
+| `GET` | `/auth/me` | Returns current user from Bearer JWT (requires `JWT_SECRET`) |
 
 ---
 
 ## Storage
 
-### MongoDB (7 collections) — Primary Store
+### MongoDB — Primary Store
 
-MongoDB is the sole data store. SQLite has been removed. All analysis results, transcripts, findings, and audit logs are written here. Created automatically on first connection.
+MongoDB is the sole data store (SQLite has been removed). All analysis results, transcripts, findings, and audit logs are written here. Collections are created automatically on first connection.
+
+**7 core collections** (written per analysis):
 
 | Collection | Contents |
 |---|---|
@@ -444,13 +449,21 @@ MongoDB is the sole data store. SQLite has been removed. All analysis results, t
 | `processing_status` | Pipeline stage, started_at, completed_at, errors |
 | `audit_logs` | All events — uploads, completions, failures, emails sent |
 
+**Supporting collections:**
+
+| Collection | Contents |
+|---|---|
+| `users` | Admin accounts — bcrypt-hashed passwords, roles |
+| `counters` | Atomic auto-increment meeting IDs (`findOneAndUpdate`) |
+
 ### AWS S3 (5 storage types)
 
 All files are AES-256 server-side encrypted:
 
 | Type | S3 Prefix | Description |
 |---|---|---|
-| Audio recordings | `recordings/YYYY/MM/` | Original uploaded audio |
+| Original recordings | `recordings/YYYY/MM/` | Uploaded audio (and video-derived audio when stored) |
+| Extracted audio | `recordings/YYYY/MM/` | Audio extracted from video uploads |
 | PDF reports | `reports/YYYY/MM/` | Generated analysis PDFs |
 | Exports | `exports/YYYY/MM/` | CSV / JSON / XLSX exports |
 | Backups | `backups/YYYY/MM/` | Long-term archives |
@@ -471,9 +484,26 @@ Two email types are supported, both rendered as dark-themed HTML with a risk sco
 
 ## API Reference
 
-The app exposes two route sets. The root routes (`/analyze`, `/report/…`, etc.) run analysis as a **background task** and include MongoDB, S3, and email. The versioned routes (`/api/v1/…`) are used by the frontend and run analysis **synchronously** with Pydantic-validated responses and pagination on `/history`.
+The backend exposes two route layers:
 
-### Core
+| Layer | Prefix | Behavior |
+|---|---|---|
+| **Root routes** | `/analyze`, `/report/…`, `/notify/…`, `/auth/…` | Background analysis for uploads; full feature set (video, transcript, notifications, analytics). Used by the React app in dev (see below). |
+| **Versioned routes** | `/api/v1/…` | Pydantic-validated REST API. `POST /api/v1/analyze` runs **synchronously** in-process. JWT required on `/history` and `/report/{id}` when `JWT_SECRET` is set. No video/transcript/notify routes on this router — use root routes for those. |
+
+**Google Drive** routes always keep the full prefix: `/api/v1/google-drive/*`.
+
+### Frontend ↔ Backend routing
+
+In development, Vite proxies requests to `:8000`:
+
+- `/api/v1/*` → backend with `/api/v1` **stripped** (e.g. browser `POST /api/v1/analyze` → backend `POST /analyze`, background job + polling)
+- `/api/v1/google-drive/*` → backend **unchanged**
+- `/auth/*` → backend **unchanged** (login is not under `/api/v1`)
+
+The dashboard uploads audio/video via proxied `/api/v1/analyze` (→ root `/analyze`), then polls `/api/v1/report/{id}/status` until `COMPLETED`.
+
+### Core (root routes)
 
 | Method | Path | Description |
 |---|---|---|
@@ -577,8 +607,8 @@ curl -X POST http://localhost:8000/notify/alert/12 \
   -H "Content-Type: application/json" \
   -d '{"recipients": ["analyst@example.com"]}'
 
-# Delete a report
-curl -X DELETE http://localhost:8000/api/v1/report/12
+# Delete a report (frontend uses /api/v1/report/12 — proxy forwards to /report/12)
+curl -X DELETE http://localhost:8000/report/12
 
 # Cross-report analytics
 curl http://localhost:8000/analytics/summary
@@ -691,7 +721,7 @@ Audio File
                                                         └─► Weighted risk scoring (0–100)
                                                               └─► Severity classification
                                                                     └─► Rule summary + LLM summary
-                                                                          └─► PDF + SQLite + MongoDB + S3
+                                                                          └─► PDF + MongoDB + S3 + ChromaDB
                                                                                 └─► Auto email alert (if High/Critical)
 ```
 
@@ -713,7 +743,7 @@ Audio File
 
 ## Frontend
 
-The React 19 dashboard has three routes:
+The React 19 dashboard has five routes:
 
 | Route | Page | Description |
 |---|---|---|
@@ -740,7 +770,7 @@ The chatbot sidebar is available on the Report page. It sends questions to `POST
 
 ## Google Drive Integration
 
-AuraSafety can connect to Google Drive to import `.txt` files and Google Docs directly as transcripts — no audio upload needed.
+Melody Wings Safety can connect to Google Drive to import `.txt` files and Google Docs directly as transcripts — no audio upload needed.
 
 ### Setup
 

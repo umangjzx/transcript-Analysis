@@ -12,6 +12,7 @@ import {
   BarChart2, Brain, Trash2, X,
 } from 'lucide-react';
 import { getHistory, getAnalyticsSummary, deleteReport } from '../api';
+import toast from 'react-hot-toast';
 
 const getBadgeClass = (severity) => {
   const s = (severity || '').toLowerCase();
@@ -122,9 +123,10 @@ const Dashboard = () => {
     try {
       await deleteReport(id);
       setHistory(prev => prev.filter(h => h.id !== id));
+      toast.success(`Report #${id} deleted successfully.`);
     } catch (err) {
       console.error('Delete failed', err);
-      alert(`Failed to delete report #${id}: ${err?.response?.data?.detail || err.message}`);
+      toast.error(`Failed to delete report #${id}: ${err?.response?.data?.detail || err.message}`);
     } finally {
       setDeleting(null);
     }
@@ -762,16 +764,77 @@ const Dashboard = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="7" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
-                    <div className="loading-spinner" style={{ width: 32, height: 32 }} />
-                    Loading analyses...
-                  </div>
-                </td></tr>
+                // ── Skeleton rows ──
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} style={{ opacity: 1 - i * 0.12 }}>
+                    <td><div className="skeleton" style={{ height: 14, width: 40, borderRadius: 6 }} /></td>
+                    <td><div className="skeleton" style={{ height: 14, width: '85%', borderRadius: 6 }} /></td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div className="skeleton" style={{ flex: 1, height: 6, borderRadius: 99 }} />
+                        <div className="skeleton" style={{ height: 14, width: 30, borderRadius: 6 }} />
+                      </div>
+                    </td>
+                    <td><div className="skeleton" style={{ height: 22, width: 64, borderRadius: 99 }} /></td>
+                    <td><div className="skeleton" style={{ height: 14, width: 90, borderRadius: 6 }} /></td>
+                    <td><div className="skeleton" style={{ height: 14, width: 70, borderRadius: 6 }} /></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <div className="skeleton" style={{ height: 28, width: 56, borderRadius: 20 }} />
+                        <div className="skeleton" style={{ height: 28, width: 28, borderRadius: 8 }} />
+                      </div>
+                    </td>
+                  </tr>
+                ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan="7" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
-                  {search ? `No files matching "${search}"` : 'No analyses yet. Upload an audio file to begin.'}
-                </td></tr>
+                <tr>
+                  <td colSpan="7" style={{ padding: 0 }}>
+                    <div style={{
+                      display: 'flex', flexDirection: 'column', alignItems: 'center',
+                      justifyContent: 'center', padding: '4rem 2rem', gap: '1rem', textAlign: 'center'
+                    }}>
+                      <div style={{
+                        width: 72, height: 72, borderRadius: '50%',
+                        background: search ? 'rgba(245,158,11,0.1)' : 'rgba(56,189,248,0.1)',
+                        border: `2px solid ${search ? 'rgba(245,158,11,0.25)' : 'rgba(56,189,248,0.25)'}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        animation: 'fadeIn 0.4s ease'
+                      }}>
+                        {search
+                          ? <Search size={30} style={{ color: 'var(--status-moderate)' }} />
+                          : <FileAudio size={30} style={{ color: 'var(--accent-primary)' }} />
+                        }
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
+                          {search ? 'No Matches Found' : 'No Analyses Yet'}
+                        </div>
+                        <div style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)', maxWidth: 340 }}>
+                          {search
+                            ? `No files match "${search}". Try a different keyword or clear the search.`
+                            : 'Upload a transcript from Google Drive to get started with your first safety analysis.'}
+                        </div>
+                      </div>
+                      {search ? (
+                        <button
+                          className="btn btn-secondary"
+                          style={{ marginTop: '0.25rem', fontSize: '0.85rem', padding: '0.5rem 1.25rem' }}
+                          onClick={() => setSearch('')}
+                        >
+                          ✕ Clear Search
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-primary"
+                          style={{ marginTop: '0.25rem', fontSize: '0.85rem', padding: '0.5rem 1.4rem' }}
+                          onClick={() => navigate('/google-drive')}
+                        >
+                          Go to Google Drive
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
               ) : filtered.map((item, i) => (
                 <tr key={item.id} className="animate-slide-up" style={{ cursor: 'pointer', animationDelay: `${Math.min(i * 50, 500)}ms` }} onClick={() => navigate(`/report/${item.id}`)}>
                   <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.85rem' }}>#{item.id}</td>

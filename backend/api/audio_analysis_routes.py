@@ -77,8 +77,8 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         service="Audio Safety Analyzer",
-        version="2.0.0",
-        timestamp=datetime.now().isoformat(),
+        version="2.1.0",
+        timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
 

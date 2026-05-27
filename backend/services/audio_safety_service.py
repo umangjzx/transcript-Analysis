@@ -379,7 +379,7 @@ class AudioSafetyService:
             },
             "pdf_report": pdf_path,
             "analysis_metadata": {
-                "analyzed_at": datetime.now().isoformat(),
+                "analyzed_at": datetime.now(timezone.utc).isoformat(),
                 "min_confidence_threshold": self.grooming_detector.min_confidence_threshold,
                 "total_findings": detection_results['summary']['total_findings'],
                 "high_confidence_findings": detection_results['summary'].get('high_confidence_findings', 0),

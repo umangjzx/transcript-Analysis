@@ -10,7 +10,7 @@ React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection
 |---|---|---|
 | `/login` | Login | JWT login form — username + password with show/hide toggle; auto-redirects to dashboard if already authenticated; public route |
 | `/` | Dashboard | Analysis history table with live search, sortable columns, 4 stat cards, and delete action |
-| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio or video) with real-time progress bar; polls status until complete then redirects to the report |
+| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio, video, or `.txt` transcript) with real-time progress bar; polls status until complete then redirects to the report |
 | `/report/:id` | Report | Full analysis view — 6 tabs + chatbot sidebar (see below) |
 | `/google-drive` | Google Drive | Connect Google Drive via OAuth2, browse importable `.txt` and Google Docs files, trigger imports, and manage the auto-watcher |
 
@@ -34,12 +34,10 @@ React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection
 | `Chatbot.jsx` | AI chatbot sidebar on the Report page — sends questions to `POST /chat` and displays the answer with source excerpts |
 | `ErrorBoundary.jsx` | React error boundary wrapping all routes — catches render errors and shows a fallback UI |
 
-### Pages
-
 | Page | Description |
 |---|---|
 | `Dashboard.jsx` | History table with live search, sortable columns, stat cards, and delete action |
-| `Upload.jsx` | Drag-and-drop audio/video upload with real-time progress bar and status polling |
+| `Upload.jsx` | Drag-and-drop audio/video/transcript upload with progress bar and status polling |
 | `Report.jsx` | 6-tab analysis report with chatbot sidebar |
 | `Login.jsx` | JWT login form — username/password with show/hide toggle, error display, loading state |
 | `GoogleDrive.jsx` | Google Drive OAuth2 connect flow, file browser, import trigger, and watcher controls |
@@ -56,31 +54,29 @@ npm run preview   # preview production build
 npm run lint      # ESLint
 ```
 
-The Vite dev server proxies all `/api/v1/*` requests to `http://localhost:8000` — the backend must be running.
+The backend must be running at `http://localhost:8000`. API traffic is proxied automatically (see below).
 
 ---
 
 ## Authentication
 
-The frontend uses **JWT Bearer tokens** stored in `localStorage`.
+The frontend uses **JWT Bearer tokens** stored in `localStorage` (`auth_token`, `auth_user`).
 
 ### Flow
 
 1. Unauthenticated users are redirected to `/login` by the `ProtectedRoute` guard in `App.jsx`
-2. On successful login, the JWT is stored in `localStorage` and the user is redirected to `/`
-3. Every Axios request automatically attaches the token as `Authorization: Bearer <token>`
-4. On logout, the token is removed from `localStorage` and the user is redirected to `/login`
+2. On successful login, the JWT and `{ username, role }` are stored; user is redirected to `/`
+3. Every Axios request on the `/api/v1` client attaches `Authorization: Bearer <token>`
+4. A global **401 interceptor** clears auth and redirects to `/login`
+5. On logout, `POST /auth/logout` is called (fire-and-forget), then storage is cleared
 
 ### Protected routes
 
-All routes except `/login` are wrapped in a `ProtectedRoute` component that checks for a valid token. If no token is found, the user is redirected to `/login`.
+All routes except `/login` require a token in `localStorage`. If `JWT_SECRET` is unset on the backend, the API allows unauthenticated access in dev mode.
 
 ### Navbar
 
-The navigation bar shows:
-- The logged-in username (from the stored JWT payload)
-- A logout button (clears token, redirects to `/login`)
-- An avatar with the user's initials
+Shows the logged-in username, logout button, and avatar initials.
 
 ---
 
@@ -90,37 +86,50 @@ The navigation bar shows:
 |---|---|---|
 | React | 19 | UI framework |
 | Vite | 8 | Build tool + dev server |
-| React Router | 7 | Client-side routing (`/`, `/upload`, `/report/:id`) |
-| Axios | 1.x | HTTP client — all API calls via `src/api.js` |
+| React Router | 7 | Client-side routing |
+| Axios | 1.x | HTTP client — `src/api.js` |
 | Recharts | 3.x | Bar, pie, scatter charts |
 | Lucide React | 1.x | Icons |
+| react-hot-toast | 2.x | Toast notifications (Dashboard, Report, Google Drive) |
 
 ---
 
 ## API Client (`src/api.js`)
 
-All backend calls go through a single Axios instance with `baseURL: '/api/v1'` and a 30 s default timeout. The following functions are exported:
+Two Axios patterns:
+
+- **`/api/v1` client** — `baseURL: '/api/v1'` for analysis, reports, Drive (proxied; see below)
+- **Root auth** — `POST /auth/login` uses a direct `axios.post('/auth/login')` (no `/api/v1` prefix)
 
 | Function | Method | Description |
 |---|---|---|
-| `login(username, password)` | `POST /auth/login` | Authenticates and stores the JWT + username in `localStorage` |
-| `logout()` | — | Removes JWT from `localStorage` |
-| `getToken()` | — | Returns the stored JWT string, or `null` |
-| `getStoredUser()` | — | Returns `{username}` from `localStorage`, or `null` |
+| `login(username, password)` | `POST /auth/login` | Authenticates; stores JWT + `{ username, role }` |
+| `logout()` | `POST /auth/logout` | Clears `localStorage` after optional server call |
+| `getToken()` | — | Returns stored JWT or `null` |
+| `getStoredUser()` | — | Returns `{ username, role }` or `null` |
 | `getHistory(skip, limit)` | `GET /history` | Paginated analysis history |
 | `getReport(id)` | `GET /report/:id` | Full report object |
-| `getReportStatus(id)` | `GET /report/:id/status` | Poll PROCESSING / COMPLETED / FAILED |
-| `uploadAudio(file, onProgress)` | `POST /analyze` | Upload audio file (10 min timeout) |
-| `uploadVideo(file, onProgress)` | `POST /analyze/video` | Upload video file (30 min timeout) |
-| `analyzeTranscript(transcript, filename)` | `POST /analyze/transcript` | Submit plain-text transcript (10 min timeout) |
+| `getReportStatus(id)` | `GET /report/:id/status` | Poll `PROCESSING` / `COMPLETED` / `FAILED` |
+| `uploadAudio(file, onProgress)` | `POST /analyze` | Upload audio (10 min timeout) → background job on server |
+| `uploadVideo(file, onProgress)` | `POST /analyze/video` | Upload video (30 min timeout) |
+| `analyzeTranscript(transcript, filename)` | `POST /analyze/transcript` | JSON body transcript |
+| `uploadTranscriptFile(file, onProgress)` | `POST /analyze/transcript` | Multipart `.txt` upload |
 | `getChatbotAnswer(reportId, question)` | `POST /chat` | RAG chatbot (2 min timeout) |
 | `getAnalyticsSummary()` | `GET /analytics/summary` | Cross-report aggregation |
 | `sendAlertEmail(reportId, recipients)` | `POST /notify/alert/:id` | Send / re-send alert email |
 | `sendSummaryEmail(reportId, recipients)` | `POST /notify/summary/:id` | Send summary email |
-| `deleteReport(id)` | `DELETE /report/:id` | Delete report record + PDF + S3 files |
-| `downloadPdfUrl(reportId)` | — | Returns the PDF download URL string |
+| `deleteReport(id)` | `DELETE /report/:id` | Delete report + PDF + S3 (proxied to root route) |
+| `downloadPdfUrl(reportId)` | — | Returns `/api/v1/report/{id}/pdf` URL |
+| `getDriveAuthUrl()` | `GET /google-drive/auth-url` | Google OAuth consent URL |
+| `getDriveStatus()` | `GET /google-drive/status` | Drive connection status |
+| `getDriveFiles(pageSize, search)` | `GET /google-drive/files` | List importable files |
+| `importDriveFile(fileId, fileName, mimeType)` | `POST /google-drive/import` | Import and analyze |
+| `disconnectDrive()` | `DELETE /google-drive/logout` | Revoke Drive credentials |
+| `getDriveWatcherStatus()` | `GET /google-drive/watcher/status` | Watcher state |
+| `startDriveWatcher()` | `POST /google-drive/watcher/start` | Start auto-import |
+| `stopDriveWatcher()` | `POST /google-drive/watcher/stop` | Stop auto-import |
 
-Set `VITE_API_KEY` in `frontend/.env` to attach an `X-API-Key` header to every request (required when `API_KEY` is set in the backend `.env`).
+Set `VITE_API_KEY` in `frontend/.env` to attach an `X-API-Key` header on every request (when `API_KEY` is set in `backend/.env`).
 
 ---
 
@@ -130,16 +139,27 @@ Set `VITE_API_KEY` in `frontend/.env` to attach an `X-API-Key` header to every r
 // vite.config.js
 server: {
   proxy: {
+    // Google Drive — full /api/v1/google-drive prefix preserved
+    '/api/v1/google-drive': {
+      target: 'http://localhost:8000',
+      changeOrigin: true,
+    },
+    // All other /api/v1/* — strip prefix (e.g. /api/v1/analyze → /analyze)
     '/api/v1': {
       target: 'http://localhost:8000',
       changeOrigin: true,
-      rewrite: (path) => path.replace(/^\/api\/v1/, '')
-    }
-  }
-}
+      rewrite: (path) => path.replace(/^\/api\/v1/, ''),
+    },
+    // Auth — root backend paths
+    '/auth': {
+      target: 'http://localhost:8000',
+      changeOrigin: true,
+    },
+  },
+},
 ```
 
-All `/api/v1/*` requests from the browser are transparently forwarded to the FastAPI backend at `:8000`, with the `/api/v1` prefix stripped before forwarding.
+Upload flows call proxied `/api/v1/analyze` (→ backend `/analyze`, **background**), then poll `/api/v1/report/{id}/status` until complete.
 
 ---
 
@@ -151,4 +171,4 @@ Create `frontend/.env` to override defaults:
 VITE_API_KEY=your-api-key   # optional — must match API_KEY in backend/.env
 ```
 
-> **Note:** `VITE_API_KEY` attaches an `X-API-Key` header to every request. This is the legacy API key auth. For the JWT-based login flow used by the frontend, set `JWT_SECRET` in the backend `.env` and run `python create_admin.py` to create the admin user.
+For JWT login, set `JWT_SECRET` in `backend/.env` and run `python create_admin.py` once.

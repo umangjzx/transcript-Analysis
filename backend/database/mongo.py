@@ -674,7 +674,7 @@ def list_meetings(
                 "severity":   ar.get("severity"),
                 "risk_score": ar.get("risk_score"),
                 "status":     m.get("status", "COMPLETED"),
-                "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created) if created else None,
+                "created_at": (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).isoformat() if hasattr(created, "isoformat") else str(created) if created else None,
             })
 
         return {"reports": reports, "total": total}
@@ -778,7 +778,7 @@ def get_full_report(meeting_id: int) -> Optional[Dict[str, Any]]:
     status_doc     = get_processing_status(meeting_id) or {}
 
     created = meta.get("created_at")
-    created_iso = created.isoformat() if hasattr(created, "isoformat") else str(created) if created else None
+    created_iso = (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).isoformat() if hasattr(created, "isoformat") else str(created) if created else None
 
     # Build speaker_segments → timeline list
     timeline = transcript_doc.get("speaker_segments", [])

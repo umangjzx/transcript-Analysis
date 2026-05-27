@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import {
   HardDrive, Link2, Link2Off, RefreshCw, FileText, FileCode,
   Download, AlertCircle, CheckCircle, Loader2, Search,
@@ -229,7 +230,7 @@ const GoogleDrive = () => {
   const [filesLoading, setFilesLoading] = useState(false);
   const [search, setSearch]           = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const [error, setError]             = useState('');
+  // error state replaced by toast notifications
 
   // Import / analysis state
   const [importing, setImporting]     = useState(null); // file_id being imported
@@ -290,7 +291,7 @@ const GoogleDrive = () => {
       await fetchWatcherStatus();
     } catch (err) {
       const detail = err.response?.data?.detail;
-      setError(typeof detail === 'string' ? detail : 'Failed to toggle watcher.');
+      toast.error(typeof detail === 'string' ? detail : 'Failed to toggle watcher.');
     } finally {
       setWatcherLoading(false);
     }
@@ -300,13 +301,12 @@ const GoogleDrive = () => {
 
   const loadFiles = useCallback(async (searchTerm = '') => {
     setFilesLoading(true);
-    setError('');
     try {
       const data = await getDriveFiles(50, searchTerm || undefined);
       setFiles((data.files || []).map(normaliseFile));
     } catch (err) {
       const detail = err.response?.data?.detail;
-      setError(typeof detail === 'string' ? detail : 'Failed to load files from Google Drive.');
+      toast.error(typeof detail === 'string' ? detail : 'Failed to load files from Google Drive.');
       setFiles([]);
     } finally {
       setFilesLoading(false);
@@ -320,13 +320,12 @@ const GoogleDrive = () => {
   // ── Connect to Google Drive ────────────────────────────────────────────────
 
   const handleConnect = async () => {
-    setError('');
     try {
       const data = await getDriveAuthUrl();
       // Open the OAuth consent screen in the same tab — Google redirects back to /callback
       window.location.href = data.auth_url;
     } catch (err) {
-      setError('Could not get Google auth URL. Check your backend configuration.');
+      toast.error('Could not get Google auth URL. Check your backend configuration.');
     }
   };
 
@@ -349,7 +348,7 @@ const GoogleDrive = () => {
       if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
         clearInterval(pollInterval);
         clearInterval(progressInterval);
-        setError('Analysis is taking longer than expected. Check the Dashboard for results.');
+        toast.error('Analysis is taking longer than expected. Check the Dashboard for results.');
         setAnalyzing(false);
         setImporting(null);
         return;
@@ -361,18 +360,19 @@ const GoogleDrive = () => {
           clearInterval(progressInterval);
           setProgress(100);
           setStatusMsg('Complete! Redirecting…');
+          toast.success('Analysis complete! Opening report…');
           setTimeout(() => navigate(`/report/${resultId}`), 700);
         } else if (s.status === 'FAILED') {
           clearInterval(pollInterval);
           clearInterval(progressInterval);
-          setError(s.error_message || 'Analysis failed on the server.');
+          toast.error(s.error_message || 'Analysis failed on the server.');
           setAnalyzing(false);
           setImporting(null);
         }
       } catch {
         clearInterval(pollInterval);
         clearInterval(progressInterval);
-        setError('Lost connection while checking status. Check the Dashboard for results.');
+        toast.error('Lost connection while checking status. Check the Dashboard for results.');
         setAnalyzing(false);
         setImporting(null);
       }
@@ -380,7 +380,6 @@ const GoogleDrive = () => {
   };
 
   const handleImport = async (file) => {
-    setError('');
     setImporting(file.id);
     setAnalyzing(true);
     setProgress(5);
@@ -391,7 +390,7 @@ const GoogleDrive = () => {
       result = await importDriveFile(file.id, file.name, file.mime_type);
     } catch (err) {
       const detail = err.response?.data?.detail;
-      setError(typeof detail === 'string' ? detail : 'Failed to import file. Please try again.');
+      toast.error(typeof detail === 'string' ? detail : 'Failed to import file. Please try again.');
       setImporting(null);
       setAnalyzing(false);
       return;
@@ -478,7 +477,7 @@ const GoogleDrive = () => {
             text files and Google Docs for analysis. No files are modified.
           </p>
 
-          {error && <ErrorBox message={error} />}
+
 
           <button className="btn btn-primary" style={{ padding: '0.75rem 2rem', fontSize: '1rem' }} onClick={handleConnect}>
             <Link2 size={18} /> Connect Google Drive
@@ -590,7 +589,7 @@ const GoogleDrive = () => {
             </form>
           </div>
 
-          {error && <ErrorBox message={error} />}
+
 
           {/* ── Auto-watcher panel ── */}
           {watcher !== null && (
@@ -710,14 +709,20 @@ const GoogleDrive = () => {
                 </thead>
                 <tbody>
                   {filesLoading ? (
-                    <tr>
-                      <td colSpan="5" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
-                          <div className="loading-spinner" style={{ width: 28, height: 28 }} />
-                          Loading files from Google Drive…
-                        </div>
-                      </td>
-                    </tr>
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} style={{ opacity: 1 - i * 0.15 }}>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                            <div className="skeleton" style={{ width: 16, height: 16, borderRadius: 4, flexShrink: 0 }} />
+                            <div className="skeleton" style={{ height: 14, width: '75%', borderRadius: 6 }} />
+                          </div>
+                        </td>
+                        <td><div className="skeleton" style={{ height: 20, width: 60, borderRadius: 99 }} /></td>
+                        <td><div className="skeleton" style={{ height: 14, width: 50, borderRadius: 6 }} /></td>
+                        <td><div className="skeleton" style={{ height: 14, width: 80, borderRadius: 6 }} /></td>
+                        <td><div className="skeleton" style={{ height: 28, width: 80, borderRadius: 20 }} /></td>
+                      </tr>
+                    ))
                   ) : files.length === 0 ? (
                     <tr>
                       <td colSpan="5" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-tertiary)' }}>

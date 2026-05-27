@@ -35,7 +35,7 @@ Output per finding
 
 import re
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .patterns import PATTERNS, PATTERN_CONFIDENCE, CATEGORY_METADATA, match_patterns
 from .context_analyzer import ContextAnalyzer, ContextType
@@ -309,7 +309,7 @@ class GroomingDetector:
                 "summary":          self._empty_summary(),
                 "metadata": {
                     "total_sentences": 0,
-                    "analyzed_at":     datetime.now().isoformat(),
+                    "analyzed_at":     datetime.now(timezone.utc).isoformat(),
                 },
             }
 
@@ -343,7 +343,7 @@ class GroomingDetector:
                 "total_sentences":   len(sentences),
                 "total_findings":    len(all_findings),
                 "grouped_findings":  len(grouped),
-                "analyzed_at":       datetime.now().isoformat(),
+                "analyzed_at":       datetime.now(timezone.utc).isoformat(),
                 "min_confidence_threshold": self.min_confidence_threshold,
             },
         }
