@@ -271,6 +271,8 @@ const Report = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [chatOpen, setChatOpen]   = useState(false);
+  const [findingCategoryFilter, setFindingCategoryFilter] = useState('all');
+  const [findingFlagFilter, setFindingFlagFilter] = useState('all');
 
   // Track which tabs have been visited — show skeleton on first render
   const [tabsReady, setTabsReady] = useState({ overview: false, findings: false, evidence: false });
@@ -459,6 +461,26 @@ const Report = () => {
   const timeline = Array.isArray(report.timeline) ? report.timeline : [];
   // Build a set of flagged text snippets for highlighting
   const flaggedTexts = new Set(findings.map(f => (f.evidence || f.text || '').toLowerCase().trim()));
+
+  const filteredFindings = findings.filter(f => {
+    if (findingCategoryFilter !== 'all') {
+       const cats = f.categories || (f.category ? [f.category] : []);
+       if (!cats.some(c => c.toLowerCase() === findingCategoryFilter)) return false;
+    }
+    if (findingFlagFilter !== 'all') {
+       const filters = f.filters || {};
+       const isJoke = filters.is_joke ?? f.is_joke ?? false;
+       const isNegation = filters.is_negated ?? f.is_negation ?? false;
+       const conf = f.confidence || f.max_confidence || 0;
+       
+       if (findingFlagFilter === 'joke' && !isJoke) return false;
+       if (findingFlagFilter === 'negation' && !isNegation) return false;
+       if (findingFlagFilter === 'high_conf' && conf < 0.75) return false;
+    }
+    return true;
+  });
+
+  const uniqueCategories = [...new Set(findings.flatMap(f => f.categories || (f.category ? [f.category] : [])))].map(c => c.toLowerCase());
 
   return (
     <div className="report-wrapper">
@@ -667,20 +689,46 @@ const Report = () => {
           {/* ─────────────── TAB: FINDINGS DEBUGGER ─────────────── */}
           {activeTab === 'findings' && (
             <div className="tab-content animate-fade-in">
-              <div className="findings-toolbar glass-panel">
-                <span className="findings-count">{findings.length} findings</span>
-                <span className="findings-hint">Click any finding to expand the full ML and regex breakdown</span>
+              <div className="findings-toolbar glass-panel" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <span className="findings-count">{filteredFindings.length} findings</span>
+                  <span className="findings-hint" style={{ marginLeft: '1rem' }}>Click any finding to expand the full ML and regex breakdown</span>
+                </div>
+                
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <select
+                    value={findingCategoryFilter}
+                    onChange={e => setFindingCategoryFilter(e.target.value)}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer', textTransform: 'capitalize' }}
+                  >
+                    <option value="all" style={{ background: 'var(--bg-primary)' }}>All Categories</option>
+                    {uniqueCategories.map(c => (
+                      <option key={c} value={c} style={{ background: 'var(--bg-primary)', textTransform: 'capitalize' }}>{c}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={findingFlagFilter}
+                    onChange={e => setFindingFlagFilter(e.target.value)}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}
+                  >
+                    <option value="all" style={{ background: 'var(--bg-primary)' }}>All Flags</option>
+                    <option value="high_conf" style={{ background: 'var(--bg-primary)' }}>High Confidence (≥75%)</option>
+                    <option value="joke" style={{ background: 'var(--bg-primary)' }}>Jokes Only</option>
+                    <option value="negation" style={{ background: 'var(--bg-primary)' }}>Negations Only</option>
+                  </select>
+                </div>
               </div>
               {!tabsReady.findings ? (
                 <FindingsSkeleton />
-              ) : findings.length === 0 ? (
+              ) : filteredFindings.length === 0 ? (
                 <div className="empty-state glass-panel">
                   <CheckCircle size={40} style={{ color: 'var(--status-safe)' }} />
-                  <p>No concerning findings detected by the pipeline.</p>
+                  <p>No findings match the current filters.</p>
                 </div>
               ) : (
                 <div className="findings-debug-list">
-                  {findings.map((finding, i) => (
+                  {filteredFindings.map((finding, i) => (
                     <FindingCard key={i} finding={finding} index={i} />
                   ))}
                 </div>

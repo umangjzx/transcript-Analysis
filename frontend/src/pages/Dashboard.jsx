@@ -97,6 +97,8 @@ const Dashboard = () => {
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
   const [datePreset, setDatePreset] = useState('all');
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate]     = useState('');
   const [sortKey, setSortKey]     = useState('id');
@@ -154,6 +156,17 @@ const Dashboard = () => {
 
   const filtered = history
     .filter(h => (h.filename || '').toLowerCase().includes(search.toLowerCase()))
+    .filter(h => {
+      if (severityFilter !== 'all') {
+        const sev = (h.severity || 'safe').toLowerCase();
+        if (sev !== severityFilter) return false;
+      }
+      if (statusFilter !== 'all') {
+        const stat = (h.status || '').toLowerCase();
+        if (stat !== statusFilter) return false;
+      }
+      return true;
+    })
     .filter(h => {
       if (datePreset === 'all') return true;
       if (!h.created_at) return false;
@@ -689,6 +702,33 @@ const Dashboard = () => {
                   )}
                 </>
               )}
+            </div>
+
+            {/* Severity & Status Filters */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <select
+                value={severityFilter}
+                onChange={(e) => setSeverityFilter(e.target.value)}
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}
+              >
+                <option value="all" style={{ background: 'var(--bg-primary)' }}>All Severities</option>
+                <option value="safe" style={{ background: 'var(--bg-primary)' }}>Safe</option>
+                <option value="low" style={{ background: 'var(--bg-primary)' }}>Low</option>
+                <option value="moderate" style={{ background: 'var(--bg-primary)' }}>Moderate</option>
+                <option value="high" style={{ background: 'var(--bg-primary)' }}>High</option>
+                <option value="critical" style={{ background: 'var(--bg-primary)' }}>Critical</option>
+              </select>
+
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}
+              >
+                <option value="all" style={{ background: 'var(--bg-primary)' }}>All Statuses</option>
+                <option value="completed" style={{ background: 'var(--bg-primary)' }}>Completed</option>
+                <option value="processing" style={{ background: 'var(--bg-primary)' }}>Processing</option>
+                <option value="failed" style={{ background: 'var(--bg-primary)' }}>Failed</option>
+              </select>
             </div>
 
             {/* Search */}
