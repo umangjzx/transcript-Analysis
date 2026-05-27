@@ -1,4 +1,4 @@
-# AuraSafety — Backend (v2.1.0)
+# Melody Wings Safety — Backend (v2.1.0)
 
 Production-grade FastAPI backend for detecting grooming behaviour, explicit content, and harmful language in audio conversations. Supports audio files, video files, plain-text transcripts, and Google Drive imports. Works with Discord voice chats, WhatsApp calls, Zoom meetings, gaming voice chats, and any general audio/video source.
 
@@ -129,7 +129,7 @@ flowchart TD
 
 ## Authentication
 
-AuraSafety uses **JWT (HS256)** for frontend authentication and a legacy **X-API-Key** header for direct API/script access.
+Melody Wings Safety uses **JWT (HS256)** for frontend authentication and a legacy **X-API-Key** header for direct API/script access.
 
 ### Strategy
 

@@ -1,4 +1,4 @@
-# AuraSafety — AI-Powered Audio Grooming Detection
+# Melody Wings Safety — AI-Powered Audio Grooming Detection
 
 > Detect grooming, manipulation, and harmful language in audio conversations using a multi-stage AI pipeline — regex patterns, context classification, ML zero-shot NLI, LLM summaries, email alerts, and a RAG chatbot.
 
@@ -15,7 +15,7 @@
 
 ## What it does
 
-AuraSafety accepts audio files, video files, plain-text transcripts, or Google Drive documents, and runs them through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception. Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. All data is persisted to MongoDB (7 collections) and AWS S3.
+Melody Wings Safety accepts audio files, video files, plain-text transcripts, or Google Drive documents, and runs them through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception. Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. All data is persisted to MongoDB (7 collections) and AWS S3.
 
 ---
 
@@ -104,9 +104,10 @@ flowchart TD
 ## Repository Structure
 
 ```
-AuraSafety/
+Melody Wings Safety/
 ├── backend/                        # FastAPI + Python detection pipeline
 │   ├── app.py                      # Main FastAPI app — all routes + background tasks
+│   ├── auth.py                     # JWT authentication — login endpoint, token validation, get_current_user
 │   ├── config.py                   # Paths, SMTP, S3, MongoDB, Google Drive config
 │   ├── requirements.txt
 │   ├── start.bat                   # Windows one-click server start
@@ -114,6 +115,7 @@ AuraSafety/
 │   ├── test_email.py               # 4-step SMTP integration test
 │   ├── debug_env.py                # Low-level SMTP credential debugger
 │   ├── .env.example                # Environment variable template
+│   ├── create_admin.py             # CLI script to create/reset the admin user in MongoDB
 │   │
 │   ├── api/
 │   │   ├── audio_analysis_routes.py    # Versioned router /api/v1/* (synchronous, Pydantic)

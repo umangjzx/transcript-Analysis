@@ -1,6 +1,6 @@
-# AuraSafety — Frontend
+# Melody Wings Safety — Frontend
 
-React 19 + Vite 8 dashboard for the AuraSafety audio grooming detection system.
+React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection system.
 
 ---
 
