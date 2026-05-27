@@ -198,7 +198,11 @@ const Upload = () => {
         } else if (statusResult.status === 'FAILED') {
           clearInterval(pollInterval);
           clearInterval(progressInterval);
-          setError(statusResult.error_message || 'Analysis failed on the server.');
+          const backendMsg = statusResult.error_message;
+          const niceMsg = backendMsg
+            ? `Analysis failed: ${backendMsg}`
+            : 'Analysis failed on the server. Please try again or contact an administrator with the report ID.';
+          setError(niceMsg);
           setIsProcessing(false);
         }
       } catch {

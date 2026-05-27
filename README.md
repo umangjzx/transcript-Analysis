@@ -372,10 +372,6 @@ ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 API_KEY=                          # leave blank to disable auth in dev
 UPLOAD_TTL_HOURS=24               # 0 = disable upload cleanup
 
-# ── Speaker diarization (pyannote.audio) ──────────────────────────────────────
-HF_TOKEN=your-huggingface-token   # required for pyannote.audio
-ENABLE_DIARIZATION=false          # adds ~90s per 3-min file on CPU
-
 # ── Google Drive integration ──────────────────────────────────────────────────
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-google-client-secret

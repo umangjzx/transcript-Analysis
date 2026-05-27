@@ -10,7 +10,7 @@ import {
   Download, AlertTriangle, FileText, Activity, ShieldAlert,
   Brain, Clock, ChevronDown, ChevronUp, Code, MessageSquare,
   ArrowLeft, Zap, Eye, TrendingUp, Database, BarChart2, Info, CheckCircle, XCircle,
-  Users, Mail, Bell, Trash2, X,
+  Mail, Bell, Trash2, X,
 } from 'lucide-react';
 import { getReport, downloadPdfUrl, sendAlertEmail, sendSummaryEmail, deleteReport } from '../api';
 import toast from 'react-hot-toast';
@@ -201,7 +201,7 @@ const FindingCard = ({ finding, index }) => {
             <div className="debug-section-title"><Eye size={13} /> Context Analysis</div>
             <div className="debug-grid">
               <div className="debug-row"><span>Context Type</span><strong>{contextType}</strong></div>
-              <div className="debug-row"><span>Speaker</span><strong>{finding.speaker || 'Unknown'}</strong></div>
+              {/* Speaker diarization removed from system */}
               {finding.pattern_count != null && <div className="debug-row"><span>Pattern Matches</span><strong>{finding.pattern_count}</strong></div>}
               {finding.timestamp != null && <div className="debug-row"><span>Timestamp</span><strong>{Number(finding.timestamp).toFixed(1)}s</strong></div>}
             </div>
@@ -414,16 +414,6 @@ const Report = () => {
   })();
   const CONF_COLORS = ['var(--text-tertiary)', 'var(--status-low)', 'var(--status-moderate)', 'var(--status-high)'];
   const confHistData = Object.entries(confHistRaw).map(([range, count]) => ({ range: range + '%', count }));
-
-  // Speaker breakdown
-  const speakerRaw = stats.speaker_distribution
-    || findings.reduce((acc, f) => {
-        if (f.speaker) acc[f.speaker] = (acc[f.speaker] || 0) + 1;
-        return acc;
-      }, {});
-  const speakerData = Object.entries(speakerRaw)
-    .map(([speaker, count]) => ({ speaker, count }))
-    .sort((a, b) => b.count - a.count);
 
   // Findings timeline scatter (from stored stats or computed)
   const timelineScatter = (stats.findings_timeline || findings
@@ -746,9 +736,6 @@ const Report = () => {
                           {ev.context_type && (
                             <div className="evidence-detail"><span>Context</span><strong style={{ color: 'var(--accent-primary)' }}>{ev.context_type}</strong></div>
                           )}
-                          {ev.speaker && (
-                            <div className="evidence-detail"><span>Speaker</span><strong>{ev.speaker}</strong></div>
-                          )}
                           {ev.base_confidence != null && (
                             <div className="evidence-detail"><span>Base Regex</span><strong>{fmtPct(ev.base_confidence)}</strong></div>
                           )}
@@ -827,7 +814,6 @@ const Report = () => {
                   { label: 'High Conf Matches', value: stats.high_confidence_count ?? findings.filter(f => (f.confidence || f.max_confidence || 0) >= 0.7).length, color: 'var(--status-high)' },
                   { label: 'ML Disagreements', value: findings.filter(f => (f.ml || f.ml_result)?.disagreement_flag).length, color: 'var(--status-moderate)' },
                   { label: 'Avg Confidence', value: stats.confidence_stats?.average != null ? `${(stats.confidence_stats.average * 100).toFixed(1)}%` : '—', color: 'var(--accent-primary)' },
-                  { label: 'Unique Speakers', value: Object.keys(stats.speaker_distribution || {}).length || '—' },
                 ].map((s, i) => (
                   <div key={i} className="analytics-stat-card glass-panel">
                     <span className="analytics-stat-label">{s.label}</span>
@@ -927,26 +913,6 @@ const Report = () => {
                   </div>
                 )}
 
-                {/* Speaker Breakdown */}
-                {speakerData.length > 0 && (
-                  <div className="glass-panel chart-panel">
-                    <div className="panel-heading-row">
-                      <Users size={16} style={{ color: 'var(--accent-primary)' }} />
-                      <h3 className="panel-heading">Findings by Speaker</h3>
-                    </div>
-                    <div style={{ height: 300 }}>
-                      <ResponsiveContainer>
-                        <BarChart data={speakerData} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
-                          <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                          <YAxis dataKey="speaker" type="category" width={75} stroke="var(--text-secondary)" fontSize={11} tick={{ fill: 'var(--text-secondary)' }} />
-                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                          <Bar dataKey="count" radius={[0, 4, 4, 0]} name="Findings" fill="var(--accent-secondary)" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                )}
-
                 {/* ML Agreement Pie */}
                 {mlAgreementData.length > 0 && (
                   <div className="glass-panel chart-panel">
@@ -1011,7 +977,7 @@ const Report = () => {
                   </div>
                   <div className="stats-kv-grid">
                     {Object.entries(stats)
-                      .filter(([k]) => !['category_breakdown', 'categories', 'severity_distribution', 'context_type_distribution', 'speaker_distribution', 'confidence_histogram', 'ml_stats', 'findings_timeline', 'confidence_stats'].includes(k))
+                      .filter(([k]) => !['category_breakdown', 'categories', 'severity_distribution', 'context_type_distribution', 'confidence_histogram', 'ml_stats', 'findings_timeline', 'confidence_stats'].includes(k))
                       .map(([k, v]) => (
                         <div key={k} className="debug-row">
                           <span>{capitalize(k)}</span>

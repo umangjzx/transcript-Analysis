@@ -54,7 +54,7 @@ from modules.summarizer import generate_summary
 from modules.stats import generate_stats
 from modules.llm_summarizer import generate_llm_summary
 from modules.report_generator import generate_pdf_report
-from modules.chatbot import store_transcript, answer_question
+from modules.chatbot import store_transcript, answer_question, delete_transcript
 from modules.email_notifier import send_alert_email, send_summary_email, should_auto_alert
 from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
 from auth import get_current_user, authenticate_user, create_access_token
@@ -428,6 +428,20 @@ def process_audio_background(record_id: int, filepath: str, filename: str):
             )
         except Exception as _e:
             logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
+            # Ensure processing_status is not left stuck in PROCESSING
+            try:
+                save_processing_status(
+                    record_id,
+                    "FAILED",
+                    "error",
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc),
+                    error=str(_e),
+                )
+                update_meeting_status(record_id, "FAILED")
+            except Exception:
+                # Best-effort; original warning above is primary signal
+                pass
 
         # Invalidate both cache layers so next /history and /analytics reflect new data
         _cache.invalidate()
@@ -546,6 +560,19 @@ def process_video_background(record_id: int, audio_filepath: str, filename: str)
             )
         except Exception as _e:
             logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
+            # Ensure processing_status is not left stuck in PROCESSING
+            try:
+                save_processing_status(
+                    record_id,
+                    "FAILED",
+                    "error",
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc),
+                    error=str(_e),
+                )
+                update_meeting_status(record_id, "FAILED")
+            except Exception:
+                pass
 
         _cache.invalidate()
         from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
@@ -651,6 +678,19 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
             )
         except Exception as _e:
             logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
+            # Ensure processing_status is not left stuck in PROCESSING
+            try:
+                save_processing_status(
+                    record_id,
+                    "FAILED",
+                    "error",
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc),
+                    error=str(_e),
+                )
+                update_meeting_status(record_id, "FAILED")
+            except Exception:
+                pass
 
         _cache.invalidate()
         from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
@@ -988,7 +1028,11 @@ def get_report_status(report_id: int):
 
 
 @app.get("/history")
-def get_history(skip: int = 0, limit: int = 100):
+def get_history(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: dict = Depends(get_current_user),
+):
     """Paginated history with TTL cache — reads from MongoDB."""
     if limit > 500:
         limit = 500
@@ -1005,7 +1049,10 @@ def get_history(skip: int = 0, limit: int = 100):
 
 
 @app.get("/report/{report_id}")
-def get_report(report_id: int):
+def get_report(
+    report_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     report = get_full_report(report_id)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -1013,7 +1060,10 @@ def get_report(report_id: int):
 
 
 @app.get("/report/{report_id}/evidence")
-def get_evidence(report_id: int):
+def get_evidence(
+    report_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     meta = get_meeting(report_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -1029,7 +1079,10 @@ def get_evidence(report_id: int):
 
 
 @app.get("/report/{report_id}/stats")
-def get_report_stats(report_id: int):
+def get_report_stats(
+    report_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     meta = get_meeting(report_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -1048,7 +1101,10 @@ def get_report_stats(report_id: int):
 
 
 @app.get("/report/{report_id}/pdf")
-def download_pdf(report_id: int):
+def download_pdf(
+    report_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     meta = get_meeting(report_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -1060,7 +1116,10 @@ def download_pdf(report_id: int):
 
 
 @app.delete("/report/{report_id}", status_code=204, response_class=Response)
-def delete_report(report_id: int):
+def delete_report(
+    report_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     """Delete a report record from MongoDB, S3, and local PDF."""
     meta = get_meeting(report_id)
     if meta is None:
@@ -1095,14 +1154,20 @@ def delete_report(report_id: int):
         except Exception as _e:
             logger.warning(f"[#{report_id}] S3 PDF delete failed (non-fatal): {_e}")
 
-    # -- 4. Delete all MongoDB collections for this meeting --------------------
+    # -- 4. Delete vector-store transcript chunks -----------------------------
+    try:
+        delete_transcript(report_id)
+    except Exception as _e:
+        logger.warning(f"[#{report_id}] ChromaDB cleanup failed (non-fatal): {_e}")
+
+    # -- 5. Delete all MongoDB collections for this meeting --------------------
     try:
         delete_meeting_data(report_id)
         logger.info(f"[#{report_id}] MongoDB records deleted")
     except Exception as _e:
         logger.warning(f"[#{report_id}] MongoDB cleanup failed (non-fatal): {_e}")
 
-    # -- 5. Invalidate caches --------------------------------------------------
+    # -- 6. Invalidate caches --------------------------------------------------
     _cache.invalidate()
     from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
     _h_cache.invalidate()

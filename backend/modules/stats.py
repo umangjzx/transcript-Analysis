@@ -12,7 +12,6 @@ def generate_stats(
     categories = {}
     severity_dist = {}
     context_type_dist = {}
-    speaker_dist = {}
     confidences = []
     findings_timeline = []  # [{timestamp, confidence, category}]
 
@@ -42,11 +41,6 @@ def generate_stats(
         )
         if ctx:
             context_type_dist[ctx] = context_type_dist.get(ctx, 0) + 1
-
-        # ── Speaker distribution ─────────────────────────────────────
-        speaker = item.get("speaker")
-        if speaker:
-            speaker_dist[speaker] = speaker_dist.get(speaker, 0) + 1
 
         # ── Confidence collection ────────────────────────────────────
         conf = item.get("confidence") or item.get("max_confidence")
@@ -116,7 +110,6 @@ def generate_stats(
         # Severity / context / speaker distributions
         "severity_distribution": severity_dist,
         "context_type_distribution": context_type_dist,
-        "speaker_distribution": speaker_dist,
 
         # Confidence analytics
         "confidence_stats": {

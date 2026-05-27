@@ -112,7 +112,7 @@ flowchart TD
 | API Framework | FastAPI 0.136 + Uvicorn 0.47 |
 | Audio Transcription | faster-whisper 1.2 (Whisper Base, CPU, int8) |
 | Video Audio Extraction | PyAV (streamed, never loads full file into memory) |
-| Speaker Diarization | pyannote.audio 3.3 (optional — requires `HF_TOKEN`) |
+| Speaker Diarization | Not used (removed) |
 | Pattern Detection | Python `re` — 20 compiled regex categories |
 | ML Classifier | `typeform/distilbert-base-uncased-mnli` — Zero-Shot NLI |
 | LLM Summary | Ollama — Llama 3.1 (optional, graceful fallback) |
@@ -403,7 +403,7 @@ Read helpers in `database/mongo.py` allow SQLite-free operation:
 |---|---|
 | `list_meetings(skip, limit)` | Paginated history list |
 | `get_meeting(id)` | Single meeting metadata |
-| `get_transcript(id)` | Transcript + diarization |
+| `get_transcript(id)` | Transcript + timeline |
 | `get_analysis(id)` | Full analysis result |
 | `get_findings(id)` | Safety findings list |
 | `get_evidence(id)` | Evidence list |
@@ -676,10 +676,6 @@ AWS_ACCESS_KEY_ID=your-access-key-id
 AWS_SECRET_ACCESS_KEY=your-secret-access-key
 AWS_REGION=us-east-1
 S3_BUCKET_NAME=your-bucket-name
-
-# ── Speaker Diarization ───────────────────────────────────────────────────────
-HF_TOKEN=your-huggingface-token   # required for pyannote.audio
-ENABLE_DIARIZATION=false          # adds ~90s per 3-min file on CPU
 
 # ── Authentication ────────────────────────────────────────────────────────────
 JWT_SECRET=your-long-random-secret   # required — generate: python -c "import secrets; print(secrets.token_hex(32))"

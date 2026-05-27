@@ -60,7 +60,7 @@ def chunk_text(text: str, chunk_size: int = 5):
     return chunks
 
 
-# ── Store transcript ──────────────────────────────────────────────────────────
+# ── Store / delete transcript ─────────────────────────────────────────────────
 
 def store_transcript(report_id: int, transcript: str) -> bool:
     """Embed and store transcript chunks in ChromaDB."""
@@ -95,6 +95,21 @@ def store_transcript(report_id: int, transcript: str) -> bool:
 
     except Exception as e:
         logger.warning(f"store_transcript failed for report #{report_id}: {e}")
+        return False
+
+
+def delete_transcript(report_id: int) -> bool:
+    """
+    Delete all transcript chunks for a report from ChromaDB.
+    Safe to call even if Chroma is not available.
+    """
+    try:
+        collection = _get_collection()
+        collection.delete(where={"report_id": str(report_id)})
+        logger.info(f"Deleted transcript chunks from ChromaDB for report #{report_id}")
+        return True
+    except Exception as e:
+        logger.warning(f"delete_transcript failed for report #{report_id}: {e}")
         return False
 
 

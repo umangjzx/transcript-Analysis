@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -97,6 +97,7 @@ const Dashboard = () => {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
+  const deferredSearch = useDeferredValue(search);
   const [datePreset, setDatePreset] = useState('all');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -132,7 +133,7 @@ const Dashboard = () => {
     }
   };
 
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
       const [histData, analyticsData] = await Promise.all([
@@ -145,65 +146,90 @@ const Dashboard = () => {
     } catch (err) {
       console.error('Failed to fetch dashboard data', err);
       setHistory([]);
+      const detail = err?.response?.data?.detail;
+      const msg = typeof detail === 'string'
+        ? detail
+        : 'Failed to load history from the server. Please refresh or try again later.';
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  const highRisk  = history.filter(h => ['high','critical'].includes((h.severity || '').toLowerCase()));
-  const safeCount = history.filter(h => ['safe','low'].includes((h.severity || '').toLowerCase())).length;
-  const avgScore  = history.length ? (history.reduce((s, h) => s + (h.risk_score || 0), 0) / history.length) : 0;
+  const { highRisk, safeCount, avgScore } = useMemo(() => {
+    const highRiskArr = [];
+    let safeLow = 0;
+    let sumScore = 0;
+    for (const h of history) {
+      const sev = (h.severity || '').toLowerCase();
+      if (sev === 'high' || sev === 'critical') highRiskArr.push(h);
+      if (sev === 'safe' || sev === 'low') safeLow += 1;
+      sumScore += (h.risk_score || 0);
+    }
+    const avg = history.length ? (sumScore / history.length) : 0;
+    return { highRisk: highRiskArr, safeCount: safeLow, avgScore: avg };
+  }, [history]);
 
-  const filtered = history
-    .filter(h => (h.filename || '').toLowerCase().includes(search.toLowerCase()))
-    .filter(h => {
-      if (severityFilter !== 'all') {
-        const sev = (h.severity || 'safe').toLowerCase();
-        if (sev !== severityFilter) return false;
-      }
-      if (statusFilter !== 'all') {
-        const stat = (h.status || '').toLowerCase();
-        if (stat !== statusFilter) return false;
-      }
-      return true;
-    })
-    .filter(h => {
-      if (datePreset === 'all') return true;
-      if (!h.created_at) return false;
-      const hDateObj = new Date(h.created_at);
-      const hDate = hDateObj.getTime();
-      
+  const filtered = useMemo(() => {
+    const q = (deferredSearch || '').toLowerCase();
+
+    let startMs = 0;
+    let endMs = Infinity;
+    if (datePreset !== 'all') {
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      
       if (datePreset === 'today') {
-        return hDate >= todayStart;
+        startMs = todayStart;
+        endMs = Infinity;
+      } else if (datePreset === 'yesterday') {
+        startMs = todayStart - 86400000;
+        endMs = todayStart;
+      } else if (datePreset === 'custom') {
+        startMs = startDate ? new Date(startDate).getTime() : 0;
+        endMs = endDate ? new Date(endDate).getTime() + 86400000 : Infinity;
       }
-      if (datePreset === 'yesterday') {
-        const yesterdayStart = todayStart - 86400000;
-        return hDate >= yesterdayStart && hDate < todayStart;
+    }
+
+    const out = [];
+    for (const h of history) {
+      if (q && !(h.filename || '').toLowerCase().includes(q)) continue;
+
+      if (severityFilter !== 'all') {
+        const sev = (h.severity || 'safe').toLowerCase();
+        if (sev !== severityFilter) continue;
       }
-      if (datePreset === 'custom') {
-        if (!startDate && !endDate) return true;
-        const start = startDate ? new Date(startDate).getTime() : 0;
-        const end = endDate ? new Date(endDate).getTime() + 86400000 : Infinity;
-        return hDate >= start && hDate <= end;
+
+      if (statusFilter !== 'all') {
+        const stat = (h.status || '').toLowerCase();
+        if (stat !== statusFilter) continue;
       }
-      return true;
-    })
-    .sort((a, b) => {
-      let va = a[sortKey], vb = b[sortKey];
+
+      if (datePreset !== 'all') {
+        if (!h.created_at) continue;
+        const t = new Date(h.created_at).getTime();
+        if (!(t >= startMs && t <= endMs)) continue;
+      }
+
+      out.push(h);
+    }
+
+    out.sort((a, b) => {
+      let va = a?.[sortKey];
+      let vb = b?.[sortKey];
       if (typeof va === 'string') va = va.toLowerCase();
       if (typeof vb === 'string') vb = vb.toLowerCase();
       return sortDir === 'asc' ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
     });
 
-  const handleSort = (key) => {
+    return out;
+  }, [history, deferredSearch, severityFilter, statusFilter, datePreset, startDate, endDate, sortKey, sortDir]);
+
+  const handleSort = useCallback((key) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('desc'); }
-  };
+  }, [sortKey]);
 
   const SortIcon = ({ col }) => sortKey === col
     ? <span style={{ fontSize: '0.7rem', marginLeft: 3 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
@@ -218,69 +244,83 @@ const Dashboard = () => {
     PROCESSING: 'var(--status-moderate)',
     FAILED: 'var(--status-high)',
   };
-  const statusStackData = analytics
-    ? SEV_ORDER
-        .filter(sev => (analytics.severity_distribution || {})[sev] > 0)
-        .map(sev => {
-          const total = (analytics.severity_distribution || {})[sev] || 0;
-          // Approximate split: use status_distribution ratios applied to severity total
-          const statusDist = analytics.status_distribution || {};
-          const grandTotal = Object.values(statusDist).reduce((a, b) => a + b, 0) || 1;
-          return {
-            severity: sev,
-            Completed: Math.round(total * ((statusDist.COMPLETED || 0) / grandTotal)),
-            Processing: Math.round(total * ((statusDist.PROCESSING || 0) / grandTotal)),
-            Failed: Math.round(total * ((statusDist.FAILED || 0) / grandTotal)),
-            _total: total,
-          };
-        })
-    : [];
+  const statusStackData = useMemo(() => {
+    if (!analytics) return [];
+    const sevDist = analytics.severity_distribution || {};
+    const statusDist = analytics.status_distribution || {};
+    const grandTotal = Object.values(statusDist).reduce((a, b) => a + b, 0) || 1;
 
-  const riskHistData = analytics
-    ? Object.entries(analytics.risk_score_histogram || {}).map(([range, count], i) => ({ range, count, fill: HIST_COLORS[i] }))
-    : [];
+    return SEV_ORDER
+      .filter(sev => (sevDist?.[sev] || 0) > 0)
+      .map(sev => {
+        const total = sevDist?.[sev] || 0;
+        return {
+          severity: sev,
+          Completed: Math.round(total * ((statusDist.COMPLETED || 0) / grandTotal)),
+          Processing: Math.round(total * ((statusDist.PROCESSING || 0) / grandTotal)),
+          Failed: Math.round(total * ((statusDist.FAILED || 0) / grandTotal)),
+          _total: total,
+        };
+      });
+  }, [analytics]);
 
-  const topCatData = (analytics?.top_categories || []).slice(0, 8).map(d => ({
-    name: capitalize(d.category),
-    count: d.count,
-  }));
+  const riskHistData = useMemo(() => (
+    analytics
+      ? Object.entries(analytics.risk_score_histogram || {}).map(([range, count], i) => ({ range, count, fill: HIST_COLORS[i] }))
+      : []
+  ), [analytics]);
 
-  const ctxData = analytics
-    ? Object.entries(analytics.context_type_totals || {}).map(([name, value], i) => ({
+  const topCatData = useMemo(() => (
+    (analytics?.top_categories || []).slice(0, 8).map(d => ({
+      name: capitalize(d.category),
+      count: d.count,
+    }))
+  ), [analytics]);
+
+  const ctxData = useMemo(() => (
+    analytics
+      ? Object.entries(analytics.context_type_totals || {}).map(([name, value]) => ({
         name: capitalize(name), value,
       }))
-    : [];
+      : []
+  ), [analytics]);
 
-  const confHistData = analytics
-    ? Object.entries(analytics.confidence_histogram || {}).map(([range, count], i) => ({
+  const confHistData = useMemo(() => (
+    analytics
+      ? Object.entries(analytics.confidence_histogram || {}).map(([range, count], i) => ({
         range: range + '%', count, fill: CONF_COLORS[i],
       }))
-    : [];
+      : []
+  ), [analytics]);
 
   // Findings timeline scatter: last 20 analyses, x=index, y=risk_score, size=finding count
-  const timelineScatterData = [...history]
-    .filter(h => h.created_at && h.risk_score != null)
-    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-    .slice(-20)
-    .map((h, i) => ({
-      x: i + 1,
-      y: Math.round(h.risk_score),
-      z: 1,
-      label: h.filename ? h.filename.slice(0, 14) + (h.filename.length > 14 ? '…' : '') : `#${h.id}`,
-      severity: (h.severity || 'safe').toLowerCase(),
-    }));
+  const timelineScatterData = useMemo(() => (
+    [...history]
+      .filter(h => h.created_at && h.risk_score != null)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .slice(-20)
+      .map((h, i) => ({
+        x: i + 1,
+        y: Math.round(h.risk_score),
+        z: 1,
+        label: h.filename ? h.filename.slice(0, 14) + (h.filename.length > 14 ? '…' : '') : `#${h.id}`,
+        severity: (h.severity || 'safe').toLowerCase(),
+      }))
+  ), [history]);
 
   // ── Risk Score Trend: last 20 analyses sorted by date ──────────────────────
-  const trendData = [...history]
-    .filter(h => h.created_at && h.risk_score != null)
-    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-    .slice(-20)
-    .map((h, i) => ({
-      idx: i + 1,
-      label: h.filename ? h.filename.slice(0, 12) + (h.filename.length > 12 ? '…' : '') : `#${h.id}`,
-      score: Math.round(h.risk_score),
-      severity: h.severity || 'safe',
-    }));
+  const trendData = useMemo(() => (
+    [...history]
+      .filter(h => h.created_at && h.risk_score != null)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .slice(-20)
+      .map((h, i) => ({
+        idx: i + 1,
+        label: h.filename ? h.filename.slice(0, 12) + (h.filename.length > 12 ? '…' : '') : `#${h.id}`,
+        score: Math.round(h.risk_score),
+        severity: h.severity || 'safe',
+      }))
+  ), [history]);
 
   return (
     <div className="animate-fade-in" style={{ padding: 'var(--spacing-xl)', maxWidth: 1400, margin: '0 auto' }}>
@@ -304,7 +344,7 @@ const Dashboard = () => {
 
       {/* Stat Cards */}
       <div className="stats-grid">
-        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-100">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-100">
           <div className="flex-between">
             <span className="stat-title">Total Analyzed</span>
             <FileAudio size={20} style={{ color: 'var(--accent-primary)' }} />
@@ -313,7 +353,7 @@ const Dashboard = () => {
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>audio files processed</span>
         </div>
 
-        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-200">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-200">
           <div className="flex-between">
             <span className="stat-title">High / Critical Risk</span>
             <ShieldAlert size={20} style={{ color: 'var(--status-high)' }} />
@@ -324,7 +364,7 @@ const Dashboard = () => {
           </span>
         </div>
 
-        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-300">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-300">
           <div className="flex-between">
             <span className="stat-title">Average Risk Score</span>
             <TrendingUp size={20} style={{ color: 'var(--status-moderate)' }} />
@@ -333,7 +373,7 @@ const Dashboard = () => {
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>out of 100</span>
         </div>
 
-        <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-400">
+        <div className="stat-card glass-panel hover-lift animate-slide-up delay-400">
           <div className="flex-between">
             <span className="stat-title">Safe / Low Risk</span>
             <CheckCircle size={20} style={{ color: 'var(--status-safe)' }} />
@@ -344,7 +384,7 @@ const Dashboard = () => {
 
         {analytics && (
           <>
-            <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-500">
+            <div className="stat-card glass-panel hover-lift animate-slide-up delay-500">
               <div className="flex-between">
                 <span className="stat-title">Total Findings</span>
                 <Activity size={20} style={{ color: 'var(--accent-secondary)' }} />
@@ -353,7 +393,7 @@ const Dashboard = () => {
               <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>across all reports</span>
             </div>
 
-            <div className="stat-card glass-panel hover-lift-3d animate-slide-up delay-600">
+            <div className="stat-card glass-panel hover-lift animate-slide-up delay-600">
               <div className="flex-between">
                 <span className="stat-title">High Confidence Detections</span>
                 <Brain size={20} style={{ color: 'var(--accent-primary)' }} />
@@ -757,7 +797,7 @@ const Dashboard = () => {
                 <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none' }}>File Name <SortIcon col="filename" /></th>
                 <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none' }}>Risk Score <SortIcon col="risk_score" /></th>
                 <th onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none' }}>Severity <SortIcon col="severity" /></th>
-                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date <SortIcon col="created_at" /></th>
+                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date & Time <SortIcon col="created_at" /></th>
                 <th>Status</th>
                 <th></th>
               </tr>

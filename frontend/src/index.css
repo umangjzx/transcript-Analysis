@@ -127,12 +127,16 @@ ul {
 /* Glassmorphism Utilities - Upgraded */
 .glass-panel {
   background: var(--bg-glass);
-  backdrop-filter: blur(32px);
-  -webkit-backdrop-filter: blur(32px);
+  /* Big backdrop blurs can feel laggy on Windows GPUs */
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1),
+              box-shadow 0.35s ease,
+              border-color 0.35s ease,
+              background 0.35s ease;
   position: relative;
   overflow: hidden;
 }
@@ -341,13 +345,13 @@ ul {
 }
 
 @keyframes slideUpFade {
-  from { opacity: 0; transform: translateY(30px) scale(0.98); filter: blur(5px); }
-  to { opacity: 1; transform: none; filter: none; }
+  from { opacity: 0; transform: translateY(24px) scale(0.99); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes slideDownFade {
-  from { opacity: 0; transform: translateY(-30px); filter: blur(5px); }
-  to { opacity: 1; transform: none; filter: none; }
+  from { opacity: 0; transform: translateY(-24px); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes pulseGlow {
@@ -389,10 +393,29 @@ ul {
 .hover-lift-3d {
   transition: transform 0.5s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.5s ease;
   transform-style: preserve-3d;
+  will-change: transform;
 }
 .hover-lift-3d:hover {
-  transform: translateY(-8px) scale(1.03) rotateX(2deg) rotateY(-2deg);
-  box-shadow: 20px 20px 60px rgba(0,0,0,0.05), -20px -20px 60px rgba(255,255,255,0.8);
+  /* Remove 3D rotations: they can stutter on some Windows setups */
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 16px 40px -18px rgba(0,0,0,0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-slide-up,
+  .pulse-glow {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .hover-lift,
+  .hover-lift-3d,
+  .glass-panel,
+  .nav-link,
+  .avatar {
+    transition: none !important;
+  }
 }
 
 .glow-progress-bar {

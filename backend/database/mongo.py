@@ -16,7 +16,7 @@ Read helpers (for SQLite-free operation)
 -----------------------------------------
 list_meetings()          — paginated history list
 get_meeting()            — single meeting metadata
-get_transcript()         — transcript + diarization for a meeting
+get_transcript()         — transcript + timeline for a meeting
 get_analysis()           — full analysis result for a meeting
 get_findings()           — safety findings list for a meeting
 get_evidence()           — evidence list for a meeting
@@ -205,20 +205,15 @@ def save_transcript(
 ) -> bool:
     """
     Collection: transcripts
-    Fields: meeting_id, full_transcript, speaker_segments (timeline),
+    Fields: meeting_id, full_transcript, segments (timeline),
             timestamps, word_count
     """
-    # Extract unique speakers from timeline
-    speakers = list({seg.get("speaker") for seg in timeline
-                     if seg.get("speaker")})
-
-    # Build speaker_segments with timestamps
-    speaker_segments = [
+    # Store raw segments (no speaker diarization in this system)
+    segments = [
         {
             "start":   seg.get("start"),
             "end":     seg.get("end"),
             "text":    seg.get("text", ""),
-            "speaker": seg.get("speaker"),
         }
         for seg in timeline
     ]
@@ -226,8 +221,7 @@ def save_transcript(
     doc = {
         "meeting_id":       meeting_id,
         "full_transcript":  full_transcript,
-        "speaker_segments": speaker_segments,
-        "speakers":         speakers,
+        "segments":         segments,
         "word_count":       len(full_transcript.split()),
         "char_count":       len(full_transcript),
         "segment_count":    len(timeline),
@@ -699,7 +693,7 @@ def get_meeting(meeting_id: int) -> Optional[Dict[str, Any]]:
 
 
 def get_transcript(meeting_id: int) -> Optional[Dict[str, Any]]:
-    """Fetch transcript + diarization for a meeting."""
+    """Fetch transcript + timeline for a meeting."""
     db = get_mongo_db()
     if db is None:
         return None
@@ -780,8 +774,8 @@ def get_full_report(meeting_id: int) -> Optional[Dict[str, Any]]:
     created = meta.get("created_at")
     created_iso = (created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created).isoformat() if hasattr(created, "isoformat") else str(created) if created else None
 
-    # Build speaker_segments → timeline list
-    timeline = transcript_doc.get("speaker_segments", [])
+    # Timeline segments (no diarization)
+    timeline = transcript_doc.get("segments", []) or transcript_doc.get("speaker_segments", [])
 
     return {
         "id":          meeting_id,
@@ -808,7 +802,6 @@ def get_full_report(meeting_id: int) -> Optional[Dict[str, Any]]:
         "s3_pdf_url":  meta.get("s3_pdf_url"),
         "status":      status_doc.get("status", meta.get("status", "COMPLETED")),
         "error_message": status_doc.get("error"),
-        "diarization": timeline,
         "timeline":    timeline,
         "created_at":  created_iso,
     }

@@ -15,7 +15,6 @@ python-jose[cryptography]==3.3.0
 faster-whisper==1.2.1
 ctranslate2==4.7.2
 av==17.0.1
-pyannote.audio==3.3.2
 
 # ── ML / NLP ──────────────────────────────────────────────────────────────────
 transformers==5.9.0
