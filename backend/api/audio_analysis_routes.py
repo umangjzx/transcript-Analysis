@@ -652,12 +652,13 @@ async def download_pdf(report_id: int):
     response_model=ChatResponse,
     summary="Ask Question About Report",
     description="Ask questions about a specific analysis report using the chatbot",
+    operation_id="chatbot_ask_question",
     responses={
         404: {"model": ErrorResponse, "description": "Report not found"},
         500: {"model": ErrorResponse, "description": "Chatbot error"}
     }
 )
-async def chat(request: ChatRequest):
+async def chatbot_ask(request: ChatRequest):
     """Ask questions about a specific report using the chatbot."""
     try:
         # Verify report exists in MongoDB

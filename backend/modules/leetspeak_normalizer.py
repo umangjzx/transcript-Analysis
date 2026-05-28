@@ -75,6 +75,12 @@ _KNOWN_OBFUSCATIONS: Dict[str, str] = {
     # Secrecy
     "s3cr3t": "secret", "s3cret": "secret", "secr3t": "secret",
     "d0nt t3ll": "dont tell", "d0n7 73ll": "dont tell",
+    "d0nt": "dont", "d0n7": "dont",
+    "t3ll": "tell", "73ll": "tell",
+    "any0ne": "anyone", "4ny0ne": "anyone", "4nyone": "anyone",
+    "n0body": "nobody", "n0b0dy": "nobody",
+    "b3tw33n": "between", "b3tween": "between",
+    "k33p": "keep", "k3ep": "keep",
     # Personal info
     "4ddr3ss": "address", "addr3ss": "address", "4ddress": "address",
     "ph0n3": "phone", "phon3": "phone", "ph0ne": "phone",
@@ -82,6 +88,11 @@ _KNOWN_OBFUSCATIONS: Dict[str, str] = {
     # Trust/manipulation
     "tru5t": "trust", "7rust": "trust", "tru$t": "trust",
     "sp3ci4l": "special", "sp3cial": "special", "speci4l": "special",
+    "sp3c1al": "special",
+    "und3rstand": "understand", "und3rst4nd": "understand",
+    "m4tur3": "mature", "matur3": "mature",
+    "imm4tur3": "immature", "1mmatur3": "immature",
+    "n0rm4l": "normal", "n0rmal": "normal", "norm4l": "normal",
     # Platform/communication
     "sn4pchat": "snapchat", "sn@pchat": "snapchat",
     "d1sc0rd": "discord", "disc0rd": "discord",
@@ -99,6 +110,20 @@ _KNOWN_OBFUSCATIONS: Dict[str, str] = {
     "k1d": "kid", "k1ds": "kids",
     "4l0n3": "alone", "al0ne": "alone", "4lone": "alone",
     "pr1v4t3": "private", "priv4te": "private", "pr1vate": "private",
+    # Deletion/hiding
+    "d3l3te": "delete", "del3te": "delete", "d3lete": "delete",
+    "cl34r": "clear", "cl3ar": "clear",
+    "h1d3": "hide", "hid3": "hide",
+    "m3ss4g3s": "messages", "m3ssages": "messages", "messag3s": "messages",
+    "msgs": "messages",
+    # Parental monitoring
+    "par3nts": "parents", "p4rents": "parents", "p4r3nts": "parents",
+    "ch3ck": "check", "ch3cks": "checks",
+    # Actions
+    "l00k": "look", "l0ok": "look",
+    "th1nk": "think", "th1nks": "thinks",
+    "3very0ne": "everyone", "every0ne": "everyone",
+    "d03s": "does",
 }
 
 

@@ -49,7 +49,8 @@ from .leetspeak_normalizer import normalize_leetspeak, is_likely_obfuscated
 
 def _normalize_unicode(text: str) -> str:
     """
-    Normalize unicode to NFC form and strip zero-width / invisible characters.
+    Normalize unicode to NFC form, strip zero-width / invisible characters,
+    and replace common homoglyphs with their ASCII equivalents.
 
     This prevents detection bypass via:
     - Homoglyph substitution (e.g. Cyrillic 'а' vs Latin 'a')
@@ -74,6 +75,45 @@ def _normalize_unicode(text: str) -> str:
         '\u00ad',  # soft hyphen
     ])
     text = "".join(ch for ch in text if ch not in _INVISIBLE_CHARS)
+
+    # Homoglyph replacement — map visually similar Unicode characters to ASCII
+    # This catches Cyrillic, Greek, and other scripts used to bypass detection
+    _HOMOGLYPH_MAP = {
+        # Cyrillic → Latin
+        '\u0410': 'A', '\u0430': 'a',  # А/а
+        '\u0412': 'B', '\u0432': 'b',  # В/в (actually looks like B)
+        '\u0421': 'C', '\u0441': 'c',  # С/с
+        '\u0415': 'E', '\u0435': 'e',  # Е/е
+        '\u041d': 'H', '\u043d': 'h',  # Н/н (looks like H)
+        '\u041a': 'K', '\u043a': 'k',  # К/к
+        '\u041c': 'M', '\u043c': 'm',  # М/м
+        '\u041e': 'O', '\u043e': 'o',  # О/о
+        '\u0420': 'P', '\u0440': 'p',  # Р/р
+        '\u0422': 'T', '\u0442': 't',  # Т/т
+        '\u0425': 'X', '\u0445': 'x',  # Х/х
+        '\u0443': 'y',                  # у (looks like y)
+        '\u0423': 'Y',                  # У
+        # Greek → Latin
+        '\u0391': 'A', '\u03b1': 'a',  # Α/α
+        '\u0392': 'B', '\u03b2': 'b',  # Β/β
+        '\u0395': 'E', '\u03b5': 'e',  # Ε/ε
+        '\u0397': 'H', '\u03b7': 'h',  # Η/η
+        '\u0399': 'I', '\u03b9': 'i',  # Ι/ι
+        '\u039a': 'K', '\u03ba': 'k',  # Κ/κ
+        '\u039c': 'M',                  # Μ
+        '\u039d': 'N',                  # Ν
+        '\u039f': 'O', '\u03bf': 'o',  # Ο/ο
+        '\u03a1': 'P', '\u03c1': 'p',  # Ρ/ρ
+        '\u03a4': 'T', '\u03c4': 't',  # Τ/τ
+        '\u03a5': 'Y', '\u03c5': 'y',  # Υ/υ
+        '\u03a7': 'X', '\u03c7': 'x',  # Χ/χ
+        # Common look-alikes
+        '\u0131': 'i',                  # ı (dotless i)
+        '\u0237': 'j',                  # ȷ (dotless j)
+        '\u1d00': 'a',                  # ᴀ (small capital A)
+    }
+    text = "".join(_HOMOGLYPH_MAP.get(ch, ch) for ch in text)
+
     return text
 
 
@@ -370,6 +410,12 @@ class GroomingDetector:
             )
             all_findings.extend(findings)
 
+        # ── Behavioral pattern detection (cross-sentence) ─────────────────
+        # Detects grooming tactics that are only visible across the full
+        # conversation — subtle patterns that individual sentences miss.
+        behavioral_findings = self._detect_behavioral_patterns(sentences, all_findings)
+        all_findings.extend(behavioral_findings)
+
         grouped = all_findings
         if self.enable_grouping and all_findings:
             grouped = self.grouping_engine.group_findings(all_findings)
@@ -417,29 +463,291 @@ class GroomingDetector:
 
     def _detect_patterns(self, sentence: str) -> Dict[str, Dict[str, Any]]:
         matches: Dict[str, Dict[str, Any]] = {}
+
+        # Always try leetspeak normalization first if text looks obfuscated
+        normalized = None
+        if is_likely_obfuscated(sentence):
+            normalized = normalize_leetspeak(sentence)
+            if normalized == sentence.lower():
+                normalized = None  # No change, skip
+
+        # Run pattern matching on BOTH original and normalized text
         for category, patterns in PATTERNS.items():
             hits = []
             for pattern in patterns:
+                # Match on original text
                 m = pattern.search(sentence)
                 if m:
                     hits.append({"text": m.group(0), "start": m.start(), "end": m.end()})
+                # Also match on normalized text (catches obfuscated variants)
+                elif normalized:
+                    m = pattern.search(normalized)
+                    if m:
+                        hits.append({"text": m.group(0), "start": m.start(), "end": m.end(), "normalized": True})
             if hits:
-                matches[category] = {"count": len(hits), "matched_patterns": hits}
-
-        # If no matches found on original text, try leetspeak-normalized version
-        if not matches and is_likely_obfuscated(sentence):
-            normalized = normalize_leetspeak(sentence)
-            if normalized != sentence.lower():
-                for category, patterns in PATTERNS.items():
-                    hits = []
-                    for pattern in patterns:
-                        m = pattern.search(normalized)
-                        if m:
-                            hits.append({"text": m.group(0), "start": m.start(), "end": m.end(), "normalized": True})
-                    if hits:
-                        matches[category] = {"count": len(hits), "matched_patterns": hits, "was_normalized": True}
+                matches[category] = {
+                    "count": len(hits),
+                    "matched_patterns": hits,
+                    "was_normalized": any(h.get("normalized") for h in hits),
+                }
 
         return matches
+
+        return matches
+
+    def _detect_behavioral_patterns(
+        self,
+        sentences: List[Dict[str, str]],
+        existing_findings: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Detect grooming behavioral patterns across the full conversation.
+
+        These are patterns that individual sentence analysis misses because
+        each line looks innocent in isolation, but the combination reveals
+        grooming tactics:
+        - Age gap acknowledgment + continued engagement
+        - Schedule/routine probing (asking when alone, when parents leave)
+        - Isolation tactics (undermining friends/family, "only I understand")
+        - Gift-giving + secrecy about gifts
+        - Requesting private communication channels
+        - Flattery + "you're mature/special" + age-inappropriate interest
+        - Planning to meet + secrecy about meeting
+        """
+        if len(sentences) < 4:
+            return []
+
+        behavioral_findings: List[Dict[str, Any]] = []
+        full_text = " ".join(s["text"].lower() for s in sentences)
+
+        # Track which categories were already detected by regex
+        existing_categories = set()
+        for f in existing_findings:
+            cats = f.get("categories") or ([f.get("category")] if f.get("category") else [])
+            existing_categories.update(cats)
+
+        # ── Behavioral signals (soft indicators that accumulate) ──────────
+        signals = {
+            "age_gap": False,
+            "flattery": 0,
+            "isolation": 0,
+            "schedule_probing": 0,
+            "secrecy_hints": 0,
+            "gift_offering": 0,
+            "private_channel": 0,
+            "meeting_intent": 0,
+            "trust_building": 0,
+            "normalization": 0,
+            "parental_avoidance": 0,
+        }
+
+        # Behavioral indicator patterns (softer than the main regex patterns)
+        _behavioral_indicators = {
+            "age_gap": [
+                re.compile(r'\b(?:how\s+old|what\s+age|age\s+(?:doesn.?t|does\s+not)\s+matter|just\s+a\s+number|bit\s+older|few\s+years?\s+older|doesn.?t\s+matter\s+though)', re.I),
+                re.compile(r'\b(?:i.?m\s+\d{2}|i\s+am\s+\d{2}|nineteen|twenty|twenty.?one|eighteen)', re.I),
+            ],
+            "flattery": [
+                re.compile(r'\b(?:you.?re\s+(?:so\s+)?(?:special|unique|different|mature|talented|amazing|beautiful|gorgeous|smart|cool|interesting))', re.I),
+                re.compile(r'\b(?:not\s+like\s+(?:other|most)\s+(?:kids?|people|girls?|boys?|teens?))', re.I),
+                re.compile(r'\b(?:more\s+mature|above\s+your\s+(?:age|level|years?))', re.I),
+                re.compile(r'\b(?:great\s+taste|you\s+have\s+great)', re.I),
+            ],
+            "isolation": [
+                re.compile(r'\b(?:they\s+(?:don.?t|won.?t|wouldn.?t)\s+(?:understand|get\s+it|appreciate))', re.I),
+                re.compile(r'\b(?:(?:your\s+)?friends?\s+(?:don.?t|won.?t)\s+(?:understand|appreciate|get))', re.I),
+                re.compile(r'\b(?:only\s+I\s+(?:understand|get|know|appreciate)|I\s+get\s+you\s+in\s+ways)', re.I),
+                re.compile(r'\b(?:not\s+everyone\s+(?:can|would|will)\s+(?:understand|appreciate|get))', re.I),
+                re.compile(r'\b(?:what\s+we\s+have\s+is\s+(?:different|special|unique))', re.I),
+                re.compile(r'\b(?:deeper\s+connection|nobody\s+else)', re.I),
+            ],
+            "schedule_probing": [
+                re.compile(r'\b(?:what\s+time(?:s)?\s+(?:are|do)\s+you|when\s+(?:are|do)\s+you\s+(?:usually|normally|free|available|home|online|on))', re.I),
+                re.compile(r'\b(?:when\s+(?:do\s+)?(?:your\s+)?(?:parents?|mom|dad|family)\s+(?:go|leave|are\s+(?:gone|away|out)))', re.I),
+                re.compile(r'\b(?:(?:is\s+)?anyone\s+(?:usually\s+)?(?:around|home|there)|are\s+you\s+(?:alone|by\s+yourself))', re.I),
+                re.compile(r'\b(?:what\s+(?:days?|nights?|evenings?)\s+(?:work|are\s+(?:best|good)))', re.I),
+                re.compile(r'\b(?:after\s+(?:school|dinner|practice)|late\s+(?:night|at\s+night))', re.I),
+                re.compile(r'\b(?:walk\s+home|get\s+home|how\s+(?:do\s+you\s+)?get\s+home)', re.I),
+            ],
+            "secrecy_hints": [
+                re.compile(r'\b(?:between\s+(?:us|you\s+and\s+me)|just\s+(?:our|between\s+us|for\s+us))', re.I),
+                re.compile(r'\b(?:don.?t\s+(?:mention|tell|say\s+anything)|keep\s+(?:it|this)\s+(?:between|private|quiet|to\s+yourself))', re.I),
+                re.compile(r'\b(?:(?:they|people|others?)\s+(?:will|would|might)\s+(?:ruin|not\s+understand|misunderstand|judge|overreact))', re.I),
+                re.compile(r'\b(?:our\s+(?:thing|secret|friendship\s+is\s+(?:special|private)))', re.I),
+                re.compile(r'\b(?:stays?\s+between\s+us|privacy|respect\s+(?:that\s+kind\s+of\s+)?privacy)', re.I),
+            ],
+            "gift_offering": [
+                re.compile(r'\b(?:I.?(?:ll|will|can|could)\s+(?:buy|get|send|give)\s+(?:you|u))', re.I),
+                re.compile(r'\b(?:gift|present|surprise|treat|reward)\s+(?:for\s+you|I\s+have)', re.I),
+                re.compile(r'\b(?:I\s+(?:have|got)\s+(?:a|an|something|an?\s+extra))', re.I),
+                re.compile(r'\b(?:(?:don.?t|no\s+need\s+to)\s+worry\s+about\s+(?:money|paying|cost|the\s+price))', re.I),
+                re.compile(r'\b(?:I.?(?:ll|will|can)\s+(?:arrange|pay\s+for|take\s+care\s+of)\s+everything)', re.I),
+            ],
+            "private_channel": [
+                re.compile(r'\b(?:(?:do\s+you\s+have|what.?s\s+your)\s+(?:discord|snapchat|snap|insta|instagram|whatsapp|telegram|kik|signal))', re.I),
+                re.compile(r'\b(?:(?:add|follow|dm|message)\s+me\s+(?:on|at))', re.I),
+                re.compile(r'\b(?:voice\s+chat|video\s+call|webcam|camera)', re.I),
+                re.compile(r'\b(?:(?:send|share|give)\s+(?:me\s+)?(?:your\s+)?(?:address|number|location))', re.I),
+            ],
+            "meeting_intent": [
+                re.compile(r'\b(?:(?:we\s+could|I\s+could|maybe\s+we)\s+(?:meet|hang\s+out|get\s+together|go\s+together))', re.I),
+                re.compile(r'\b(?:(?:pick\s+(?:you\s+)?up|come\s+(?:by|over|get\s+you)|take\s+you))', re.I),
+                re.compile(r'\b(?:(?:in\s+person|face\s+to\s+face|irl|somewhere\s+(?:private|fun|nice)))', re.I),
+                re.compile(r'\b(?:(?:arrange|plan|figure\s+(?:something|it)\s+out))', re.I),
+                re.compile(r'\b(?:ask\s+forgiveness\s+(?:than|rather\s+than)\s+permission)', re.I),
+            ],
+            "trust_building": [
+                re.compile(r'\b(?:I\s+(?:really\s+)?(?:care|understand|get\s+you|feel\s+(?:like|close)))', re.I),
+                re.compile(r'\b(?:(?:we\s+really\s+)?(?:get|understand)\s+each\s+other)', re.I),
+                re.compile(r'\b(?:(?:I\s+)?feel\s+like\s+we\s+(?:really\s+)?(?:connect|click|get\s+each\s+other))', re.I),
+                re.compile(r'\b(?:(?:you\s+can\s+)?(?:tell|share|say)\s+(?:me\s+)?anything)', re.I),
+                re.compile(r'\b(?:(?:whatever\s+you\s+)?share\s+(?:with\s+me\s+)?stays)', re.I),
+            ],
+            "normalization": [
+                re.compile(r'\b(?:(?:it.?s|that.?s)\s+(?:totally|completely|perfectly|absolutely)?\s*(?:normal|natural|fine|okay|common))', re.I),
+                re.compile(r'\b(?:everyone\s+(?:does|is\s+doing)\s+(?:it|this))', re.I),
+                re.compile(r'\b(?:(?:don.?t\s+be)\s+(?:immature|childish|silly|scared|shy|embarrassed))', re.I),
+                re.compile(r'\b(?:growing\s+up|part\s+of\s+growing|phase)', re.I),
+            ],
+            "parental_avoidance": [
+                re.compile(r'\b(?:(?:your\s+)?(?:parents?|mom|dad)\s+(?:probably\s+)?(?:won.?t|wouldn.?t)\s+(?:let|allow|understand|approve))', re.I),
+                re.compile(r'\b(?:(?:don.?t|do\s+not)\s+(?:mention|tell)\s+(?:(?:it|this)\s+to\s+)?(?:your\s+)?(?:parents?|mom|dad|mother|father))', re.I),
+                re.compile(r'\b(?:(?:she|he|they)\s+(?:might|would|will)\s+(?:think\s+it.?s\s+weird|not\s+understand|overreact|freak\s+out))', re.I),
+                re.compile(r'\b(?:(?:easier\s+to\s+)?ask\s+forgiveness|without\s+(?:them|your\s+parents?)\s+knowing)', re.I),
+            ],
+        }
+
+        # Scan all sentences for behavioral signals
+        for sent_data in sentences:
+            text = sent_data["text"]
+            for signal_type, patterns in _behavioral_indicators.items():
+                for pattern in patterns:
+                    if pattern.search(text):
+                        if signal_type == "age_gap":
+                            signals["age_gap"] = True
+                        else:
+                            signals[signal_type] += 1
+                        break  # One match per signal type per sentence
+
+        # ── Calculate behavioral risk score ───────────────────────────────
+        # Each signal type contributes to a behavioral score.
+        # Multiple signal types co-occurring is much more suspicious.
+        behavioral_score = 0.0
+        triggered_behaviors = []
+
+        # Weights for each behavioral signal
+        _signal_weights = {
+            "age_gap":             8.0,
+            "flattery":            4.0,   # per occurrence
+            "isolation":           7.0,   # per occurrence
+            "schedule_probing":    5.0,   # per occurrence
+            "secrecy_hints":       8.0,   # per occurrence
+            "gift_offering":       6.0,   # per occurrence
+            "private_channel":     5.0,   # per occurrence
+            "meeting_intent":      8.0,   # per occurrence
+            "trust_building":      3.0,   # per occurrence
+            "normalization":       6.0,   # per occurrence
+            "parental_avoidance":  7.0,   # per occurrence
+        }
+
+        for signal_type, count_or_flag in signals.items():
+            if signal_type == "age_gap":
+                if count_or_flag:
+                    behavioral_score += _signal_weights["age_gap"]
+                    triggered_behaviors.append("age_gap")
+            else:
+                if count_or_flag > 0:
+                    # Diminishing returns: first occurrence full weight, subsequent half
+                    weight = _signal_weights.get(signal_type, 3.0)
+                    score_contribution = weight + (count_or_flag - 1) * (weight * 0.4)
+                    behavioral_score += score_contribution
+                    triggered_behaviors.append(f"{signal_type}({count_or_flag})")
+
+        # ── Co-occurrence multiplier ──────────────────────────────────────
+        # Multiple different grooming tactics together is much more suspicious
+        distinct_signals = len(triggered_behaviors)
+        if distinct_signals >= 5:
+            behavioral_score *= 1.5
+        elif distinct_signals >= 4:
+            behavioral_score *= 1.3
+        elif distinct_signals >= 3:
+            behavioral_score *= 1.15
+
+        # Only generate behavioral findings if score is significant
+        # and the existing regex findings didn't already catch enough
+        existing_score_estimate = sum(
+            (f.get("confidence", 0) * CATEGORY_METADATA.get(
+                (f.get("categories") or [f.get("category", "")])[0], 
+                type("", (), {"weight": 0.5})()
+            ).weight * 20)
+            for f in existing_findings
+        )
+
+        # If behavioral analysis found significant patterns not caught by regex
+        # Require high behavioral score AND multiple distinct HIGH-RISK signals
+        # to avoid false positives on innocent conversations
+        high_risk_signals = {"isolation", "secrecy_hints", "meeting_intent", 
+                            "parental_avoidance", "normalization"}
+        high_risk_triggered = sum(
+            1 for b in triggered_behaviors 
+            if b.split("(")[0] in high_risk_signals
+        )
+        
+        if behavioral_score >= 20 and distinct_signals >= 3 and high_risk_triggered >= 2:
+            # Create synthetic findings for behavioral patterns not already detected
+            confidence = min(0.90, behavioral_score / 100.0 + 0.3)
+
+            # Map behavioral signals to categories
+            _signal_to_category = {
+                "isolation": "isolation",
+                "secrecy_hints": "secrecy",
+                "gift_offering": "gift_bribery",
+                "meeting_intent": "meeting",
+                "schedule_probing": "routine",
+                "private_channel": "video_call",
+                "normalization": "desensitization",
+                "parental_avoidance": "parent_monitoring",
+                "trust_building": "trust_building",
+                "flattery": "relationship_building",
+                "age_gap": "age_deception",
+            }
+
+            for signal_type in triggered_behaviors:
+                # Strip count suffix like "isolation(2)"
+                base_signal = signal_type.split("(")[0]
+                category = _signal_to_category.get(base_signal)
+                if not category or category in existing_categories:
+                    continue
+
+                metadata = CATEGORY_METADATA.get(category)
+                if not metadata:
+                    continue
+
+                behavioral_findings.append({
+                    "category":     category,
+                    "confidence":   round(confidence, 4),
+                    "context_type": "BEHAVIORAL_PATTERN",
+                    "evidence":     f"[Behavioral] Cross-conversation {base_signal.replace('_', ' ')} pattern detected ({distinct_signals} co-occurring grooming signals)",
+                    "matched_text": f"behavioral:{base_signal}",
+                    "pattern_count": signals.get(base_signal, 1) if isinstance(signals.get(base_signal), int) else 1,
+                    "severity":     metadata.severity,
+                    "weight":       metadata.weight,
+                    "timestamp":    float(len(sentences) - 1),
+                    "speaker":      None,
+                    "categories":   [category],
+                    "scoring": {
+                        "pattern_strength":  round(confidence, 4),
+                        "base_confidence":   round(confidence, 4),
+                        "filter_penalty":    0.0,
+                        "final_confidence":  round(confidence, 4),
+                        "behavioral_score":  round(behavioral_score, 2),
+                        "distinct_signals":  distinct_signals,
+                        "triggered":         triggered_behaviors,
+                    },
+                })
+                existing_categories.add(category)
+
+        return behavioral_findings
 
     def _split_transcript(self, transcript: str) -> List[Dict[str, str]]:
         sentences: List[Dict[str, str]] = []

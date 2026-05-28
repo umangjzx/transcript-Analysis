@@ -24,6 +24,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Chat route keeps its full /api/v1/chat prefix on the backend
+      '/api/v1/chat': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       // All other /api/v1/* routes — strip the /api/v1 prefix
       '/api/v1': {
         target: 'http://localhost:8000',

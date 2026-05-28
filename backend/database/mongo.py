@@ -102,41 +102,60 @@ def get_mongo_db():
 
 
 def _ensure_indexes(db) -> None:
-    """Create indexes once on first connection."""
+    """Create indexes once on first connection (idempotent)."""
     from pymongo import ASCENDING, DESCENDING
+    from pymongo.errors import OperationFailure
+
+    def _safe_create_index(collection_name, keys, **kwargs):
+        """Create an index, skipping gracefully if it already exists with different options."""
+        try:
+            db[collection_name].create_index(keys, **kwargs)
+        except OperationFailure as e:
+            # Code 86 = IndexKeySpecsConflict — index already exists with same name
+            # Code 85 = IndexOptionsConflict — index exists with different options
+            if e.code in (85, 86):
+                logger.debug(
+                    f"Index already exists on {collection_name} "
+                    f"(keys={keys}, kwargs={kwargs}), skipping."
+                )
+            else:
+                raise
+
     try:
-        db["meeting_metadata"].create_index([("meeting_id", ASCENDING)], unique=True)
-        db["transcripts"].create_index([("meeting_id", ASCENDING)])
-        db["analysis_results"].create_index([("meeting_id", ASCENDING)])
-        db["analysis_results"].create_index([("risk_score", DESCENDING)])
-        db["safety_findings"].create_index([("meeting_id", ASCENDING)])
-        db["safety_findings"].create_index([("category", ASCENDING)])
-        db["action_items"].create_index([("meeting_id", ASCENDING)])
-        db["processing_status"].create_index([("meeting_id", ASCENDING)], unique=True)
-        db["audit_logs"].create_index([("meeting_id", ASCENDING)])
-        db["audit_logs"].create_index([("timestamp", DESCENDING)])
+        _safe_create_index("meeting_metadata", [("meeting_id", ASCENDING)], unique=True)
+        _safe_create_index("transcripts", [("meeting_id", ASCENDING)])
+        _safe_create_index("analysis_results", [("meeting_id", ASCENDING)])
+        _safe_create_index("analysis_results", [("risk_score", DESCENDING)])
+        _safe_create_index("safety_findings", [("meeting_id", ASCENDING)])
+        _safe_create_index("safety_findings", [("category", ASCENDING)])
+        _safe_create_index("action_items", [("meeting_id", ASCENDING)])
+        _safe_create_index("processing_status", [("meeting_id", ASCENDING)], unique=True)
+        _safe_create_index("audit_logs", [("meeting_id", ASCENDING)])
+        _safe_create_index("audit_logs", [("timestamp", DESCENDING)])
         # users — unique username index for fast login lookups
-        db["users"].create_index([("username", ASCENDING)], unique=True)
+        _safe_create_index("users", [("username", ASCENDING)], unique=True)
         # counters collection — no extra index needed (_id is already indexed)
 
         # TTL indexes — auto-expire old documents
         # Audit logs: expire after 90 days (configurable via AUDIT_LOG_TTL_DAYS)
         audit_ttl_days = int(os.getenv("AUDIT_LOG_TTL_DAYS", "90"))
-        db["audit_logs"].create_index(
+        _safe_create_index(
+            "audit_logs",
             [("timestamp", ASCENDING)],
             expireAfterSeconds=audit_ttl_days * 86400,
             name="ttl_audit_logs_timestamp",
         )
         # Processing status: expire completed/failed records after 30 days
         processing_ttl_days = int(os.getenv("PROCESSING_STATUS_TTL_DAYS", "30"))
-        db["processing_status"].create_index(
+        _safe_create_index(
+            "processing_status",
             [("updated_at", ASCENDING)],
             expireAfterSeconds=processing_ttl_days * 86400,
             name="ttl_processing_status_updated_at",
         )
         # Dead letter queue — index for status-based queries and replay
-        db["dead_letter_queue"].create_index([("status", ASCENDING)])
-        db["dead_letter_queue"].create_index([("failed_at", DESCENDING)])
+        _safe_create_index("dead_letter_queue", [("status", ASCENDING)])
+        _safe_create_index("dead_letter_queue", [("failed_at", DESCENDING)])
     except Exception as e:
         logger.warning(f"MongoDB index creation warning: {e}")
 

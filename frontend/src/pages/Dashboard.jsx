@@ -307,8 +307,8 @@ const Dashboard = () => {
             <span className="stat-title">Total Analyzed</span>
             <FileAudio size={20} style={{ color: 'var(--accent-primary)' }} />
           </div>
-          <span className="stat-value text-gradient">{history.length}</span>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>audio files processed</span>
+          <span className="stat-value text-gradient">{totalReports}</span>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>total files analyzed</span>
         </div>
 
         <div className="stat-card glass-panel hover-lift animate-slide-up delay-200">

@@ -57,7 +57,7 @@ from modules.chatbot import store_transcript, answer_question, delete_transcript
 from modules.email_notifier import send_alert_email, send_summary_email, should_auto_alert
 from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
 from modules.virus_scanner import scan_file as virus_scan_file
-from auth import get_current_user, authenticate_user, create_access_token
+from auth import get_current_user
 
 # -- Logging -------------------------------------------------------------------
 
@@ -453,68 +453,6 @@ def process_transcript_background(record_id: int, transcript: str, filename: str
 
 
 # -- Routes --------------------------------------------------------------------
-
-# -- Auth models ---------------------------------------------------------------
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-# -- Auth endpoints ------------------------------------------------------------
-
-@app.post("/auth/login")
-def login(body: LoginRequest):
-    """
-    Authenticate with username + password.
-    Returns a signed JWT in an httpOnly cookie and in the response body.
-    """
-    from auth import authenticate_user, create_access_token
-    user = authenticate_user(body.username, body.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password.",
-        )
-    token = create_access_token(user["username"], user.get("role", "admin"))
-    audit_log("login_success", details={"username": user["username"]})
-    logger.info(f"Login: '{user['username']}' authenticated successfully.")
-
-    response = JSONResponse(content={
-        "access_token": token,
-        "token_type": "bearer",
-        "username": user["username"],
-        "role": user.get("role", "admin"),
-    })
-    # Set JWT in httpOnly cookie — secure, not accessible via JavaScript
-    from auth import JWT_EXPIRE_MINUTES
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
-        max_age=JWT_EXPIRE_MINUTES * 60,
-        path="/",
-    )
-    return response
-
-
-@app.post("/auth/logout")
-def logout():
-    """
-    Logout — clears the httpOnly cookie and logs for audit.
-    """
-    audit_log("logout")
-    response = JSONResponse(content={"message": "Logged out successfully."})
-    response.delete_cookie(key="access_token", path="/")
-    return response
-
-
-@app.get("/auth/me")
-def me(current_user: dict = Depends(get_current_user)):
-    """Return the currently authenticated user's info."""
-    return current_user
 
 @app.get("/")
 def home():
@@ -1166,7 +1104,10 @@ def get_analytics_summary():
 # -- Chatbot -------------------------------------------------------------------
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat_legacy(request: ChatRequest):
+    """Legacy /chat endpoint — kept for backward compatibility.
+    Prefer /api/v1/chat (served by the versioned router).
+    """
     try:
         return answer_question(request.report_id, request.question)
     except Exception as _e:

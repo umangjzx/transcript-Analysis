@@ -87,6 +87,14 @@ _LABEL_DEFINITIONS = [
     ("routine",               "asking about daily routine or when someone is alone", False),
     ("explicit_content",      "sexually explicit or inappropriate content",       False),
     ("bad_language",          "threatening, abusive, or offensive language",      False),
+    ("personal_information",  "asking for phone number, email, or social media",  False),
+    ("gift_bribery",          "offering gifts or money to gain trust",            False),
+    ("isolation",             "isolating someone from friends or family",         False),
+    ("desensitization",       "normalizing inappropriate behavior",               False),
+    ("emotional_exploitation","using guilt or emotional manipulation",            False),
+    ("threats_coercion",      "threatening or blackmailing someone",              False),
+    ("gaming_luring",         "using games to lure someone to private channels",  False),
+    ("age_deception",         "lying about age or minimizing age difference",     False),
 ]
 
 CATEGORY_KEYS:  List[str]       = [d[0] for d in _LABEL_DEFINITIONS]
@@ -118,6 +126,14 @@ _RISK_WEIGHTS: Dict[str, float] = {
     "bad_language":          0.32,
     "trust_building":        0.20,
     "relationship_building": 0.20,
+    "personal_information":  0.70,
+    "gift_bribery":          0.50,
+    "isolation":             0.65,
+    "desensitization":       0.55,
+    "emotional_exploitation": 0.75,
+    "threats_coercion":      0.90,
+    "gaming_luring":         0.45,
+    "age_deception":         0.55,
 }
 
 # ---------------------------------------------------------------------------
