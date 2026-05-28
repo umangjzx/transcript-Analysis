@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 
 # Rate limit configuration: (max_requests, window_seconds)
 RATE_LIMITS: Dict[str, Tuple[int, int]] = {
-    "login": (5, 60),      # 5 requests per minute
-    "upload": (10, 60),    # 10 requests per minute
-    "chat": (30, 60),      # 30 requests per minute
+    "login": (5, 60),          # 5 requests per minute
+    "upload": (10, 60),        # 10 requests per minute
+    "chat": (30, 60),          # 30 requests per minute
+    "google_drive": (20, 60),  # 20 requests per minute — prevent API quota exhaustion
 }
 
 # Path → rate limit category mapping
@@ -40,6 +41,12 @@ _PATH_CATEGORIES = {
     "/api/v1/analyze/transcript": "upload",
     "/api/v1/analyze/batch": "upload",
     "/api/v1/google-drive/import": "upload",
+    "/api/v1/google-drive/files": "google_drive",
+    "/api/v1/google-drive/auth-url": "google_drive",
+    "/api/v1/google-drive/status": "google_drive",
+    "/api/v1/google-drive/watcher/start": "google_drive",
+    "/api/v1/google-drive/watcher/stop": "google_drive",
+    "/api/v1/google-drive/watcher/status": "google_drive",
     "/chat": "chat",
     "/api/v1/chat": "chat",
 }
@@ -47,14 +54,23 @@ _PATH_CATEGORIES = {
 
 def _get_category(path: str, method: str) -> str | None:
     """Determine rate limit category for a request path."""
-    if method not in ("POST", "PUT", "PATCH"):
-        return None
     # Exact match first
     if path in _PATH_CATEGORIES:
-        return _PATH_CATEGORIES[path]
+        cat = _PATH_CATEGORIES[path]
+        # Google Drive GET endpoints are also rate-limited
+        if cat == "google_drive":
+            return cat
+        # Other categories only apply to mutating methods
+        if method not in ("POST", "PUT", "PATCH"):
+            return None
+        return cat
     # Prefix match for paths with IDs
     for prefix, cat in _PATH_CATEGORIES.items():
         if path.startswith(prefix):
+            if cat == "google_drive":
+                return cat
+            if method not in ("POST", "PUT", "PATCH"):
+                return None
             return cat
     return None
 

@@ -16,6 +16,7 @@ Configuration (via .env or environment variables):
 """
 
 import os
+import re
 import smtplib
 import logging
 from dotenv import load_dotenv
@@ -436,6 +437,17 @@ def send_email(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _sanitize_for_subject(text: str) -> str:
+    """
+    Sanitize text for use in email Subject header.
+    Prevents header injection by stripping newlines and control characters.
+    """
+    # Remove any CR/LF characters that could inject additional headers
+    sanitized = re.sub(r'[\r\n\x00-\x1f\x7f]', '', text)
+    # Limit length to prevent excessively long subjects
+    return sanitized[:200]
+
+
 def send_alert_email(
     report_id: int,
     filename: str,
@@ -450,7 +462,9 @@ def send_alert_email(
 ) -> Dict[str, Any]:
     """Send a red-alert email for high/critical severity reports."""
     targets = recipients or _get_recipients()
-    subject = f"🚨 [{severity.upper()}] Safety Alert — {filename} (Score: {risk_score:.0f}/100)"
+    safe_filename = _sanitize_for_subject(filename)
+    safe_severity = _sanitize_for_subject(severity)
+    subject = f"🚨 [{safe_severity.upper()}] Safety Alert — {safe_filename} (Score: {risk_score:.0f}/100)"
     html    = _alert_html(report_id, filename, severity, risk_score, findings, summary, stats, app_url)
     return send_email(subject, html, targets, pdf_path)
 
@@ -470,6 +484,8 @@ def send_summary_email(
 ) -> Dict[str, Any]:
     """Send a full analysis summary email."""
     targets = recipients or _get_recipients()
-    subject = f"📋 Analysis Summary — {filename} [{severity.upper()}]"
+    safe_filename = _sanitize_for_subject(filename)
+    safe_severity = _sanitize_for_subject(severity)
+    subject = f"📋 Analysis Summary — {safe_filename} [{safe_severity.upper()}]"
     html    = _summary_html(report_id, filename, severity, risk_score, findings, llm_summary, rule_summary, stats, app_url)
     return send_email(subject, html, targets, pdf_path)

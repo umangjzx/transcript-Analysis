@@ -1,0 +1,23 @@
+Doctor: Hi Sarah, how are you feeling today? Mom, thanks for bringing her in.
+Parent: She's been complaining about stomach aches for a week now.
+Doctor: I see. Sarah, can you tell me where it hurts? Point to the spot.
+Patient: Right here, around my belly button. It gets worse after I eat.
+Doctor: Okay. I'm going to press gently on your stomach. Tell me if anything hurts. Does this hurt?
+Patient: A little.
+Doctor: What about here?
+Patient: Ow, yeah that one hurts more.
+Doctor: Alright. Sarah, I need to ask you some questions. What have you been eating lately?
+Patient: Normal stuff. Cereal, sandwiches, pizza at school.
+Doctor: Any new foods? Anything different from usual?
+Patient: My friend gave me some spicy chips at lunch. I've been eating those a lot.
+Doctor: That might be part of it. Spicy foods can irritate the stomach lining, especially at your age. How much water do you drink?
+Patient: Not a lot. Mostly juice.
+Doctor: I'd recommend switching to more water. At least six glasses a day. Mom, can you help monitor that?
+Parent: Absolutely. Should I be worried about anything serious?
+Doctor: Based on the exam, I don't think it's anything serious. But I want to run a quick test just to rule things out. Sarah, I'll need a small blood sample. Is that okay?
+Patient: I hate needles but okay.
+Doctor: It'll be quick, I promise. The nurse will take care of you. Now, I want to see you back in two weeks. If the pain gets worse before then, or if she develops a fever, come back right away.
+Parent: Got it. Thank you doctor.
+Doctor: Of course. Sarah, try to cut back on those spicy chips okay? And drink more water. You'll feel better soon.
+Patient: Okay. Thanks.
+Doctor: Take care. The front desk will schedule your follow-up. Feel free to call if you have any questions before then.

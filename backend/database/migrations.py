@@ -125,24 +125,43 @@ def run_migrations() -> Dict[str, Any]:
 def _001_initial_indexes(db):
     """Ensure all required indexes exist (idempotent)."""
     from pymongo import ASCENDING, DESCENDING
+    from pymongo.errors import OperationFailure
 
-    db["meeting_metadata"].create_index([("meeting_id", ASCENDING)], unique=True)
-    db["meeting_metadata"].create_index([("created_at", DESCENDING)])
-    db["meeting_metadata"].create_index([("status", ASCENDING)])
+    def safe_create_index(collection, keys, **kwargs):
+        """Create index, handling conflicts by dropping and recreating."""
+        try:
+            db[collection].create_index(keys, **kwargs)
+        except OperationFailure as e:
+            if e.code == 86:  # IndexKeySpecsConflict
+                # Drop the conflicting index and recreate
+                index_name = kwargs.get("name") or "_".join(
+                    f"{k}_{v}" for k, v in keys
+                )
+                try:
+                    db[collection].drop_index(index_name)
+                    db[collection].create_index(keys, **kwargs)
+                except Exception:
+                    pass  # Index already correct, just different options
+            else:
+                raise
 
-    db["transcripts"].create_index([("meeting_id", ASCENDING)], unique=True)
-    db["analysis_results"].create_index([("meeting_id", ASCENDING)], unique=True)
-    db["analysis_results"].create_index([("risk_score", DESCENDING)])
-    db["analysis_results"].create_index([("severity", ASCENDING)])
+    safe_create_index("meeting_metadata", [("meeting_id", ASCENDING)], unique=True)
+    safe_create_index("meeting_metadata", [("created_at", DESCENDING)])
+    safe_create_index("meeting_metadata", [("status", ASCENDING)])
 
-    db["safety_findings"].create_index([("meeting_id", ASCENDING)])
-    db["safety_findings"].create_index([("category", ASCENDING)])
+    safe_create_index("transcripts", [("meeting_id", ASCENDING)], unique=True)
+    safe_create_index("analysis_results", [("meeting_id", ASCENDING)], unique=True)
+    safe_create_index("analysis_results", [("risk_score", DESCENDING)])
+    safe_create_index("analysis_results", [("severity", ASCENDING)])
 
-    db["processing_status"].create_index([("meeting_id", ASCENDING)], unique=True)
-    db["processing_status"].create_index([("status", ASCENDING)])
+    safe_create_index("safety_findings", [("meeting_id", ASCENDING)])
+    safe_create_index("safety_findings", [("category", ASCENDING)])
 
-    db["audit_logs"].create_index([("meeting_id", ASCENDING)])
-    db["audit_logs"].create_index([("timestamp", DESCENDING)])
+    safe_create_index("processing_status", [("meeting_id", ASCENDING)], unique=True)
+    safe_create_index("processing_status", [("status", ASCENDING)])
+
+    safe_create_index("audit_logs", [("meeting_id", ASCENDING)])
+    safe_create_index("audit_logs", [("timestamp", DESCENDING)])
     db["audit_logs"].create_index([("event_type", ASCENDING)])
 
     db["users"].create_index([("username", ASCENDING)], unique=True)

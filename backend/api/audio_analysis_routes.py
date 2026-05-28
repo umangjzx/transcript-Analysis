@@ -264,37 +264,55 @@ async def analyze_audio_batch(
             ))
             continue
 
-        # Read into memory — needed to enforce size limit and persist atomically
-        try:
-            content = await upload.read()
-        except Exception as e:
-            items.append(BatchAnalysisItem(
-                filename=original_filename,
-                id=None,
-                status="ERROR",
-                accepted=False,
-                detail=f"Failed to read upload: {e}",
-            ))
-            continue
-
-        if len(content) > MAX_UPLOAD_BYTES:
-            items.append(BatchAnalysisItem(
-                filename=original_filename,
-                id=None,
-                status="REJECTED",
-                accepted=False,
-                detail=f"File too large. Maximum allowed size is "
-                       f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
-            ))
-            continue
-
-        # Persist to disk under a UUID name (prevents collisions / path traversal)
+        # Stream to disk in chunks — prevents OOM on concurrent large batch uploads
         try:
             os.makedirs(UPLOAD_FOLDER, exist_ok=True)
             safe_disk_name = f"{_uuid.uuid4().hex}{extension}"
             filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
+            file_size = 0
+            _CHUNK_SIZE = 1024 * 1024  # 1 MB
+
             with open(filepath, "wb") as buffer:
-                buffer.write(content)
+                while True:
+                    chunk = await upload.read(size=_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    file_size += len(chunk)
+                    if file_size > MAX_UPLOAD_BYTES:
+                        buffer.close()
+                        try:
+                            os.remove(filepath)
+                        except Exception:
+                            pass
+                        items.append(BatchAnalysisItem(
+                            filename=original_filename,
+                            id=None,
+                            status="REJECTED",
+                            accepted=False,
+                            detail=f"File too large. Maximum allowed size is "
+                                   f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+                        ))
+                        break
+                    buffer.write(chunk)
+
+            # If the file was rejected due to size, continue to next file
+            if file_size > MAX_UPLOAD_BYTES:
+                continue
+
+            if file_size == 0:
+                try:
+                    os.remove(filepath)
+                except Exception:
+                    pass
+                items.append(BatchAnalysisItem(
+                    filename=original_filename,
+                    id=None,
+                    status="REJECTED",
+                    accepted=False,
+                    detail="File is empty.",
+                ))
+                continue
+
         except Exception as e:
             logger.error(f"Failed to save batch file {original_filename}: {e}")
             items.append(BatchAnalysisItem(
@@ -312,7 +330,7 @@ async def analyze_audio_batch(
             save_meeting_metadata(
                 meeting_id=record_id,
                 filename=original_filename,
-                file_size_bytes=len(content),
+                file_size_bytes=file_size,
                 status="PROCESSING",
             )
         except Exception as e:
@@ -341,7 +359,7 @@ async def analyze_audio_batch(
                 user_action="batch_upload",
                 details={
                     "filename": original_filename,
-                    "size_bytes": len(content),
+                    "size_bytes": file_size,
                     "batch_size": len(files),
                 },
             )
@@ -357,7 +375,7 @@ async def analyze_audio_batch(
             detail=None,
         ))
         logger.info(f"[#{record_id}] Batch upload accepted: {original_filename} "
-                    f"({len(content) // 1024} KB)")
+                    f"({file_size // 1024} KB)")
 
     # Invalidate caches so the new in-flight records show up promptly in /history
     if accepted_count:

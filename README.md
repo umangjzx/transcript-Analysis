@@ -1,6 +1,6 @@
 # Melody Wings Safety — AI-Powered Audio Grooming Detection
 
-> Detect grooming, manipulation, and harmful language in audio conversations using a multi-stage AI pipeline — regex patterns, context classification, ML zero-shot NLI, LLM summaries, email alerts, and a RAG chatbot.
+> Detect grooming, manipulation, and harmful language in audio conversations using a multi-stage AI pipeline — regex patterns, context classification, ML zero-shot NLI, temporal weighting, LLM summaries, email alerts, real-time WebSocket progress, and a RAG chatbot.
 
 ![Version](https://img.shields.io/badge/Version-2.1.0-blue)
 ![Risk Score](https://img.shields.io/badge/Risk%20Score-0--100-red)
@@ -9,13 +9,44 @@
 ![React](https://img.shields.io/badge/React-19-61DAFB)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248)
 ![AWS S3](https://img.shields.io/badge/AWS-S3-FF9900)
+![Celery](https://img.shields.io/badge/Celery-5.4-37814A)
+![Redis](https://img.shields.io/badge/Redis-Cache%20%2B%20Broker-DC382D)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
 ## What it does
 
-Melody Wings Safety accepts audio files, video files, plain-text transcripts, or Google Drive documents, and runs them through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception. Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. All data is persisted to MongoDB (7 core collections, plus `users` and `counters` for auth and IDs) and AWS S3.
+Melody Wings Safety accepts audio files, video files, plain-text transcripts, or Google Drive documents, and runs them through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception.
+
+Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, temporal weighting, a timeline view, and a downloadable PDF report. High-severity results trigger automatic email alerts. Real-time WebSocket progress updates keep the frontend informed during analysis.
+
+All data is persisted to MongoDB (7 core collections, plus `users` and `counters` for auth and IDs) and AWS S3. Background processing is handled by Celery + Redis with a threading fallback for local dev.
+
+---
+
+## Key Features (v2.1.0)
+
+- **Multi-input support** — Audio (.mp3/.wav/.m4a/.aac/.ogg), Video (.mp4/.mkv/.avi/.mov/.webm/.flv/.wmv), plain-text transcripts, Google Drive imports
+- **20-category detection** — Compiled regex patterns covering the full grooming lifecycle
+- **ML zero-shot NLI** — DistilBERT-MNLI classifier fused at 25% weight with regex confidence
+- **Temporal weighting** — Late-conversation findings score higher; clustering and escalation detection
+- **Leetspeak normalization** — Catches obfuscated text (m33t, s3cr3t, separator insertion)
+- **Circuit breaker pattern** — Graceful degradation for Ollama and S3 failures
+- **Celery task queue** — Redis-backed background processing with threading fallback
+- **Real-time WebSocket progress** — Live analysis stage updates pushed to the frontend
+- **Virus scanning** — ClamAV integration for uploaded file safety
+- **Disk space pre-check** — Rejects uploads when disk is low
+- **Credential encryption** — Google OAuth tokens encrypted at rest (Fernet/AES)
+- **Database migrations** — Versioned, tracked MongoDB schema changes
+- **Rate limiting** — Per-IP request throttling middleware
+- **Security headers** — CSP, X-Frame-Options, HSTS-ready
+- **JWT authentication** — bcrypt-hashed passwords, httpOnly cookies, configurable expiry
+- **Batch upload** — Analyze multiple files in a single request
+- **RAG chatbot** — ChromaDB + Ollama for per-report Q&A
+- **Email alerts** — Auto-triggered on High/Critical severity with PDF attachment
+- **PDF reports** — Downloadable analysis reports via ReportLab
+- **Google Drive watcher** — Auto-import new files on a configurable polling interval
 
 ---
 
@@ -23,80 +54,171 @@ Melody Wings Safety accepts audio files, video files, plain-text transcripts, or
 
 ```mermaid
 flowchart TD
-    subgraph INPUT["🎙️ INPUT"]
-        A1([Audio File\n.mp3 · .wav · .m4a · .aac · .ogg])
-        A2([Video File\n.mp4 · .mkv · .avi · .mov · .webm])
-        A3([Plain-Text Transcript])
-        A4([Google Drive\n.txt / Google Docs])
+    %% ─── INPUT LAYER ─────────────────────────────────────────────────────────
+    subgraph INPUT["🎙️ INPUT SOURCES"]
+        direction LR
+        A1([🎵 Audio\n.mp3 .wav .m4a .aac .ogg])
+        A2([🎬 Video\n.mp4 .mkv .avi .mov .webm .flv .wmv])
+        A3([📄 Transcript\nPlain text / .txt upload])
+        A4([☁️ Google Drive\n.txt / Google Docs])
     end
 
+    %% ─── SECURITY GATE ──────────────────────────────────────────────────────
+    subgraph SECURITY["🔒 UPLOAD SECURITY"]
+        direction LR
+        AUTH[JWT Auth\nBearer token validation]
+        RATE[Rate Limiter\nPer-IP throttling]
+        DISK[Disk Space Check\nMin 500 MB free]
+        VIRUS[Virus Scanner\nClamAV integration]
+        SIZE[Size Limit\n200 MB audio · 500 MB video]
+    end
+
+    %% ─── TASK QUEUE ─────────────────────────────────────────────────────────
+    subgraph QUEUE["⚙️ TASK QUEUE"]
+        direction LR
+        REDIS_B[(Redis\nBroker + Result Backend)]
+        CEL[Celery Workers\npool=solo · acks_late]
+        BEAT[Celery Beat\nCleanup · Watcher · Recovery]
+    end
+
+    %% ─── TRANSCRIPTION ──────────────────────────────────────────────────────
     subgraph TRANSCRIPTION["① TRANSCRIPTION"]
-        T1[faster-whisper · Whisper Base · CPU · int8]
-        T2[(Transcript)]
-        T3[(Timeline\nstart / end / text / speaker)]
+        direction TB
+        EXTRACT[PyAV\nVideo → Audio extraction\n1 MB streaming chunks]
+        WHISPER[faster-whisper\nWhisper Base · CPU · int8 quantization]
+        TRANSCRIPT[(Transcript Text\n+ Timeline with speaker labels)]
     end
 
+    %% ─── DETECTION PIPELINE ─────────────────────────────────────────────────
     subgraph DETECTION["② GROOMING DETECTION PIPELINE"]
-        SP[Sentence Splitter · Speaker Label Parser]
-        PAT[patterns.py · 20 compiled regex categories]
-        CTX[context_analyzer.py · ContextType multipliers]
-        FIL[filters.py · Negation ±5 tokens · Joke ±2 sentences]
-        CONF[confidence.py · base + bonuses ± multipliers − penalties]
-        ML[ml_classifier.py · distilbert-base-uncased-mnli · 25% fusion]
-        EG[evidence_grouping.py · dedup + category merge]
+        direction TB
+        LEET[🔤 Leetspeak Normalizer\nm33t→meet · s3cr3t→secret\nseparator removal · repetition collapse]
+        SPLIT[Sentence Splitter\n+ Speaker Label Parser]
+        PAT[📋 Pattern Matching\n20 compiled regex categories\n~200 patterns total]
+        CTX[🎯 Context Classifier\n13 ContextTypes\n−0.40 to +0.50 multipliers]
+        FIL[🚫 Filters\nNegation ±5 tokens\nJoke ±2 sentences]
+        CONF[📊 Confidence Scorer\nbase + phrase bonus + keyword bonus\n+ context multiplier − penalties]
+        ML[🧠 ML Classifier\ndistilbert-base-uncased-mnli\nZero-Shot NLI · 25% fusion weight\nLRU cache 512 entries]
+        GROUP[Evidence Grouping\nDeduplication + category merge]
     end
 
-    subgraph RISK["③ RISK SCORING"]
-        RS[risk_scorer.py · weighted · diminishing returns · cap 100]
+    %% ─── RISK SCORING ────────────────────────────────────────────────────────
+    subgraph SCORING["③ RISK SCORING & TEMPORAL ANALYSIS"]
+        direction TB
+        RISK[⚖️ Weighted Risk Scorer\nDiminishing returns\n100% → 50% → 25% → 12.5%\nCapped at 100]
+        TEMPORAL[⏱️ Temporal Weighting\nEarly 0.8x · Middle 1.0x · Late 1.2x\nClustering bonus +0.15\nEscalation bonus +0.20]
+        ESCALATION[📈 Escalation Detection\nProgression chains\ntrust→secrecy→meeting]
     end
 
-    subgraph OUTPUT["④ OUTPUT"]
-        SV[severity_classifier.py]
-        SUM[summarizer.py · rule-based]
-        LLM[llm_summarizer.py · Ollama Llama 3.1]
-        PDF[report_generator.py · PDF]
-        BOT[chatbot.py · RAG · ChromaDB + Ollama]
-        EMAIL[email_notifier.py · alert + summary]
+    %% ─── OUTPUT GENERATION ───────────────────────────────────────────────────
+    subgraph OUTPUT["④ OUTPUT GENERATION"]
+        direction TB
+        SEV[Severity Classifier\nSafe · Low · Moderate · High · Critical]
+        RULESUM[Rule-Based Summary\nTop findings + risk breakdown]
+        LLMSUM[🤖 LLM Summary\nOllama Llama 3.1\nCircuit breaker protected]
+        LLMVAL[LLM Output Validator\nCross-reference with findings]
+        PDF[📄 PDF Report\nReportLab · findings + charts]
+        EMBED[Vector Embedding\nall-MiniLM-L6-v2\n→ ChromaDB storage]
+        ALERT[📧 Email Alert\nHTML template · PDF attachment\nAuto-trigger on High/Critical]
     end
 
-    subgraph STORAGE["⑤ STORAGE"]
-        DB[(MongoDB · 7 collections)]
-        S3[(AWS S3 · 5 storage types)]
-        VEC[(ChromaDB · vectors/)]
+    %% ─── STORAGE LAYER ───────────────────────────────────────────────────────
+    subgraph STORAGE["⑤ PERSISTENT STORAGE"]
+        direction LR
+        MONGO[(🍃 MongoDB Atlas\n7 collections + users + counters\nJSON Schema validation\nTTL indexes · Connection pooling)]
+        S3[(☁️ AWS S3\n5 storage types\nAES-256 encryption\nPresigned URLs)]
+        CHROMA[(🔮 ChromaDB\nPersistent vectors\nRAG retrieval)]
+        REDIS_C[(⚡ Redis\nTTL cache · 60s default\nIn-memory fallback)]
     end
 
+    %% ─── API LAYER ──────────────────────────────────────────────────────────
     subgraph API["⑥ REST API · FastAPI :8000"]
-        EP1[POST /analyze · /analyze/video · /analyze/transcript]
-        EP2[GET /report/id/status]
-        EP3[GET /history · /report/id · /report/id/pdf]
-        EP4[POST /chat]
-        EP5[POST /notify/alert/id · /notify/summary/id]
-        EP6[GET /analytics/summary]
-        EP7[GET+POST /api/v1/google-drive/*]
+        direction TB
+        subgraph MIDDLEWARE["Middleware Stack"]
+            MW1[Request ID · Security Headers · CORS]
+            MW2[API Key Auth · Rate Limiting]
+        end
+        subgraph ROUTES["Route Modules"]
+            R1[POST /analyze · /analyze/video\n/analyze/transcript · /api/v1/analyze/batch]
+            R2[GET /report · /history · /evidence\n/stats · /pdf · DELETE /report]
+            R3[POST /chat · GET /analytics/summary]
+            R4[POST /notify/alert · /notify/summary]
+            R5[/api/v1/google-drive/*\nOAuth · Files · Import · Watcher]
+            R6[/auth/login · /auth/logout · /auth/me]
+        end
+        WS[🔌 WebSocket /ws/progress\nReal-time analysis updates]
     end
 
-    subgraph FRONTEND["⑦ FRONTEND · React 19 + Vite :5173"]
-        FE1[Dashboard · Upload · History]
-        FE2[Report · Risk Ring · Findings · Evidence · Analytics]
-        FE3[Chatbot Sidebar · Email Actions]
+    %% ─── FRONTEND ────────────────────────────────────────────────────────────
+    subgraph FRONTEND["⑦ FRONTEND · React 19 + Vite 8 :5173"]
+        direction TB
+        subgraph PAGES["Pages (lazy-loaded)"]
+            P1[🏠 Dashboard\nHistory · Search · Sort · Stats]
+            P2[📤 Upload\nDrag-drop · Progress · Status polling]
+            P3[📊 Report\n6 tabs · Risk ring · Chatbot sidebar]
+            P4[☁️ Google Drive\nOAuth · Browser · Watcher]
+            P5[🔐 Login\nJWT · Protected routes]
+        end
+        subgraph LIBS["Libraries"]
+            L1[Recharts · Lucide · react-hot-toast]
+            L2[Axios · React Router 7]
+        end
     end
 
-    A1 --> T1 --> T2 & T3
-    A2 --> T1
-    A3 --> T2
-    A4 --> T2
-    T2 --> SP --> PAT --> CTX --> FIL --> CONF --> EG
-    CONF --> ML --> EG
-    EG --> RS --> SV & SUM & LLM
-    SV & SUM & LLM --> PDF
-    PDF --> DB & S3
+    %% ─── CONNECTIONS ─────────────────────────────────────────────────────────
+
+    %% Input → Security → Queue
+    A1 & A2 & A3 --> SECURITY
+    A4 --> SECURITY
+    SECURITY --> QUEUE
+
+    %% Queue → Transcription
+    CEL --> EXTRACT
+    CEL --> WHISPER
+    A2 -.-> EXTRACT --> WHISPER
+    A1 -.-> WHISPER
+    WHISPER --> TRANSCRIPT
+    A3 -.-> TRANSCRIPT
+    A4 -.-> TRANSCRIPT
+
+    %% Transcription → Detection
+    TRANSCRIPT --> LEET --> SPLIT --> PAT --> CTX --> FIL --> CONF
+    CONF --> ML
+    ML --> GROUP
+    CONF --> GROUP
+
+    %% Detection → Scoring
+    GROUP --> RISK --> TEMPORAL --> ESCALATION
+
+    %% Scoring → Output
+    ESCALATION --> SEV & RULESUM & LLMSUM
+    LLMSUM --> LLMVAL
+    SEV & RULESUM & LLMVAL --> PDF
+    TRANSCRIPT --> EMBED
+
+    %% Output → Storage
+    PDF --> MONGO & S3
+    GROUP --> MONGO
+    EMBED --> CHROMA
     A1 & A2 --> S3
-    T2 --> VEC --> BOT
-    EG --> DB
-    DB --> EP3 & EP6
-    BOT --> EP4
-    EMAIL --> EP5
-    EP1 & EP2 & EP3 & EP4 & EP5 & EP6 & EP7 --> FRONTEND
+    ALERT --> MONGO
+
+    %% Storage → API
+    MONGO --> ROUTES
+    CHROMA --> R3
+    REDIS_C --> ROUTES
+    S3 --> R2
+
+    %% API → Frontend
+    API --> FRONTEND
+    WS --> FRONTEND
+
+    %% Beat tasks
+    BEAT --> REDIS_B
+    REDIS_B --> CEL
+
+    %% Alert trigger
+    SEV -->|High/Critical| ALERT
 ```
 
 ---
@@ -106,26 +228,42 @@ flowchart TD
 ```
 Melody Wings Safety/
 ├── backend/                        # FastAPI + Python detection pipeline
-│   ├── app.py                      # Main FastAPI app — all routes + background tasks
-│   ├── auth.py                     # JWT authentication — login endpoint, token validation, get_current_user
+│   ├── app.py                      # Main FastAPI app — routes, middleware, startup/shutdown
+│   ├── auth.py                     # JWT authentication — login, token validation, get_current_user
 │   ├── config.py                   # Paths, SMTP, S3, MongoDB, Google Drive config
-│   ├── requirements.txt
+│   ├── celery_app.py               # Celery configuration — Redis broker, threading fallback
+│   ├── celery_beat_schedule.py     # Periodic task schedule (cleanup, watcher)
+│   ├── create_admin.py             # CLI script to create/reset admin user in MongoDB
+│   ├── finetune_model.py           # Fine-tune the NLI model on custom grooming data
+│   ├── requirements.txt            # Python dependencies
 │   ├── start.bat                   # Windows one-click server start
 │   ├── run_server.py               # Alternative uvicorn launcher
 │   ├── test_pipeline.py            # Interactive CLI pipeline tester
 │   ├── test_email.py               # 4-step SMTP integration test
 │   ├── debug_env.py                # Low-level SMTP credential debugger
 │   ├── .env.example                # Environment variable template
-│   ├── create_admin.py             # CLI script to create/reset the admin user in MongoDB
 │   │
-│   ├── api/
-│   │   ├── audio_analysis_routes.py    # Versioned router /api/v1/* (synchronous, Pydantic)
-│   │   └── google_drive_routes.py      # Google Drive router /api/v1/google-drive/*
+│   ├── api/                        # Route modules (versioned + auth + notifications)
+│   │   ├── audio_analysis_routes.py    # /api/v1/* — analyze, batch, history, report, chat
+│   │   ├── google_drive_routes.py      # /api/v1/google-drive/* — OAuth, files, import, watcher
+│   │   ├── auth_routes.py             # /auth/* — login, logout, me
+│   │   ├── notification_routes.py     # /api/v1/notify/* — alert + summary emails
+│   │   └── analytics_routes.py        # /api/v1/analytics/* — cross-report aggregation
+│   │
+│   ├── tasks/                      # Celery task definitions
+│   │   ├── analysis_tasks.py       # Audio, video, transcript, Drive import pipelines
+│   │   └── maintenance_tasks.py    # Cleanup, watcher polling, stuck-job recovery
+│   │
 │   ├── services/
-│   │   ├── audio_safety_service.py     # Async pipeline orchestration
+│   │   ├── audio_safety_service.py     # Async pipeline orchestration (sync /api/v1 path)
 │   │   └── google_drive_service.py     # Google OAuth2 + Drive/Docs file access
+│   │
 │   ├── schemas/
 │   │   └── audio_analysis_schemas.py   # Pydantic request/response models
+│   │
+│   ├── middleware/
+│   │   ├── rate_limiter.py         # Per-IP rate limiting middleware
+│   │   └── __init__.py
 │   │
 │   ├── modules/
 │   │   ├── patterns.py             # 20-category compiled regex library
@@ -137,8 +275,12 @@ Melody Wings Safety/
 │   │   ├── evidence_grouping.py    # Deduplication + category merging
 │   │   ├── risk_scorer.py          # Weighted risk scoring (0–100)
 │   │   ├── severity_classifier.py  # Score → Safe/Low/Moderate/High/Critical
+│   │   ├── temporal_weighting.py   # Position-based + clustering + escalation scoring
+│   │   ├── leetspeak_normalizer.py # Obfuscation normalization (leetspeak, separators)
+│   │   ├── analysis_pipeline.py    # Unified analysis pipeline (Celery entry point)
 │   │   ├── summarizer.py           # Rule-based summary
 │   │   ├── llm_summarizer.py       # Ollama Llama 3.1 summary
+│   │   ├── llm_output_validator.py # LLM output validation
 │   │   ├── report_generator.py     # PDF report generation
 │   │   ├── transcriber.py          # Faster-Whisper transcription + PyAV video extraction
 │   │   ├── evidence_extractor.py   # Evidence list extraction
@@ -147,37 +289,41 @@ Melody Wings Safety/
 │   │   ├── email_notifier.py       # SMTP alert + summary HTML emails
 │   │   ├── s3_storage.py           # AWS S3 upload / presign / delete
 │   │   ├── drive_watcher.py        # Google Drive background auto-import watcher
-│   │   ├── cache.py                # TTL in-memory cache helpers
+│   │   ├── cache.py                # Redis-backed TTL cache with in-memory fallback
+│   │   ├── circuit_breaker.py      # Circuit breaker for Ollama + S3
+│   │   ├── credential_encryption.py # Fernet encryption for OAuth credentials at rest
+│   │   ├── virus_scanner.py        # ClamAV virus scanning for uploads
+│   │   ├── disk_space_checker.py   # Pre-upload disk space validation
+│   │   ├── websocket_manager.py    # Real-time WebSocket progress updates
 │   │   └── file_cleanup.py         # Upload file cleanup daemon
 │   │
 │   ├── database/
-│   │   └── mongo.py                # MongoDB client — 7-collection schema + read helpers
+│   │   ├── mongo.py                # MongoDB client — 7-collection schema + read helpers
+│   │   └── migrations.py           # Versioned database migration system
 │   │
-│   ├── examples/
-│   │   ├── test_script_bad.txt     # CRITICAL — all categories triggered
-│   │   ├── test_script_medium.txt  # MODERATE — ambiguous online chat
-│   │   ├── test_script_good.txt    # LOW — safe classroom exchange
-│   │   └── run_test_scripts.py     # Pipeline test runner
+│   ├── models/
+│   │   └── grooming-nli-finetuned/ # Fine-tuned DistilBERT model checkpoints
 │   │
-│   └── (auto-created on first run, git-ignored)
-│       ├── uploads/                # Uploaded audio/video files (temp)
-│       ├── reports/                # Generated PDF reports
-│       ├── vectors/                # ChromaDB persistent vector store
-│       └── logs/app.log            # Application log (UTF-8, stdout + file)
+│   └── examples/
+│       ├── test_script_bad.txt     # CRITICAL — all categories triggered
+│       ├── test_script_medium.txt  # MODERATE — ambiguous online chat
+│       ├── test_script_good.txt    # LOW — safe classroom exchange
+│       └── run_test_scripts.py     # Pipeline test runner
 │
-└── frontend/                       # React 19 + Vite dashboard
+└── frontend/                       # React 19 + Vite 8 dashboard
     ├── src/
     │   ├── pages/
-    │   │   ├── Dashboard.jsx       # History table — search, sort, stat cards
+    │   │   ├── Dashboard.jsx       # History table — search, sort, stat cards, delete
     │   │   ├── Report.jsx          # 6-tab report — Overview, Findings, Evidence,
     │   │   │                       #   Timeline, Analytics, Raw Data + Chatbot sidebar
-    │   │   ├── Upload.jsx          # Drag-and-drop upload (audio + video) with progress bar
+    │   │   ├── Upload.jsx          # Drag-and-drop upload (audio + video + transcript)
     │   │   ├── Login.jsx           # JWT login page — username/password form
     │   │   └── GoogleDrive.jsx     # Google Drive OAuth2 connect + file browser + watcher
     │   ├── components/
     │   │   ├── Chatbot.jsx         # AI chatbot sidebar (RAG)
     │   │   └── ErrorBoundary.jsx   # React error boundary
-    │   └── api.js                  # Axios client — all API calls + JWT token helpers
+    │   ├── api.js                  # Axios client — all API calls + JWT token helpers
+    │   └── App.jsx                 # Router + navigation + auth guard
     └── vite.config.js              # Dev proxy /api/v1/* → :8000
 ```
 
@@ -195,10 +341,10 @@ The pipeline detects **20 categories** across the full grooming lifecycle — fr
 | `threats_coercion` | **Critical** | 22 | Blackmail, photo threats, reputation threats, "do it or else" |
 | `meeting` | **Critical** | 20 | Arranging in-person contact, "sneak out", "come to my place" |
 | `address` | **Critical** | 20 | Requesting physical location, home address, zip code |
-| `secrecy` | **Critical** | 15 | "Don't tell anyone", "delete these messages", "our secret" |
-| `manipulation` | **Critical** | 10 | Coercion, conditional threats, peer pressure, proof demands |
 | `emotional_exploitation` | **Critical** | 18 | Guilt-tripping, "you're all I have", self-harm threats as control |
 | `isolation` | **Critical** | 16 | Discrediting friends/family, "you only need me", encouraging withdrawal |
+| `secrecy` | **Critical** | 15 | "Don't tell anyone", "delete these messages", "our secret" |
+| `manipulation` | **Critical** | 10 | Coercion, conditional threats, peer pressure, proof demands |
 
 ### Information Gathering
 
@@ -206,35 +352,37 @@ The pipeline detects **20 categories** across the full grooming lifecycle — fr
 |---|---|---|---|
 | `personal_information` | **High** | 18 | Phone numbers, email, social handles, real name, age, passwords |
 | `parent_monitoring` | **High** | 15 | Questions about parental supervision of messages/phone |
+| `age_deception` | **High** | 14 | "I'm the same age", "age is just a number", "you're mature for your age" |
+| `desensitization` | **High** | 14 | "It's normal", "everyone does it", minimising inappropriate behaviour |
+| `gift_bribery` | **High** | 12 | Gift offers, money, gaming currency, "I'll buy you anything" |
 | `school` | **High** | 10 | School name, grade, dismissal time, teacher names |
 | `routine` | **High** | 10 | Daily schedule, walk-home route, when alone at home |
+| `video_call` | **High** | 10 | Video call requests, camera requests, selfie demands |
 
 ### Relationship & Trust Building
 
 | Category | Severity | Weight | Description |
 |---|---|---|---|
 | `relationship_building` | **High** | 5 | Building personal dependency, "you're special to me" |
-| `video_call` | **High** | 10 | Video call requests, camera requests, selfie demands |
-| `age_deception` | **High** | 14 | "I'm the same age", "age is just a number", "you're mature for your age" |
-| `desensitization` | **High** | 14 | "It's normal", "everyone does it", minimising inappropriate behaviour |
-| `gift_bribery` | **High** | 12 | Gift offers, money, gaming currency, "I'll buy you anything" |
 | `gaming_luring` | **Medium** | 10 | Roblox/Fortnite contact, "join my private server", moving to DMs |
-| `trust_building` | **Medium** | 5 | "Trust me", "I'm here for you", "you can tell me anything" |
 | `bad_language` | **Medium** | 8 | Profanity, slurs, hate speech, aggressive/threatening language |
+| `trust_building` | **Medium** | 5 | "Trust me", "I'm here for you", "you can tell me anything" |
 
 ---
 
 ## Risk Scoring
 
-Risk scores are calculated on a **0–100 scale** using a weighted, diminishing-returns formula:
+Risk scores are calculated on a **0–100 scale** using a weighted, diminishing-returns formula with temporal weighting:
 
 ```
-effective_score = weight × confidence          (1st occurrence)
-effective_score = weight × confidence × DR     (repeated occurrences)
+effective_score = weight × confidence × temporal_multiplier    (1st occurrence)
+effective_score = weight × confidence × temporal_multiplier × DR  (repeated)
 total_score     = Σ effective_scores, capped at 100
 ```
 
-**Diminishing returns** — repeated occurrences of the same category are progressively down-weighted (100% → 50% → 25% → 12.5% → …) so a single repeated phrase cannot dominate the score.
+**Temporal weighting** — findings in the last 25% of a conversation receive a 1.2x multiplier (escalation phase). Findings in the first 25% receive 0.8x (exploratory phase). Clustering bonus (+0.15) applies when 3+ findings appear within 10% of the conversation. Escalation bonus (+0.20) applies when severity increases over time.
+
+**Diminishing returns** — repeated occurrences of the same category are progressively down-weighted (100% → 50% → 25% → 12.5% → …).
 
 | Risk Level | Score Range | Meaning |
 |---|---|---|
@@ -250,22 +398,31 @@ total_score     = Σ effective_scores, capped at 100
 
 | Layer | Technology |
 |---|---|
-| API | FastAPI + Uvicorn |
-| Transcription | Faster-Whisper (base model, CPU, int8) |
+| API | FastAPI 0.136 + Uvicorn 0.47 |
+| Task Queue | Celery 5.4 + Redis (threading fallback for local dev) |
+| Transcription | Faster-Whisper 1.2 (base model, CPU, int8) |
 | Video Audio Extraction | PyAV (streamed, 1 MB chunks) |
 | Pattern Detection | Python `re` — compiled regex, 20 categories |
+| Text Normalization | Leetspeak normalizer (character substitution, separator removal) |
 | ML Classifier | `typeform/distilbert-base-uncased-mnli` — Zero-Shot NLI |
-| LLM Summary | Ollama — Llama 3.1 |
+| LLM Summary | Ollama — Llama 3.1 (with output validation) |
 | Vector Store | ChromaDB (persistent) |
 | Embeddings | SentenceTransformers `all-MiniLM-L6-v2` |
-| Primary Database | MongoDB Atlas — 7 collections |
+| Primary Database | MongoDB Atlas — 7 collections + versioned migrations |
+| Caching | Redis-backed TTL cache (in-memory fallback) |
 | File Storage | AWS S3 — 5 storage types, AES-256 encrypted |
+| Virus Scanning | ClamAV via pyclamd |
 | Email | SMTP (Gmail / any provider) — HTML alert + summary templates |
-| PDF | ReportLab via `report_generator.py` |
-| Google Drive | Google Drive API + Google Docs API (OAuth2) |
+| PDF | ReportLab |
+| Google Drive | Google Drive API + Google Docs API (OAuth2, encrypted credentials) |
+| Real-time Updates | WebSocket (/ws/progress) |
+| Rate Limiting | Custom middleware (per-IP, configurable) |
+| Circuit Breaker | Custom implementation for Ollama + S3 |
+| Authentication | JWT (HS256) + bcrypt + httpOnly cookies |
 | Frontend | React 19 + Vite 8 |
-| Charts | Recharts |
+| Charts | Recharts 3 |
 | Icons | Lucide React |
+| Notifications | react-hot-toast |
 
 ---
 
@@ -275,6 +432,7 @@ total_score     = Σ effective_scores, capped at 100
 
 - Python 3.10+
 - Node.js 18+
+- Redis *(optional — for Celery task queue and caching; falls back to threading + in-memory)*
 - [Ollama](https://ollama.com) *(optional — for LLM summaries and chatbot)*
 
 ### 1. Clone
@@ -298,9 +456,13 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 
-# Copy and fill in environment variables (see Environment Variables section)
+# Copy and fill in environment variables
 cp .env.example .env
 
+# Create the admin user (required for JWT auth)
+python create_admin.py
+
+# Start the server
 uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -314,7 +476,19 @@ Backend runs at **http://localhost:8000**
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-### 3. Frontend
+### 3. Celery Workers (optional, recommended)
+
+```bash
+# Start a Celery worker (processes analysis tasks in background)
+celery -A celery_app worker --loglevel=info --pool=solo
+
+# Start Celery Beat (periodic tasks: cleanup, watcher)
+celery -A celery_app beat --loglevel=info
+```
+
+If Redis is not available, set `USE_CELERY=false` in `.env` — tasks will run synchronously via threading.
+
+### 4. Frontend
 
 ```bash
 cd frontend
@@ -324,9 +498,7 @@ npm run dev
 
 Frontend runs at **http://localhost:5173**
 
-The Vite dev server proxies API traffic to the backend (see [Frontend ↔ Backend routing](#frontend--backend-routing) below).
-
-### 4. Ollama (optional)
+### 5. Ollama (optional)
 
 ```bash
 ollama pull llama3.1
@@ -341,47 +513,84 @@ If Ollama is not running, the system falls back to the rule-based summary. All o
 Copy `backend/.env.example` to `backend/.env`. All integrations are optional — the core analysis pipeline runs without them.
 
 ```env
-# ── SMTP — email alerts and summaries ────────────────────────────────────────
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-16-char-app-password   # Gmail: use an App Password, not your account password
-SMTP_FROM_NAME=Melody Wings Safety
-ALERT_RECIPIENTS=analyst@yourorg.com,supervisor@yourorg.com
-ALERT_SEVERITY=High          # High or Critical — threshold for auto-alerts
-APP_URL=http://localhost:5173 # used in "View Report" email links
+# ── Authentication ────────────────────────────────────────────────────────────
+JWT_SECRET=<generate: python -c "import secrets; print(secrets.token_hex(32))">
+JWT_EXPIRE_MINUTES=480
+ENV=development                   # Set to "production" for strict startup checks
 
-# ── MongoDB — primary data store ──────────────────────────────────────────────
+# ── MongoDB ───────────────────────────────────────────────────────────────────
 MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<dbname>?retryWrites=true&w=majority
 MONGO_DB_NAME=audio_safety_db
+MONGO_POOL_MIN_SIZE=5
+MONGO_POOL_MAX_SIZE=50
 
-# ── AWS S3 — file storage ─────────────────────────────────────────────────────
+# ── Redis / Celery ────────────────────────────────────────────────────────────
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+USE_CELERY=true                   # false = threading fallback (no Redis needed)
+
+# ── AWS S3 ────────────────────────────────────────────────────────────────────
 AWS_ACCESS_KEY_ID=your-access-key-id
 AWS_SECRET_ACCESS_KEY=your-secret-access-key
 AWS_REGION=us-east-1
-S3_BUCKET_NAME=your-bucket-name   # note: S3_BUCKET_NAME (not S3_BUCKET)
+S3_BUCKET_NAME=your-bucket-name
 
-# ── Feature flags ─────────────────────────────────────────────────────────────
-ENABLE_ML_CLASSIFIER=false        # set true after ~400 MB model is cached
-ENABLE_LLM_SUMMARY=true           # set false to skip Ollama entirely (faster)
-MAX_UPLOAD_MB=200                 # max audio upload size in MB
-MAX_VIDEO_UPLOAD_MB=500           # max video upload size in MB
-JWT_SECRET=your-long-random-secret  # required for JWT auth — generate with: python -c "import secrets; print(secrets.token_hex(32))"
-JWT_EXPIRE_MINUTES=480            # JWT token lifetime in minutes (default 8 hours)
+# ── SMTP Email ────────────────────────────────────────────────────────────────
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-16-char-app-password
+SMTP_FROM_NAME=Melody Wings Safety
+ALERT_RECIPIENTS=analyst@yourorg.com,supervisor@yourorg.com
+ALERT_SEVERITY=High
+APP_URL=http://localhost:5173
+
+# ── Feature Flags ─────────────────────────────────────────────────────────────
+ENABLE_ML_CLASSIFIER=false        # true after ~400 MB model is cached
+ENABLE_LLM_SUMMARY=true           # false to skip Ollama entirely
+MAX_UPLOAD_MB=200
+MAX_VIDEO_UPLOAD_MB=500
+UPLOAD_TTL_HOURS=24
+
+# ── Security ──────────────────────────────────────────────────────────────────
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-API_KEY=                          # leave blank to disable auth in dev
-UPLOAD_TTL_HOURS=24               # 0 = disable upload cleanup
+API_KEY=                          # leave blank to disable in dev
+COOKIE_SECURE=false               # true in production (requires HTTPS)
+CREDENTIAL_ENCRYPTION_KEY=        # encrypts Google OAuth tokens at rest
 
-# ── Google Drive integration ──────────────────────────────────────────────────
+# ── Virus Scanning ────────────────────────────────────────────────────────────
+ENABLE_VIRUS_SCAN=false
+CLAMAV_HOST=localhost
+CLAMAV_PORT=3310
+VIRUS_SCAN_FAIL_CLOSED=false
+
+# ── Circuit Breaker ───────────────────────────────────────────────────────────
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+CIRCUIT_BREAKER_RECOVERY_TIMEOUT=60
+CIRCUIT_BREAKER_SUCCESS_THRESHOLD=2
+
+# ── Google Drive ──────────────────────────────────────────────────────────────
 GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/google-drive/callback
-DRIVE_AUTO_WATCH=false            # true = start polling Drive on server startup
-DRIVE_POLL_INTERVAL_SECONDS=120   # how often to check Drive for new files (seconds)
-DRIVE_WATCH_FOLDER_ID=            # optional: restrict to a specific Drive folder ID
+DRIVE_AUTO_WATCH=false
+DRIVE_POLL_INTERVAL_SECONDS=120
+DRIVE_WATCH_FOLDER_ID=
+
+# ── Disk Space ────────────────────────────────────────────────────────────────
+MIN_DISK_SPACE_MB=500
+
+# ── Log Rotation ──────────────────────────────────────────────────────────────
+LOG_MAX_SIZE_MB=50
+LOG_BACKUP_COUNT=5
+
+# ── TTL Indexes ───────────────────────────────────────────────────────────────
+AUDIT_LOG_TTL_DAYS=90
+PROCESSING_STATUS_TTL_DAYS=30
 ```
 
-> **Gmail tip:** Generate a 16-character App Password at https://myaccount.google.com/apppasswords — do not use your account password. 2FA must be enabled on the Google account first.
+> **Gmail tip:** Generate a 16-character App Password at https://myaccount.google.com/apppasswords — 2FA must be enabled first.
 
 ---
 
@@ -391,11 +600,13 @@ Melody Wings Safety uses **JWT (JSON Web Token)** authentication for the fronten
 
 ### How it works
 
-- Admin credentials are stored in MongoDB (`users` collection), passwords bcrypt-hashed (12 rounds)
+- Admin credentials stored in MongoDB (`users` collection), passwords bcrypt-hashed (12 rounds)
 - On login, the server issues a signed HS256 JWT valid for `JWT_EXPIRE_MINUTES` (default 8 hours)
 - The frontend stores the token in `localStorage` and attaches it as a `Bearer` token on every request
 - The `get_current_user` FastAPI dependency validates the JWT on protected routes
-- If `JWT_SECRET` is not set, auth is disabled entirely (dev mode — all requests pass through)
+- JWT is also set in an httpOnly cookie for additional security
+- If `JWT_SECRET` is not set, auth is disabled entirely (dev mode)
+- Server refuses to start without `JWT_SECRET` when `ENV=production`
 
 ### Setup
 
@@ -409,294 +620,131 @@ cd backend
 python create_admin.py
 ```
 
-`create_admin.py` connects to MongoDB, prompts for a username and password (minimum 8 characters), bcrypt-hashes the password, and upserts the user document. Run it once on first setup, or any time you need to reset the admin password.
-
-### JWT payload
-
-```json
-{ "sub": "<username>", "role": "admin", "exp": <unix timestamp> }
-```
-
 ### Auth endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → `{"access_token", "token_type", "username", "role"}` |
-| `POST` | `/auth/logout` | Stateless logout (client discards token); logged to audit |
-| `GET` | `/auth/me` | Returns current user from Bearer JWT (requires `JWT_SECRET`) |
+| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → JWT + user info |
+| `POST` | `/auth/logout` | Clears httpOnly cookie; logged to audit |
+| `GET` | `/auth/me` | Returns current user from Bearer JWT |
 
 ---
 
 ## Storage
 
-### MongoDB — Primary Store
-
-MongoDB is the sole data store (SQLite has been removed). All analysis results, transcripts, findings, and audit logs are written here. Collections are created automatically on first connection.
-
-**7 core collections** (written per analysis):
+### MongoDB — Primary Store (7 core collections)
 
 | Collection | Contents |
 |---|---|
-| `meeting_metadata` | Filename, date, duration, participants, S3 URL, status, pdf_path, s3_pdf_url |
+| `meeting_metadata` | Filename, date, duration, S3 URL, status, pdf_path |
 | `transcripts` | Full transcript, speaker segments, timestamps, word count |
-| `analysis_results` | Risk score, severity, LLM summary, rule summary, stats, evidence |
+| `analysis_results` | Risk score, severity, LLM summary, rule summary, stats, evidence, temporal data |
 | `safety_findings` | Per-finding category, evidence, confidence, context type, ML fields |
-| `action_items` | High/critical findings requiring action, topics, keywords |
+| `action_items` | High/critical findings requiring action |
 | `processing_status` | Pipeline stage, started_at, completed_at, errors |
 | `audit_logs` | All events — uploads, completions, failures, emails sent |
 
-**Supporting collections:**
+**Supporting collections:** `users` (admin accounts), `counters` (atomic auto-increment IDs), `_migrations` (migration tracking)
 
-| Collection | Contents |
-|---|---|
-| `users` | Admin accounts — bcrypt-hashed passwords, roles |
-| `counters` | Atomic auto-increment meeting IDs (`findOneAndUpdate`) |
-
-### AWS S3 (5 storage types)
-
-All files are AES-256 server-side encrypted:
+### AWS S3 (5 storage types, AES-256 encrypted)
 
 | Type | S3 Prefix | Description |
 |---|---|---|
-| Original recordings | `recordings/YYYY/MM/` | Uploaded audio (and video-derived audio when stored) |
-| Extracted audio | `recordings/YYYY/MM/` | Audio extracted from video uploads |
+| Original recordings | `recordings/YYYY/MM/` | Uploaded audio files |
+| Extracted audio | `recordings/YYYY/MM/` | Audio from video uploads |
 | PDF reports | `reports/YYYY/MM/` | Generated analysis PDFs |
 | Exports | `exports/YYYY/MM/` | CSV / JSON / XLSX exports |
 | Backups | `backups/YYYY/MM/` | Long-term archives |
 
 ---
 
-## Email Notifications
-
-Two email types are supported, both rendered as dark-themed HTML with a risk score circle, severity badge, and findings summary.
-
-**Automatic alert** — sent at the end of every analysis where severity meets or exceeds `ALERT_SEVERITY` (default: `High`). Includes top 5 findings and a PDF attachment.
-
-**On-demand summary** — triggered via `POST /notify/summary/{id}`. Includes LLM summary, rule-based summary, and category breakdown table.
-
-**Manual re-send** — `POST /notify/alert/{id}` re-sends the alert email for any report regardless of severity. Accepts an optional `recipients` override.
-
----
-
 ## API Reference
 
-The backend exposes two route layers:
-
-| Layer | Prefix | Behavior |
-|---|---|---|
-| **Root routes** | `/analyze`, `/report/…`, `/notify/…`, `/auth/…` | Background analysis for uploads; full feature set (video, transcript, notifications, analytics). Used by the React app in dev (see below). |
-| **Versioned routes** | `/api/v1/…` | Pydantic-validated REST API. `POST /api/v1/analyze` runs **synchronously** in-process. JWT required on `/history` and `/report/{id}` when `JWT_SECRET` is set. No video/transcript/notify routes on this router — use root routes for those. |
-
-**Google Drive** routes always keep the full prefix: `/api/v1/google-drive/*`.
-
-### Frontend ↔ Backend routing
-
-In development, Vite proxies requests to `:8000`:
-
-- `/api/v1/*` → backend with `/api/v1` **stripped** (e.g. browser `POST /api/v1/analyze` → backend `POST /analyze`, background job + polling)
-- `/api/v1/google-drive/*` → backend **unchanged**
-- `/auth/*` → backend **unchanged** (login is not under `/api/v1`)
-
-The dashboard uploads audio/video via proxied `/api/v1/analyze` (→ root `/analyze`), then polls `/api/v1/report/{id}/status` until `COMPLETED`.
-
-### Core (root routes)
+### Core Routes
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | S3 + MongoDB + service health — returns `{status, service, s3, mongodb}` |
-| `POST` | `/analyze` | Upload audio — returns immediately, runs pipeline in background |
-| `POST` | `/analyze/video` | Upload video — audio extracted server-side, then analyzed in background |
-| `POST` | `/analyze/transcript` | Submit plain-text transcript — skips transcription, runs pipeline in background |
-| `GET` | `/report/{id}/status` | Poll status: `PROCESSING` / `COMPLETED` / `FAILED` + `error_message` |
-| `GET` | `/history` | All reports — `id`, `filename`, `severity`, `risk_score` |
+| `GET` | `/health` | Full health check — MongoDB, S3, Redis, Ollama, Whisper, ChromaDB, disk |
+| `POST` | `/analyze` | Upload audio — background pipeline via Celery |
+| `POST` | `/analyze/video` | Upload video — audio extracted, then analyzed |
+| `POST` | `/analyze/transcript` | Submit plain-text transcript (JSON or multipart) |
+| `GET` | `/report/{id}/status` | Poll: `PROCESSING` / `COMPLETED` / `FAILED` |
+| `GET` | `/history` | Paginated history with TTL cache |
 | `GET` | `/report/{id}` | Full report — transcript, findings, evidence, stats, summaries |
-| `GET` | `/report/{id}/evidence` | Evidence list with `severity`, `risk_score`, `context_type`, `speaker` |
-| `GET` | `/report/{id}/stats` | Full stats object — see Stats Object below |
+| `GET` | `/report/{id}/evidence` | Evidence list with severity, risk_score, context_type |
+| `GET` | `/report/{id}/stats` | Statistics — categories, confidence, ML stats, timeline |
 | `GET` | `/report/{id}/pdf` | Download PDF report |
-| `DELETE` | `/report/{id}` | Delete report from MongoDB, S3, and local PDF |
-| `POST` | `/chat` | RAG chatbot — returns `{answer, sources, confidence}` |
+| `DELETE` | `/report/{id}` | Delete from MongoDB + S3 + local PDF + ChromaDB |
+| `POST` | `/chat` | RAG chatbot — `{answer, sources, confidence}` |
+| `GET` | `/analytics/summary` | Cross-report aggregation |
+| `WS` | `/ws/progress` | Real-time analysis progress updates |
+
+### Versioned Routes (/api/v1)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/analyze` | Synchronous analysis (Pydantic response) |
+| `POST` | `/api/v1/analyze/batch` | Batch upload — multiple files in one request |
+| `GET` | `/api/v1/history` | Paginated history (JWT required) |
+| `GET` | `/api/v1/report/{id}` | Full report (JWT required) |
+| `GET` | `/api/v1/report/{id}/evidence` | Evidence (JWT required) |
+| `GET` | `/api/v1/report/{id}/stats` | Statistics |
+| `GET` | `/api/v1/report/{id}/pdf` | Download PDF |
+| `POST` | `/api/v1/chat` | RAG chatbot |
 
 ### Notifications
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/notify/alert/{id}` | Send (or re-send) a red-alert email |
-| `POST` | `/notify/summary/{id}` | Send a full analysis summary email |
-
-Both accept `{"recipients": ["email@example.com"]}` to override `ALERT_RECIPIENTS`. Both return `{"success": bool, "message": str, "recipients": [...]}` and log to MongoDB `audit_logs`.
-
-### Analytics
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/analytics/summary` | Cross-report aggregation — severity distribution, risk histogram, top categories, ML agreement, confidence histogram, status distribution |
+| `POST` | `/notify/alert/{id}` | Send/re-send alert email (accepts `recipients` override) |
+| `POST` | `/notify/summary/{id}` | Send full analysis summary email |
 
 ### Google Drive
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1/google-drive/auth-url` | Returns the OAuth2 consent URL |
-| `GET` | `/api/v1/google-drive/callback` | Handles OAuth2 redirect, stores tokens |
-| `GET` | `/api/v1/google-drive/status` | Returns authentication status |
-| `DELETE` | `/api/v1/google-drive/logout` | Revokes and deletes stored credentials |
-| `GET` | `/api/v1/google-drive/files` | Lists importable files (`.txt` + Google Docs) |
-| `POST` | `/api/v1/google-drive/import` | Imports a file as a transcript and runs the pipeline |
-| `GET` | `/api/v1/google-drive/watcher/status` | Returns watcher running state + stats |
-| `POST` | `/api/v1/google-drive/watcher/start` | Starts the background auto-import watcher |
-| `POST` | `/api/v1/google-drive/watcher/stop` | Stops the watcher |
-
-### Stats Object
-
-`GET /report/{id}/stats` returns:
-
-```json
-{
-  "word_count": 312,
-  "character_count": 1840,
-  "finding_count": 8,
-  "unique_categories": 5,
-  "categories": { "secrecy": 2, "meeting": 1 },
-  "severity_distribution": { "critical": 2, "high": 3 },
-  "context_type_distribution": { "GROOMING": 4, "NEUTRAL": 2 },
-  "speaker_distribution": { "Speaker A": 5, "Speaker B": 3 },
-  "confidence_stats": { "average": 0.82, "maximum": 0.97, "minimum": 0.61 },
-  "confidence_histogram": { "0-25": 0, "25-50": 1, "50-75": 3, "75-100": 4 },
-  "ml_stats": { "total_with_ml": 8, "agreed": 6, "disagreed": 2, "agreement_rate": 0.75 },
-  "findings_timeline": [{ "timestamp": 4.0, "confidence": 0.91, "category": "secrecy", "severity": "critical" }],
-  "high_confidence_count": 5
-}
-```
+| `GET` | `/api/v1/google-drive/auth-url` | OAuth2 consent URL |
+| `GET` | `/api/v1/google-drive/callback` | OAuth2 redirect handler |
+| `GET` | `/api/v1/google-drive/status` | Authentication status |
+| `DELETE` | `/api/v1/google-drive/logout` | Revoke credentials |
+| `GET` | `/api/v1/google-drive/files` | List importable files |
+| `POST` | `/api/v1/google-drive/import` | Import file as transcript |
+| `GET` | `/api/v1/google-drive/watcher/status` | Watcher state |
+| `POST` | `/api/v1/google-drive/watcher/start` | Start auto-import |
+| `POST` | `/api/v1/google-drive/watcher/stop` | Stop auto-import |
 
 ### Examples
 
 ```bash
 # Upload and analyze audio
 curl -X POST http://localhost:8000/analyze -F "file=@conversation.mp3"
-# → {"id": 12, "status": "PROCESSING", "message": "Analysis started in background"}
 
-# Upload and analyze video
+# Upload video
 curl -X POST http://localhost:8000/analyze/video -F "file=@recording.mp4"
-# → {"id": 13, "status": "PROCESSING", "message": "Video audio extracted, analysis started in background"}
 
-# Submit a plain-text transcript
+# Submit transcript
 curl -X POST http://localhost:8000/analyze/transcript \
   -H "Content-Type: application/json" \
   -d '{"transcript": "Speaker A: keep this between us...", "filename": "chat.txt"}'
 
-# Poll until complete
+# Poll status
 curl http://localhost:8000/report/12/status
-# → {"id": 12, "status": "COMPLETED", "error_message": null}
 
 # Get full report
 curl http://localhost:8000/report/12
 
-# Get stats only
-curl http://localhost:8000/report/12/stats
-
-# Ask the chatbot
+# Ask chatbot
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"report_id": 12, "question": "What secrecy phrases were used?"}'
 
 # Send alert email
-curl -X POST http://localhost:8000/notify/alert/12 \
-  -H "Content-Type: application/json" \
-  -d '{"recipients": ["analyst@example.com"]}'
+curl -X POST http://localhost:8000/notify/alert/12
 
-# Delete a report (frontend uses /api/v1/report/12 — proxy forwards to /report/12)
-curl -X DELETE http://localhost:8000/report/12
-
-# Cross-report analytics
-curl http://localhost:8000/analytics/summary
-
-# Google Drive — get auth URL
-curl http://localhost:8000/api/v1/google-drive/auth-url
-
-# Google Drive — import a file
+# Google Drive import
 curl -X POST http://localhost:8000/api/v1/google-drive/import \
   -H "Content-Type: application/json" \
-  -d '{"file_id": "1A2B3C...", "file_name": "chat_log.txt", "mime_type": "text/plain"}'
-```
-
-## Context Classification
-
-Every sentence is classified into one or more `ContextType` values before confidence scoring. The type drives a multiplier — no speaker identity is ever consulted.
-
-| ContextType | Multiplier | Meaning |
-|---|---|---|
-| `ADMINISTRATIVE` | −0.40 | Event logistics, forms, schedules — suppresses false positives |
-| `INFORMATION_GATHERING` | +0.15 | Collecting personal details |
-| `TRUST_BUILDING` | +0.20 | "I care about you", "trust me" |
-| `RELATIONSHIP_BUILDING` | +0.15 | "special connection", "best friends" |
-| `MANIPULATION` | +0.30 | "they won't understand", coercion |
-| `SECRECY` | +0.40 | "don't tell anyone", "our secret" |
-| `ESCALATION` | +0.35 | Private call, move to another platform |
-| `MEETING` | +0.35 | Meet up, in person, hang out |
-| `PERSONAL_INFORMATION` | +0.30 | Address, phone, email, route |
-| `VIDEO_CALL` | +0.25 | Video chat, FaceTime, camera requests |
-| `EXPLICIT_CONTENT` | +0.50 | Sexual language — highest multiplier |
-| `BAD_LANGUAGE` | +0.20 | Profanity, slurs, threats |
-| `NEUTRAL` | 0.00 | No strong signal |
-
----
-
-## Confidence Scoring
-
-```
-score = pattern_strength
-      + exact_phrase_bonus      (+0.15 if matched text is a known exact phrase)
-      + keyword_bonus           (+0.10 if ≥2 supporting keywords present)
-      + context_multiplier      (from ContextType above, −0.40 to +0.50)
-      − negation_penalty        (up to −0.40, token-scoped within ±5 tokens)
-      − joke_penalty            (up to −0.50, ±2 sentence window)
-
-regex_confidence = clamp(score, 0.0, 1.0)
-
-# ML fusion (25% weight, when enabled)
-fused_confidence = 0.75 × regex_confidence + 0.25 × ml_category_score
-```
-
----
-
-## ML Classifier
-
-- Model: `typeform/distilbert-base-uncased-mnli` (Zero-Shot NLI via HuggingFace)
-- 13 labels mapped to detection categories
-- Temperature calibration T=1.3 for better-calibrated probabilities
-- Multi-label detection threshold: ≥0.15
-- Agreement/disagreement signal surfaced in each finding under `finding["ml"]`
-- LRU cache: 512 entries — repeated sentences are free after first inference
-- Fused at 25% weight into the final confidence score
-- **Disabled by default** (`enable_ml_classifier=False`) — enable once model is cached (~400 MB download on first run)
-
----
-
-## Configuration Knobs
-
-Key runtime parameters you can tune without touching the pipeline code:
-
-```python
-# grooming_detector.py — constructor defaults
-GroomingDetector(
-    min_confidence_threshold = 0.15,   # drop findings below this (API default: 0.30)
-    enable_context_analysis  = True,   # apply ContextType multipliers
-    enable_filters           = True,   # apply negation + joke penalties
-    enable_grouping          = True,   # deduplicate via EvidenceGroupingEngine
-    enable_ml_classifier     = False,  # set True once model is cached (~400 MB)
-)
-
-# risk_scorer.py — weight overrides
-WeightedRiskScorer(
-    custom_weights = {"explicit_content": 30, "threats_coercion": 25},
-    enable_diminishing_returns = True,
-)
-
-# audio_safety_service.py — service-level flags
-AudioSafetyService(
-    min_confidence_threshold = 0.30,
-    enable_llm_summary       = True,   # set False to skip Ollama entirely
-    enable_vector_storage    = True,   # set False to skip ChromaDB indexing
-)
+  -d '{"file_id": "1A2B3C...", "file_name": "chat.txt", "mime_type": "text/plain"}'
 ```
 
 ---
@@ -704,36 +752,37 @@ AudioSafetyService(
 ## How the Pipeline Works
 
 ```
-Audio File
-  └─► Faster-Whisper transcription
-        └─► Sentence splitting + speaker label parsing
-              └─► Regex pattern matching (20 categories)
-                    └─► Context classification (ContextType multiplier)
-                          └─► Negation filter (token-scoped ±5 tokens)
-                                └─► Joke filter (±2 sentence window)
-                                      └─► Confidence scoring
-                                            └─► ML zero-shot NLI (25% fusion weight)
-                                                  └─► Evidence grouping + deduplication
-                                                        └─► Weighted risk scoring (0–100)
-                                                              └─► Severity classification
-                                                                    └─► Rule summary + LLM summary
-                                                                          └─► PDF + MongoDB + S3 + ChromaDB
-                                                                                └─► Auto email alert (if High/Critical)
+Audio/Video/Transcript/Google Drive
+  └─► Faster-Whisper transcription (audio/video only)
+        └─► Leetspeak normalization (obfuscation removal)
+              └─► Sentence splitting + speaker label parsing
+                    └─► Regex pattern matching (20 categories)
+                          └─► Context classification (ContextType multiplier)
+                                └─► Negation filter (token-scoped ±5 tokens)
+                                      └─► Joke filter (±2 sentence window)
+                                            └─► Confidence scoring
+                                                  └─► ML zero-shot NLI (25% fusion weight)
+                                                        └─► Evidence grouping + deduplication
+                                                              └─► Weighted risk scoring (0–100)
+                                                                    └─► Temporal weighting (position + clustering)
+                                                                          └─► Severity classification
+                                                                                └─► Rule summary + LLM summary (validated)
+                                                                                      └─► PDF + MongoDB + S3 + ChromaDB
+                                                                                            └─► Auto email alert (if High/Critical)
+                                                                                                  └─► WebSocket progress notification
 ```
 
 ### Key design decisions
 
-**No role-based assumptions.** Speaker labels are stored for audit only. The same sentence scores identically regardless of who said it.
-
-**Token-scoped negation.** "I did not ask for your address" is negated. "I never lie but I want your address" is not — the negation word is too far from the matched phrase. Secrecy phrases like "nobody needs to know" are exempt because the negation is part of the threat.
-
-**Diminishing returns.** The first occurrence of any category gets full weight. Repeated occurrences are progressively down-weighted (50%, 25%, 12.5%, …) so a single repeated phrase cannot dominate the score.
-
-**Administrative suppression.** Sentences classified as `ADMINISTRATIVE` receive a −0.40 confidence multiplier, suppressing false positives from legitimate institutional language.
-
-**Graceful degradation.** MongoDB, S3, SMTP, and Ollama are all optional. A failure in any of them is logged as a warning and the pipeline continues. The core analysis always runs.
-
-**Background processing.** `/analyze` returns immediately with a record ID. The client polls `/report/{id}/status` until `COMPLETED`.
+- **No role-based assumptions** — speaker labels stored for audit only; same sentence scores identically regardless of speaker
+- **Leetspeak normalization** — catches obfuscated bypass attempts (m33t, s3cr3t, separator insertion) before pattern matching
+- **Token-scoped negation** — "I did not ask for your address" is negated; "I never lie but I want your address" is not
+- **Temporal weighting** — late-conversation findings score higher (escalation phase); clustering bonus for concentrated findings
+- **Diminishing returns** — repeated category occurrences progressively down-weighted
+- **Circuit breaker** — Ollama and S3 failures don't cascade; automatic recovery after cooldown
+- **Graceful degradation** — MongoDB, S3, SMTP, Ollama, Redis all optional; core analysis always runs
+- **Background processing** — all analysis runs via Celery tasks; client polls status or receives WebSocket updates
+- **Video privacy** — video files streamed in 1 MB chunks, deleted immediately after audio extraction
 
 ---
 
@@ -743,30 +792,26 @@ The React 19 dashboard has five routes:
 
 | Route | Page | Description |
 |---|---|---|
-| `/login` | Login | JWT login form — username + password with show/hide toggle; redirects to dashboard on success; public route (no auth required) |
-| `/` | Dashboard | Analysis history table with live search, sortable columns (filename, severity, risk score), and 4 stat cards — total analyses, average risk score, critical findings, high findings |
-| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio or video files) with real-time progress bar; polls status until complete then redirects to the report |
-| `/report/:id` | Report | Full analysis view — see tabs below |
-| `/google-drive` | Google Drive | Connect Google Drive via OAuth2, browse importable files, trigger imports, and manage the auto-watcher |
+| `/login` | Login | JWT login form with show/hide toggle; public route |
+| `/` | Dashboard | History table with live search, sortable columns, 4 stat cards, delete action |
+| `/upload` | Analyze Audio | Drag-and-drop upload (audio/video/transcript) with progress bar |
+| `/report/:id` | Report | Full analysis — 6 tabs + chatbot sidebar |
+| `/google-drive` | Google Drive | OAuth2 connect, file browser, import, watcher controls |
 
 ### Report Page Tabs
 
 | Tab | Contents |
 |---|---|
-| **Overview** | Risk ring (animated 0–100 gauge), severity badge, LLM summary, rule-based summary, category breakdown |
-| **Findings** | Grouped findings with confidence bars, matched text, context type, filter flags (negated / joke), ML label and agreement signal, scoring breakdown |
-| **Evidence Log** | Flat evidence list — timestamp, category badge, severity, speaker label, confidence, context type, base confidence, context multiplier |
-| **Timeline** | Scatter chart of findings over time — x-axis: timestamp, y-axis: confidence, colour-coded by category |
-| **Analytics** | Per-report charts — category distribution (bar), severity distribution (pie), confidence histogram (bar), context type distribution (bar), speaker distribution (bar), ML agreement rate |
-| **Raw Data** | Full JSON dump of the report object — useful for debugging |
-
-The chatbot sidebar is available on the Report page. It sends questions to `POST /chat` and displays the answer with source excerpts.
+| **Overview** | Risk ring (animated 0–100), severity badge, LLM summary, rule summary, category breakdown |
+| **Findings** | Grouped findings with confidence bars, matched text, context type, filter flags, ML agreement |
+| **Evidence Log** | Flat evidence list — timestamp, category, severity, speaker, confidence |
+| **Timeline** | Scatter chart — findings over time, colour-coded by category |
+| **Analytics** | Per-report charts — category, severity, confidence, context type, speaker, ML agreement |
+| **Raw Data** | Full JSON dump of the report object |
 
 ---
 
 ## Google Drive Integration
-
-Melody Wings Safety can connect to Google Drive to import `.txt` files and Google Docs directly as transcripts — no audio upload needed.
 
 ### Setup
 
@@ -774,91 +819,42 @@ Melody Wings Safety can connect to Google Drive to import `.txt` files and Googl
 2. Create a project → Enable **Google Drive API** and **Google Docs API**
 3. Create OAuth 2.0 credentials (type: Web application)
 4. Add `http://localhost:8000/api/v1/google-drive/callback` as an Authorized Redirect URI
-5. Copy the Client ID and Client Secret to `backend/.env`
-
-### Auth Flow
-
-```
-GET /api/v1/google-drive/auth-url   → returns consent URL
-# Open URL in browser, grant access
-GET /api/v1/google-drive/callback   → exchanges code for tokens (stored on disk)
-GET /api/v1/google-drive/status     → confirms authentication
-```
+5. Copy Client ID and Client Secret to `backend/.env`
+6. (Optional) Set `CREDENTIAL_ENCRYPTION_KEY` to encrypt stored tokens
 
 ### Auto-Watcher
 
-Set `DRIVE_AUTO_WATCH=true` in `.env` to automatically start polling Drive on server startup. The watcher checks for new files every `DRIVE_POLL_INTERVAL_SECONDS` (default: 120 s) and imports them automatically. Optionally restrict to a specific folder with `DRIVE_WATCH_FOLDER_ID`.
+Set `DRIVE_AUTO_WATCH=true` to automatically poll Drive for new files every `DRIVE_POLL_INTERVAL_SECONDS` (default 120s). Restrict to a folder with `DRIVE_WATCH_FOLDER_ID`.
+
+---
+
+## Security Features
+
+- **JWT authentication** with bcrypt-hashed passwords and httpOnly cookies
+- **Rate limiting** middleware (per-IP, configurable thresholds)
+- **Security headers** — CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- **CORS** locked to configured origins
+- **Virus scanning** via ClamAV (configurable fail-open/fail-closed)
+- **Credential encryption** — Google OAuth tokens encrypted at rest with Fernet
+- **Disk space pre-check** before accepting uploads
+- **Circuit breaker** prevents cascading failures from external services
+- **Request correlation IDs** (X-Request-ID header) for tracing
+- **Audit logging** — all actions tracked in MongoDB with TTL expiry
+- **Secure file handling** — UUID disk names, streaming uploads, size limits
+- **Database migrations** — versioned schema changes with JSON Schema validation
 
 ---
 
 ## Utility Scripts
 
-### `test_email.py` — Email Integration Test
-
-Verifies the full SMTP setup in 4 steps without needing a real audio file:
-
-```bash
-cd backend
-python test_email.py
-```
-
-1. **Config check** — validates `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_RECIPIENTS` are set
-2. **SMTP connection** — connects to the server, runs STARTTLS, authenticates
-3. **Alert email** — sends a real red-alert email with mock Critical findings
-4. **Summary email** — sends a real summary email with mock data
-
-Exits with a clear error message and fix instructions if any step fails. Use this before deploying to confirm email works end-to-end.
-
-### `debug_env.py` — SMTP Credential Debugger
-
-Low-level SMTP auth debugger for diagnosing Gmail App Password issues:
-
-```bash
-cd backend
-python debug_env.py
-```
-
-Prints the raw credential values (length, leading/trailing chars, presence of spaces or quotes) and attempts a direct `smtplib` login. Useful when `test_email.py` fails at the authentication step.
-
-### `test_pipeline.py` — Interactive CLI Tester
-
-```bash
-cd backend
-python test_pipeline.py
-```
-
-Runs any sentence or multi-line transcript through the full detection pipeline interactively. Each input prints a 4-section output:
-
-1. **Context classification** — matched ContextType(s) and multiplier
-2. **Filter results** — negation score, joke score, combined penalty
-3. **Per-category findings** — category, confidence, matched text, severity
-4. **Risk breakdown** — weighted score per category, total risk score, risk level
-
-```
-pipeline> keep this between us, nobody needs to know
-pipeline> age is just a number
-pipeline> I'll buy you whatever you want
-pipeline> clear          ← clears the screen
-```
-
-The tester uses a lower confidence threshold (0.15) than the API default (0.30) to surface borderline matches during development.
-
----
-
-## Running the Test Scripts
-
-```bash
-cd backend
-python examples/run_test_scripts.py
-```
-
-| Script | Risk Score | Severity | What it tests |
-|---|---|---|---|
-| `test_script_bad.txt` | 100 | CRITICAL | Grooming conversation — all categories triggered |
-| `test_script_medium.txt` | ~53 | MODERATE | Ambiguous online gaming chat — trust-building, routine probing, video call |
-| `test_script_good.txt` | 0 | LOW | Normal classroom exchange — zero findings |
-
-Set `ENABLE_ML = True` in `run_test_scripts.py` to include the ML classifier layer (~400 MB model download on first run).
+| Script | Description |
+|---|---|
+| `python test_pipeline.py` | Interactive CLI — run any text through the full detection pipeline |
+| `python test_email.py` | 4-step SMTP integration test (config → connect → alert → summary) |
+| `python debug_env.py` | Low-level SMTP credential debugger |
+| `python examples/run_test_scripts.py` | Run test scripts (bad/medium/good) through the pipeline |
+| `python create_admin.py` | Create or reset the admin user in MongoDB |
+| `python finetune_model.py` | Fine-tune the NLI model on custom grooming data |
 
 ---
 

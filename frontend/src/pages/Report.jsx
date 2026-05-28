@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -72,7 +72,7 @@ const EvidenceSkeleton = () => (
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-const TabButton = ({ active, onClick, icon: Icon, label, count }) => (
+const TabButton = memo(({ active, onClick, icon: Icon, label, count }) => (
   <button
     className={`report-tab-btn ${active ? 'active' : ''}`}
     onClick={onClick}
@@ -81,16 +81,16 @@ const TabButton = ({ active, onClick, icon: Icon, label, count }) => (
     <span>{label}</span>
     {count != null && <span className="tab-badge">{count}</span>}
   </button>
-);
+));
 
-const StatPill = ({ label, value, color }) => (
+const StatPill = memo(({ label, value, color }) => (
   <div className="stat-pill">
     <span className="stat-pill-label">{label}</span>
     <span className="stat-pill-value" style={{ color }}>{value}</span>
   </div>
-);
+));
 
-const ConfidenceBar = ({ value, color }) => (
+const ConfidenceBar = memo(({ value, color }) => (
   <div className="conf-bar-track">
     <div
       className="conf-bar-fill"
@@ -98,9 +98,9 @@ const ConfidenceBar = ({ value, color }) => (
     />
     <span className="conf-bar-label">{fmtPct(value)}</span>
   </div>
-);
+));
 
-const FindingCard = ({ finding, index }) => {
+const FindingCard = memo(({ finding, index }) => {
   const [expanded, setExpanded] = useState(false);
   const conf = finding.confidence || finding.max_confidence || 0;
   const color = getScoreColor(conf * 100);
@@ -262,7 +262,7 @@ const FindingCard = ({ finding, index }) => {
       )}
     </div>
   );
-};
+});
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 const Report = () => {
@@ -346,9 +346,52 @@ const Report = () => {
   }, [id]);
 
   if (loading) return (
-    <div className="report-loading">
-      <div className="loading-spinner" />
-      <span>Loading analysis report...</span>
+    <div className="report-wrapper animate-fade-in">
+      {/* Skeleton header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: 'var(--spacing-xl)' }}>
+        <div className="skeleton" style={{ width: 40, height: 40, borderRadius: 'var(--radius-sm)' }} />
+        <div>
+          <div className="skeleton" style={{ width: 220, height: 28, borderRadius: 6, marginBottom: 8 }} />
+          <div className="skeleton" style={{ width: 160, height: 14, borderRadius: 6 }} />
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.75rem' }}>
+          <div className="skeleton" style={{ width: 60, height: 36, borderRadius: 'var(--radius-full)' }} />
+          <div className="skeleton" style={{ width: 100, height: 36, borderRadius: 'var(--radius-full)' }} />
+          <div className="skeleton" style={{ width: 80, height: 36, borderRadius: 'var(--radius-full)' }} />
+        </div>
+      </div>
+      {/* Skeleton stats bar */}
+      <div className="glass-panel" style={{ padding: '1rem 1.5rem', marginBottom: 'var(--spacing-xl)', display: 'flex', gap: '2rem' }}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            <div className="skeleton" style={{ width: 60, height: 10, borderRadius: 4 }} />
+            <div className="skeleton" style={{ width: 40, height: 22, borderRadius: 6 }} />
+          </div>
+        ))}
+      </div>
+      {/* Skeleton tabs */}
+      <div className="glass-panel" style={{ padding: '0.5rem', marginBottom: 'var(--spacing-lg)', display: 'flex', gap: '0.5rem' }}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="skeleton" style={{ width: 90, height: 32, borderRadius: 'var(--radius-md)' }} />
+        ))}
+      </div>
+      {/* Skeleton content */}
+      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 'var(--spacing-xl)' }}>
+        <div className="glass-panel" style={{ padding: 'var(--spacing-xl)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+          <div className="skeleton" style={{ width: 180, height: 180, borderRadius: '50%' }} />
+          <div className="skeleton" style={{ width: 100, height: 14, borderRadius: 6 }} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-lg)' }}>
+          <div className="glass-panel" style={{ padding: 'var(--spacing-xl)' }}>
+            <div className="skeleton" style={{ width: 180, height: 16, borderRadius: 6, marginBottom: 12 }} />
+            <div className="skeleton" style={{ width: '100%', height: 60, borderRadius: 8 }} />
+          </div>
+          <div className="glass-panel" style={{ padding: 'var(--spacing-xl)' }}>
+            <div className="skeleton" style={{ width: 150, height: 16, borderRadius: 6, marginBottom: 12 }} />
+            <div className="skeleton" style={{ width: '100%', height: 60, borderRadius: 8 }} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 

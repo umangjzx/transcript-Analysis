@@ -64,30 +64,9 @@ from auth import get_current_user, authenticate_user, create_access_token
 os.makedirs("logs", exist_ok=True)
 os.makedirs("reports", exist_ok=True)
 
-from logging.handlers import RotatingFileHandler
-
-_log_max_bytes = int(os.getenv("LOG_MAX_SIZE_MB", "50")) * 1024 * 1024  # Default 50 MB
-_log_backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))  # Keep 5 rotated files
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    handlers=[
-        RotatingFileHandler(
-            "logs/app.log",
-            maxBytes=_log_max_bytes,
-            backupCount=_log_backup_count,
-            encoding="utf-8",
-        ),
-        logging.StreamHandler(),
-    ],
-)
-for _handler in logging.root.handlers:
-    if isinstance(_handler, logging.StreamHandler) and not isinstance(_handler, logging.FileHandler):
-        try:
-            _handler.stream = open(_handler.stream.fileno(), mode="w", encoding="utf-8", buffering=1)
-        except Exception:
-            pass
+# Use structured JSON logging in production, human-readable in development
+from modules.structured_logging import setup_logging
+setup_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +207,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # -- Pipeline components -------------------------------------------------------
 
-_enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "false").lower() == "true"
+_enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
 grooming_detector = GroomingDetector(
     min_confidence_threshold=0.3,
     enable_ml_classifier=_enable_ml,
@@ -327,16 +306,28 @@ async def startup_event():
     except Exception as _e:
         logger.warning(f"Database migration check failed (non-fatal): {_e}")
 
-    # Auto-start Drive watcher — now handled by Celery Beat periodic task
-    from modules.drive_watcher import AUTO_WATCH as _auto_watch
+    # Auto-start Drive watcher — start directly in-process for development
+    # In production, use Celery Beat (celery -A celery_app worker --beat --loglevel=info)
+    from modules.drive_watcher import AUTO_WATCH as _auto_watch, start_watcher as _start_watcher
     if _auto_watch:
-        logger.info("Google Drive auto-watcher configured (DRIVE_AUTO_WATCH=true) — run via Celery Beat")
+        _started = _start_watcher()
+        if _started:
+            logger.info("Google Drive auto-watcher STARTED (in-process polling thread)")
+        else:
+            logger.info("Google Drive auto-watcher already running")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Graceful shutdown — clean up resources."""
     logger.info("Audio Safety Analyzer shutting down...")
+
+    # Stop Drive watcher thread
+    from modules.drive_watcher import stop_watcher as _stop_watcher
+    try:
+        _stop_watcher()
+    except Exception:
+        pass
 
     # Stop WebSocket progress queue
     from modules.websocket_manager import _progress_queue
@@ -885,6 +876,30 @@ async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Re
 
     if len(transcript_text) > 500_000:
         raise HTTPException(status_code=413, detail="Transcript too large. Maximum 500,000 characters.")
+
+    # ── Transcript input validation ───────────────────────────────────────────
+    # Reject binary content (high ratio of non-printable characters)
+    _non_printable = sum(
+        1 for ch in transcript_text[:10000]
+        if ord(ch) < 32 and ch not in ('\n', '\r', '\t')
+    )
+    if _non_printable > len(transcript_text[:10000]) * 0.05:
+        raise HTTPException(
+            status_code=422,
+            detail="Input appears to be binary data, not a text transcript. "
+                   "Please submit plain text (UTF-8).",
+        )
+
+    # Reject lines exceeding max length (likely binary or minified data)
+    _MAX_LINE_LENGTH = 10_000
+    for i, line in enumerate(transcript_text.split('\n')[:100], 1):
+        if len(line) > _MAX_LINE_LENGTH:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Line {i} exceeds maximum length of {_MAX_LINE_LENGTH} characters. "
+                       f"Transcripts should contain natural-language text with line breaks.",
+            )
+    # ──────────────────────────────────────────────────────────────────────────
 
     from database.mongo import save_meeting_metadata as _save_meta
     record_id = next_meeting_id()

@@ -45,8 +45,10 @@ AWS_REGION            = os.getenv("AWS_REGION", "us-east-1")
 S3_BUCKET             = os.getenv("S3_BUCKET_NAME", "")
 
 # ── ML Classifier ─────────────────────────────────────────────────────────────
-# Set to "true" once the ~400 MB distilbert-mnli model has been downloaded.
-ENABLE_ML_CLASSIFIER = os.getenv("ENABLE_ML_CLASSIFIER", "false").lower() == "true"
+# Enabled by default — critical for detection accuracy.
+# The ~400 MB distilbert-mnli model is downloaded automatically on first run.
+# Set to "false" only if you need to skip ML inference (e.g. CI without GPU).
+ENABLE_ML_CLASSIFIER = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
 
 # ── Upload limits ─────────────────────────────────────────────────────────────
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))

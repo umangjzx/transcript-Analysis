@@ -1,15 +1,32 @@
-import React from 'react';
+import React, { Suspense, lazy, useState, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, Navigate, useNavigate } from 'react-router-dom';
-import { Shield, Home, UploadCloud, LogOut, HardDrive } from 'lucide-react';
-import Dashboard from './pages/Dashboard';
-import Upload from './pages/Upload';
-import Report from './pages/Report';
+import { Home, UploadCloud, LogOut, HardDrive, GitCompare, BarChart2 } from 'lucide-react';
 import Login from './pages/Login';
-import GoogleDrive from './pages/GoogleDrive';
 import ErrorBoundary from './components/ErrorBoundary';
-import { getToken, getStoredUser, logout } from './api';
+import { NotificationProvider, NotificationBell } from './components/NotificationProvider';
+import CommandPalette from './components/CommandPalette';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { getToken, getStoredUser, logout, getHistory } from './api';
 import { Toaster } from 'react-hot-toast';
 import './App.css';
+
+// ── Lazy-loaded page components ───────────────────────────────────────────────
+const Dashboard   = lazy(() => import('./pages/Dashboard'));
+const Upload      = lazy(() => import('./pages/Upload'));
+const Report      = lazy(() => import('./pages/Report'));
+const GoogleDrive = lazy(() => import('./pages/GoogleDrive'));
+const Compare     = lazy(() => import('./pages/Compare'));
+const Analytics   = lazy(() => import('./pages/Analytics'));
+
+// ── Loading fallback ──────────────────────────────────────────────────────────
+const PageLoader = () => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+    <div style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
+      <div className="spinner" style={{ width: 32, height: 32, border: '3px solid var(--border-color)', borderTopColor: 'var(--accent-primary)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 1rem' }} />
+      <p>Loading...</p>
+    </div>
+  </div>
+);
 
 // ── Navigation bar ────────────────────────────────────────────────────────────
 
@@ -41,6 +58,12 @@ const Navigation = () => {
         <Link to="/google-drive" className={`nav-link ${isActive('/google-drive')}`}>
           <HardDrive size={18} /> Google Drive
         </Link>
+        <Link to="/analytics" className={`nav-link ${isActive('/analytics')}`}>
+          <BarChart2 size={18} /> Analytics
+        </Link>
+        <Link to="/compare" className={`nav-link ${isActive('/compare')}`}>
+          <GitCompare size={18} /> Compare
+        </Link>
       </div>
 
       <div className="navbar-actions">
@@ -57,6 +80,9 @@ const Navigation = () => {
             {user.username}
           </span>
         )}
+
+        {/* Notification Bell */}
+        <NotificationBell />
 
         <button
           className="btn-icon"
@@ -83,6 +109,41 @@ const ProtectedRoute = ({ children }) => {
   return token ? children : <Navigate to="/login" replace />;
 };
 
+// ── App Shell with Keyboard Shortcuts ─────────────────────────────────────────
+
+const AppShell = ({ children }) => {
+  const navigate = useNavigate();
+  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
+  const [reports, setReports] = useState([]);
+
+  // Load reports for command palette search
+  const loadReports = useCallback(() => {
+    getHistory(0, 100).then((data) => {
+      setReports(Array.isArray(data) ? data : data?.reports || []);
+    }).catch(() => {});
+  }, []);
+
+  // Load on mount
+  React.useEffect(() => { loadReports(); }, [loadReports]);
+
+  useKeyboardShortcuts({
+    onSearch: () => setCmdPaletteOpen(true),
+    onNewAnalysis: () => navigate('/upload'),
+    onEscape: () => setCmdPaletteOpen(false),
+  });
+
+  return (
+    <>
+      {children}
+      <CommandPalette
+        open={cmdPaletteOpen}
+        onClose={() => setCmdPaletteOpen(false)}
+        reports={reports}
+      />
+    </>
+  );
+};
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 function App() {
@@ -96,19 +157,27 @@ function App() {
         {/* Protected — everything else */}
         <Route path="*" element={
           <ProtectedRoute>
-            <div className="app-container">
-              <Navigation />
-              <main className="main-content">
-                <ErrorBoundary>
-                  <Routes>
-                    <Route path="/"              element={<Dashboard />} />
-                    <Route path="/upload"        element={<Upload />} />
-                    <Route path="/report/:id"    element={<Report />} />
-                    <Route path="/google-drive"  element={<GoogleDrive />} />
-                  </Routes>
-                </ErrorBoundary>
-              </main>
-            </div>
+            <NotificationProvider>
+              <AppShell>
+                <div className="app-container">
+                  <Navigation />
+                  <main className="main-content">
+                    <ErrorBoundary>
+                      <Suspense fallback={<PageLoader />}>
+                        <Routes>
+                          <Route path="/"              element={<Dashboard />} />
+                          <Route path="/upload"        element={<Upload />} />
+                          <Route path="/report/:id"    element={<Report />} />
+                          <Route path="/google-drive"  element={<GoogleDrive />} />
+                          <Route path="/compare"       element={<Compare />} />
+                          <Route path="/analytics"     element={<Analytics />} />
+                        </Routes>
+                      </Suspense>
+                    </ErrorBoundary>
+                  </main>
+                </div>
+              </AppShell>
+            </NotificationProvider>
           </ProtectedRoute>
         } />
       </Routes>

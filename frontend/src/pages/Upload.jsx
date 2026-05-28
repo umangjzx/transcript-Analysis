@@ -13,7 +13,9 @@ const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
 const MAX_VIDEO_MB = 500;
 const MAX_VIDEO_BYTES = MAX_VIDEO_MB * 1024 * 1024;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
-const POLL_INTERVAL_MS = 3000;
+const POLL_INITIAL_INTERVAL_MS = 2000;
+const POLL_MAX_INTERVAL_MS = 30000;
+const POLL_BACKOFF_FACTOR = 1.5;
 
 const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
 const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv'];
@@ -176,9 +178,10 @@ const Upload = () => {
 
   const pollUntilDone = (resultId, progressInterval) => {
     const pollStart = Date.now();
-    const pollInterval = setInterval(async () => {
+    let currentInterval = POLL_INITIAL_INTERVAL_MS;
+
+    const poll = async () => {
       if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
-        clearInterval(pollInterval);
         clearInterval(progressInterval);
         setError(
           'Analysis is taking longer than expected. ' +
@@ -190,13 +193,11 @@ const Upload = () => {
       try {
         const statusResult = await getReportStatus(resultId);
         if (statusResult.status === 'COMPLETED') {
-          clearInterval(pollInterval);
           clearInterval(progressInterval);
           setProgress(100);
           setStatusMsg('Complete! Redirecting…');
           setTimeout(() => navigate(`/report/${resultId}`), 600);
         } else if (statusResult.status === 'FAILED') {
-          clearInterval(pollInterval);
           clearInterval(progressInterval);
           const backendMsg = statusResult.error_message;
           const niceMsg = backendMsg
@@ -204,14 +205,19 @@ const Upload = () => {
             : 'Analysis failed on the server. Please try again or contact an administrator with the report ID.';
           setError(niceMsg);
           setIsProcessing(false);
+        } else {
+          // Schedule next poll with exponential backoff
+          currentInterval = Math.min(currentInterval * POLL_BACKOFF_FACTOR, POLL_MAX_INTERVAL_MS);
+          setTimeout(poll, currentInterval);
         }
       } catch {
-        clearInterval(pollInterval);
         clearInterval(progressInterval);
         setError('Lost connection to server while checking status. Check the Dashboard for results.');
         setIsProcessing(false);
       }
-    }, POLL_INTERVAL_MS);
+    };
+
+    setTimeout(poll, currentInterval);
   };
 
   // ── Submit handlers ────────────────────────────────────────────────────────

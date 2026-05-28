@@ -4,33 +4,135 @@ import axios from 'axios';
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
+  withCredentials: true, // Send httpOnly cookies with every request
 });
 
-// ── Auth token helpers ────────────────────────────────────────────────────────
+// ── AbortController management ────────────────────────────────────────────────
+// Track active requests so they can be cancelled on unmount or navigation.
 
-export const getToken = () => localStorage.getItem('auth_token');
+const _activeControllers = new Map();
+
+/**
+ * Create a cancellable request config with AbortController.
+ * @param {string} key - Unique key for this request (used to cancel previous)
+ * @returns {{ signal: AbortSignal, cancel: () => void }}
+ */
+export const createCancellable = (key) => {
+  // Cancel any existing request with the same key
+  if (_activeControllers.has(key)) {
+    _activeControllers.get(key).abort();
+  }
+  const controller = new AbortController();
+  _activeControllers.set(key, controller);
+  return {
+    signal: controller.signal,
+    cancel: () => {
+      controller.abort();
+      _activeControllers.delete(key);
+    },
+  };
+};
+
+/**
+ * Cancel all active requests (e.g., on logout or navigation).
+ */
+export const cancelAllRequests = () => {
+  for (const [key, controller] of _activeControllers) {
+    controller.abort();
+  }
+  _activeControllers.clear();
+};
+
+// ── Auth token helpers ────────────────────────────────────────────────────────
+// JWT is stored in sessionStorage and sent as a Bearer header.
+// The httpOnly cookie is also set by the server as a fallback.
+
+/**
+ * Decode a JWT payload without verification (client-side expiry check only).
+ * Returns null if the token is malformed.
+ */
+const _decodeJwtPayload = (token) => {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Check if a JWT token is expired or about to expire (within 60s buffer).
+ * Returns true if the token is still valid.
+ */
+const _isTokenValid = (token) => {
+  if (!token) return false;
+  const payload = _decodeJwtPayload(token);
+  if (!payload || !payload.exp) return false;
+  // Add 60-second buffer to prevent edge-case 401s
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return payload.exp > nowSeconds + 60;
+};
+
+export const getToken = () => {
+  const token = sessionStorage.getItem('access_token') || null;
+  if (token && !_isTokenValid(token)) {
+    // Token expired — clear auth proactively to prevent 401 redirect loops
+    clearAuth();
+    return null;
+  }
+  return token;
+};
+
 export const getStoredUser = () => {
   try { return JSON.parse(localStorage.getItem('auth_user') || 'null'); }
   catch { return null; }
 };
 
 export const saveAuth = (token, user) => {
-  localStorage.setItem('auth_token', token);
+  if (token) sessionStorage.setItem('access_token', token);
   localStorage.setItem('auth_user', JSON.stringify(user));
 };
 
 export const clearAuth = () => {
-  localStorage.removeItem('auth_token');
+  sessionStorage.removeItem('access_token');
   localStorage.removeItem('auth_user');
   // Legacy key cleanup
+  localStorage.removeItem('auth_token');
   localStorage.removeItem('isAuthenticated');
 };
 
-// ── Attach JWT to every request ───────────────────────────────────────────────
+// ── Cross-tab auth synchronization ───────────────────────────────────────────
+// Listen for auth changes in other tabs via localStorage events.
+// When one tab logs out, all tabs redirect to login.
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === 'auth_user' && event.newValue === null) {
+      // Another tab logged out — clear local state and redirect
+      sessionStorage.removeItem('access_token');
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
+    }
+    if (event.key === 'auth_user' && event.newValue && !getToken()) {
+      // Another tab logged in — reload to pick up the session
+      window.location.reload();
+    }
+  });
+}
+
+// ── Attach credentials to every request ───────────────────────────────────────
+// JWT is sent as a Bearer token in the Authorization header.
+// The httpOnly cookie is also sent as a fallback (withCredentials: true).
 
 api.interceptors.request.use((config) => {
+  // Attach JWT Bearer token
   const token = getToken();
-  if (token) config.headers['Authorization'] = `Bearer ${token}`;
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+  }
 
   // Legacy X-API-Key support (if set in frontend .env)
   const apiKey = import.meta.env?.VITE_API_KEY;
@@ -59,21 +161,25 @@ api.interceptors.response.use(
 
 /**
  * Log in with username + password.
- * Stores the JWT and user info in localStorage on success.
+ * The server returns a JWT in the response body and also sets an httpOnly cookie.
+ * We store the token in sessionStorage for Bearer header auth.
  */
 export const login = async (username, password) => {
   // Auth routes are on the root backend, not under /api/v1
-  const response = await axios.post('/auth/login', { username, password });
+  const response = await axios.post('/auth/login', { username, password }, {
+    withCredentials: true, // Receive the httpOnly cookie
+  });
   const { access_token, username: user, role } = response.data;
   saveAuth(access_token, { username: user, role });
   return response.data;
 };
 
 /**
- * Log out — clears local storage and notifies the server (fire-and-forget).
+ * Log out — server clears the httpOnly cookie, we clear localStorage.
  */
 export const logout = async () => {
-  try { await api.post('/auth/logout'); } catch { /* ignore */ }
+  cancelAllRequests(); // Cancel all in-flight API requests
+  try { await axios.post('/auth/logout', {}, { withCredentials: true }); } catch { /* ignore */ }
   clearAuth();
 };
 
@@ -84,23 +190,29 @@ export const logout = async () => {
  * Returns { reports: [...], total, skip, limit }
  * Falls back gracefully if the server returns a plain array (legacy).
  */
-export const getHistory = async (skip = 0, limit = 100) => {
-  const response = await api.get('/history', { params: { skip, limit } });
+export const getHistory = async (skip = 0, limit = 20, signal = null) => {
+  const config = { params: { skip, limit } };
+  if (signal) config.signal = signal;
+  const response = await api.get('/history', config);
   const data = response.data;
-  // Handle both new paginated shape { reports, total } and legacy plain array
-  if (Array.isArray(data)) return data;
-  return data.reports ?? data;
+  // Return full paginated shape for server-side pagination
+  if (Array.isArray(data)) return { reports: data, total: data.length };
+  return data;
 };
 
 // ── Report ────────────────────────────────────────────────────────────────────
 
-export const getReport = async (id) => {
-  const response = await api.get(`/report/${id}`);
+export const getReport = async (id, signal = null) => {
+  const config = {};
+  if (signal) config.signal = signal;
+  const response = await api.get(`/report/${id}`, config);
   return response.data;
 };
 
-export const getReportStatus = async (id) => {
-  const response = await api.get(`/report/${id}/status`);
+export const getReportStatus = async (id, signal = null) => {
+  const config = {};
+  if (signal) config.signal = signal;
+  const response = await api.get(`/report/${id}/status`, config);
   return response.data;
 };
 
@@ -183,8 +295,19 @@ export const getChatbotAnswer = async (reportId, question) => {
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
-export const getAnalyticsSummary = async () => {
-  const response = await api.get('/analytics/summary');
+export const getAnalyticsSummary = async (signal = null) => {
+  const config = {};
+  if (signal) config.signal = signal;
+  const response = await api.get('/analytics/summary', config);
+  return response.data;
+};
+
+/**
+ * Get LLM-generated insights explaining the analytics data.
+ * Uses Ollama on the backend — may take 10-30s on first call.
+ */
+export const getAnalyticsInsights = async () => {
+  const response = await api.post('/analytics/insights', {}, { timeout: 120_000 });
   return response.data;
 };
 
@@ -215,6 +338,43 @@ export const deleteReport = async (id) => {
     console.error(`[deleteReport] Failed:`, err?.response?.status, err?.response?.data, err?.message);
     throw err;
   }
+};
+
+/**
+ * Bulk delete multiple reports.
+ * @param {number[]} ids - Array of report IDs to delete
+ * @returns {Promise<{deleted: number[], failed: number[]}>}
+ */
+export const bulkDeleteReports = async (ids) => {
+  const results = { deleted: [], failed: [] };
+  // Delete sequentially to avoid overwhelming the server
+  for (const id of ids) {
+    try {
+      await api.delete(`/report/${id}`);
+      results.deleted.push(id);
+    } catch {
+      results.failed.push(id);
+    }
+  }
+  return results;
+};
+
+/**
+ * Export reports data as CSV.
+ * @param {Array} reports - Array of report objects
+ * @returns {string} CSV content
+ */
+export const exportReportsCSV = (reports) => {
+  const headers = ['ID', 'Filename', 'Risk Score', 'Severity', 'Status', 'Date'];
+  const rows = reports.map((r) => [
+    r.id,
+    `"${(r.filename || '').replace(/"/g, '""')}"`,
+    r.risk_score?.toFixed(1) || '0',
+    r.severity || 'Unknown',
+    r.status || 'Unknown',
+    r.created_at || '',
+  ]);
+  return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
 };
 
 // ── PDF download ──────────────────────────────────────────────────────────────

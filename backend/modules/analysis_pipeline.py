@@ -65,7 +65,7 @@ def run_analysis_pipeline(
     from modules.websocket_manager import notify_progress
     notify_progress(record_id, "started", 0, f"Analysis started for {filename}")
 
-    enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "false").lower() == "true"
+    enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
     enable_llm = os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
 
     grooming_detector = GroomingDetector(

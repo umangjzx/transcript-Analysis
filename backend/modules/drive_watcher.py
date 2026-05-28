@@ -87,8 +87,7 @@ def _is_seen(file_id: str) -> bool:
 def _poll_once() -> None:
     """
     Single poll cycle:
-    - Query Drive for files modified in the last POLL_INTERVAL * 2 seconds
-      (double the interval to avoid missing files on slow polls)
+    - Query Drive for ALL .txt / Google Docs files (not trashed)
     - Skip already-seen files (tracked in MongoDB drive_watcher_seen)
     - Import new ones into the analysis pipeline
     """
@@ -99,18 +98,13 @@ def _poll_once() -> None:
         logger.debug("[DriveWatcher] Not authenticated — skipping poll.")
         return
 
-    # Build query: files modified in the last POLL_INTERVAL * 2 seconds
-    # Subtract the lookback window so we catch files added since the last poll
-    from datetime import timedelta
-    lookback_seconds = _get_poll_interval() * 2
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=lookback_seconds)
-    # RFC 3339 format required by Drive API
-    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
-
+    # Query ALL .txt / Google Docs files in Drive (not trashed).
+    # The _is_seen() check prevents re-processing — no need for a modifiedTime
+    # cutoff which was causing files uploaded before the watcher started to be missed.
     mime_filter = (
         "(mimeType='text/plain' or mimeType='application/vnd.google-apps.document')"
     )
-    query = f"{mime_filter} and trashed=false and modifiedTime > '{cutoff_str}'"
+    query = f"{mime_filter} and trashed=false"
 
     # Optionally restrict to a specific folder
     if WATCH_FOLDER_ID:

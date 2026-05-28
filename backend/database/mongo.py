@@ -134,6 +134,9 @@ def _ensure_indexes(db) -> None:
             expireAfterSeconds=processing_ttl_days * 86400,
             name="ttl_processing_status_updated_at",
         )
+        # Dead letter queue — index for status-based queries and replay
+        db["dead_letter_queue"].create_index([("status", ASCENDING)])
+        db["dead_letter_queue"].create_index([("failed_at", DESCENDING)])
     except Exception as e:
         logger.warning(f"MongoDB index creation warning: {e}")
 

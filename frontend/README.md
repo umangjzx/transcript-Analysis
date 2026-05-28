@@ -8,9 +8,9 @@ React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection
 
 | Route | Page | Description |
 |---|---|---|
-| `/login` | Login | JWT login form — username + password with show/hide toggle; auto-redirects to dashboard if already authenticated; public route |
+| `/login` | Login | JWT login form — username + password with show/hide toggle; auto-redirects if authenticated; public route |
 | `/` | Dashboard | Analysis history table with live search, sortable columns, 4 stat cards, and delete action |
-| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio, video, or `.txt` transcript) with real-time progress bar; polls status until complete then redirects to the report |
+| `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio, video, or `.txt` transcript) with real-time progress bar; polls status until complete then redirects to report |
 | `/report/:id` | Report | Full analysis view — 6 tabs + chatbot sidebar (see below) |
 | `/google-drive` | Google Drive | Connect Google Drive via OAuth2, browse importable `.txt` and Google Docs files, trigger imports, and manage the auto-watcher |
 
@@ -20,7 +20,7 @@ React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection
 |---|---|
 | **Overview** | Risk ring (animated 0–100 gauge), severity badge, LLM summary, rule-based summary, category breakdown |
 | **Findings** | Grouped findings with confidence bars, matched text, context type, filter flags (negated / joke), ML label and agreement signal, scoring breakdown |
-| **Evidence Log** | Flat evidence list — timestamp, category badge, severity, speaker label, confidence, context type, base confidence, context multiplier |
+| **Evidence Log** | Flat evidence list — timestamp, category badge, severity, speaker label, confidence, context type |
 | **Timeline** | Scatter chart of findings over time — x-axis: timestamp, y-axis: confidence, colour-coded by category |
 | **Analytics** | Per-report charts — category distribution (bar), severity distribution (pie), confidence histogram (bar), context type distribution (bar), speaker distribution (bar), ML agreement rate |
 | **Raw Data** | Full JSON dump of the report object — useful for debugging |
@@ -31,16 +31,8 @@ React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection
 
 | Component | Description |
 |---|---|
-| `Chatbot.jsx` | AI chatbot sidebar on the Report page — sends questions to `POST /chat` and displays the answer with source excerpts |
-| `ErrorBoundary.jsx` | React error boundary wrapping all routes — catches render errors and shows a fallback UI |
-
-| Page | Description |
-|---|---|
-| `Dashboard.jsx` | History table with live search, sortable columns, stat cards, and delete action |
-| `Upload.jsx` | Drag-and-drop audio/video/transcript upload with progress bar and status polling |
-| `Report.jsx` | 6-tab analysis report with chatbot sidebar |
-| `Login.jsx` | JWT login form — username/password with show/hide toggle, error display, loading state |
-| `GoogleDrive.jsx` | Google Drive OAuth2 connect flow, file browser, import trigger, and watcher controls |
+| `Chatbot.jsx` | AI chatbot sidebar on the Report page — sends questions to `POST /chat`, displays answer with source excerpts |
+| `ErrorBoundary.jsx` | React error boundary wrapping all routes — catches render errors, shows fallback UI |
 
 ---
 
@@ -89,7 +81,7 @@ Shows the logged-in username, logout button, and avatar initials.
 | React Router | 7 | Client-side routing |
 | Axios | 1.x | HTTP client — `src/api.js` |
 | Recharts | 3.x | Bar, pie, scatter charts |
-| Lucide React | 1.x | Icons |
+| Lucide React | 1.x | Icons (Home, UploadCloud, HardDrive, LogOut, Shield) |
 | react-hot-toast | 2.x | Toast notifications (Dashboard, Report, Google Drive) |
 
 ---
@@ -101,25 +93,27 @@ Two Axios patterns:
 - **`/api/v1` client** — `baseURL: '/api/v1'` for analysis, reports, Drive (proxied; see below)
 - **Root auth** — `POST /auth/login` uses a direct `axios.post('/auth/login')` (no `/api/v1` prefix)
 
+### Functions
+
 | Function | Method | Description |
 |---|---|---|
-| `login(username, password)` | `POST /auth/login` | Authenticates; stores JWT + `{ username, role }` |
-| `logout()` | `POST /auth/logout` | Clears `localStorage` after optional server call |
+| `login(username, password)` | `POST /auth/login` | Authenticates; stores JWT + user info |
+| `logout()` | `POST /auth/logout` | Clears localStorage after server call |
 | `getToken()` | — | Returns stored JWT or `null` |
 | `getStoredUser()` | — | Returns `{ username, role }` or `null` |
 | `getHistory(skip, limit)` | `GET /history` | Paginated analysis history |
 | `getReport(id)` | `GET /report/:id` | Full report object |
-| `getReportStatus(id)` | `GET /report/:id/status` | Poll `PROCESSING` / `COMPLETED` / `FAILED` |
-| `uploadAudio(file, onProgress)` | `POST /analyze` | Upload audio (10 min timeout) → background job on server |
+| `getReportStatus(id)` | `GET /report/:id/status` | Poll PROCESSING / COMPLETED / FAILED |
+| `uploadAudio(file, onProgress)` | `POST /analyze` | Upload audio (10 min timeout) |
 | `uploadVideo(file, onProgress)` | `POST /analyze/video` | Upload video (30 min timeout) |
 | `analyzeTranscript(transcript, filename)` | `POST /analyze/transcript` | JSON body transcript |
-| `uploadTranscriptFile(file, onProgress)` | `POST /analyze/transcript` | Multipart `.txt` upload |
+| `uploadTranscriptFile(file, onProgress)` | `POST /analyze/transcript` | Multipart .txt upload |
 | `getChatbotAnswer(reportId, question)` | `POST /chat` | RAG chatbot (2 min timeout) |
 | `getAnalyticsSummary()` | `GET /analytics/summary` | Cross-report aggregation |
-| `sendAlertEmail(reportId, recipients)` | `POST /notify/alert/:id` | Send / re-send alert email |
+| `sendAlertEmail(reportId, recipients)` | `POST /notify/alert/:id` | Send alert email |
 | `sendSummaryEmail(reportId, recipients)` | `POST /notify/summary/:id` | Send summary email |
-| `deleteReport(id)` | `DELETE /report/:id` | Delete report + PDF + S3 (proxied to root route) |
-| `downloadPdfUrl(reportId)` | — | Returns `/api/v1/report/{id}/pdf` URL |
+| `deleteReport(id)` | `DELETE /report/:id` | Delete report + PDF + S3 |
+| `downloadPdfUrl(reportId)` | — | Returns PDF download URL |
 | `getDriveAuthUrl()` | `GET /google-drive/auth-url` | Google OAuth consent URL |
 | `getDriveStatus()` | `GET /google-drive/status` | Drive connection status |
 | `getDriveFiles(pageSize, search)` | `GET /google-drive/files` | List importable files |
@@ -129,7 +123,7 @@ Two Axios patterns:
 | `startDriveWatcher()` | `POST /google-drive/watcher/start` | Start auto-import |
 | `stopDriveWatcher()` | `POST /google-drive/watcher/stop` | Stop auto-import |
 
-Set `VITE_API_KEY` in `frontend/.env` to attach an `X-API-Key` header on every request (when `API_KEY` is set in `backend/.env`).
+Set `VITE_API_KEY` in `frontend/.env` to attach an `X-API-Key` header on every request.
 
 ---
 
@@ -163,6 +157,20 @@ Upload flows call proxied `/api/v1/analyze` (→ backend `/analyze`, **backgroun
 
 ---
 
+## Key Features
+
+- **Lazy-loaded pages** — Dashboard, Upload, Report, and GoogleDrive are loaded on demand via `React.lazy()`
+- **Error boundary** — catches render errors and shows a fallback UI
+- **Protected routes** — `ProtectedRoute` component checks for JWT before rendering
+- **Toast notifications** — success/error feedback via react-hot-toast
+- **Responsive navigation** — brand logo, nav links, username badge, logout button, avatar
+- **Real-time progress** — Upload page polls `/report/{id}/status` until analysis completes
+- **Chatbot sidebar** — available on Report page for per-report Q&A
+- **Google Drive integration** — OAuth2 connect flow, file browser with search, import trigger, watcher controls
+- **Delete action** — Dashboard supports report deletion with confirmation
+
+---
+
 ## Environment Variables
 
 Create `frontend/.env` to override defaults:
@@ -172,3 +180,14 @@ VITE_API_KEY=your-api-key   # optional — must match API_KEY in backend/.env
 ```
 
 For JWT login, set `JWT_SECRET` in `backend/.env` and run `python create_admin.py` once.
+
+---
+
+## Build
+
+```bash
+npm run build     # outputs to dist/
+npm run preview   # serve the production build locally
+```
+
+The production build can be served by any static file server (nginx, Vercel, Netlify, S3+CloudFront). Configure the reverse proxy to forward `/api/v1/*` and `/auth/*` to the backend.

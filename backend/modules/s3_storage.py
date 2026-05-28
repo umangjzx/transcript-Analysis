@@ -324,6 +324,45 @@ def upload_backup(
 
 # ── Presigned URL ─────────────────────────────────────────────────────────────
 
+def _extract_s3_key(s3_url: str) -> Optional[str]:
+    """
+    Extract the S3 object key from a URL. Handles multiple URL formats:
+      - https://bucket.s3.region.amazonaws.com/key
+      - https://s3.region.amazonaws.com/bucket/key
+      - s3://bucket/key
+    Returns None if the URL is malformed or cannot be parsed.
+    """
+    if not s3_url or not isinstance(s3_url, str):
+        return None
+    s3_url = s3_url.strip()
+
+    try:
+        # Format: s3://bucket/key
+        if s3_url.startswith("s3://"):
+            parts = s3_url[5:].split("/", 1)
+            return parts[1] if len(parts) > 1 and parts[1] else None
+
+        # Format: https://bucket.s3.region.amazonaws.com/key
+        if ".amazonaws.com/" in s3_url:
+            key = s3_url.split(".amazonaws.com/", 1)[1]
+            return key if key else None
+
+        # Format: https://s3.region.amazonaws.com/bucket/key
+        if "s3." in s3_url and "amazonaws.com" in s3_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(s3_url)
+            path = parsed.path.lstrip("/")
+            # path = "bucket/key" — skip bucket name
+            parts = path.split("/", 1)
+            return parts[1] if len(parts) > 1 and parts[1] else None
+
+        logger.warning(f"S3: Unrecognized URL format: {s3_url[:100]}")
+        return None
+    except Exception as e:
+        logger.warning(f"S3: Failed to parse URL '{s3_url[:100]}': {e}")
+        return None
+
+
 def get_presigned_url(s3_url: str, expires_in: int = 3600) -> Optional[str]:
     """
     Generate a presigned download URL from a stored S3 URL.
@@ -335,9 +374,12 @@ def get_presigned_url(s3_url: str, expires_in: int = 3600) -> Optional[str]:
     if s3 is None or not bucket or not s3_url:
         return None
 
-    # Extract key from URL: https://bucket.s3.region.amazonaws.com/<key>
+    key = _extract_s3_key(s3_url)
+    if not key:
+        logger.warning(f"S3 presigned URL failed: could not extract key from '{s3_url[:100]}'")
+        return None
+
     try:
-        key = s3_url.split(".amazonaws.com/", 1)[1]
         url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": key},
@@ -358,8 +400,13 @@ def delete_file(s3_url: str) -> bool:
 
     if s3 is None or not bucket or not s3_url:
         return False
+
+    key = _extract_s3_key(s3_url)
+    if not key:
+        logger.warning(f"S3 delete failed: could not extract key from '{s3_url[:100]}'")
+        return False
+
     try:
-        key = s3_url.split(".amazonaws.com/", 1)[1]
         s3.delete_object(Bucket=bucket, Key=key)
         logger.info(f"S3 deleted: {key}")
         return True

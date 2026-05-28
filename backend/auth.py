@@ -137,16 +137,112 @@ def create_user(username: str, plaintext_password: str, role: str = "admin") -> 
     return True
 
 
+# ── Account Lockout ───────────────────────────────────────────────────────────
+
+# Max failed login attempts before lockout
+LOCKOUT_MAX_ATTEMPTS = int(os.getenv("LOCKOUT_MAX_ATTEMPTS", "5"))
+# Lockout duration in minutes
+LOCKOUT_DURATION_MINUTES = int(os.getenv("LOCKOUT_DURATION_MINUTES", "15"))
+
+
+def _get_failed_attempts(username: str) -> dict:
+    """Get the failed login attempts record for a user."""
+    col = _users_col()
+    if col is None:
+        return {"attempts": 0, "locked_until": None}
+    try:
+        record = col.find_one(
+            {"username": username},
+            {"failed_attempts": 1, "locked_until": 1, "_id": 0}
+        )
+        if not record:
+            return {"attempts": 0, "locked_until": None}
+        return {
+            "attempts": record.get("failed_attempts", 0),
+            "locked_until": record.get("locked_until"),
+        }
+    except Exception:
+        return {"attempts": 0, "locked_until": None}
+
+
+def _record_failed_attempt(username: str) -> int:
+    """Increment failed login attempts. Returns new count."""
+    col = _users_col()
+    if col is None:
+        return 0
+    try:
+        result = col.find_one_and_update(
+            {"username": username},
+            {
+                "$inc": {"failed_attempts": 1},
+                "$set": {"last_failed_at": datetime.now(timezone.utc)},
+            },
+            return_document=True,
+        )
+        new_count = result.get("failed_attempts", 1) if result else 1
+        # Lock the account if threshold exceeded
+        if new_count >= LOCKOUT_MAX_ATTEMPTS:
+            lock_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+            col.update_one(
+                {"username": username},
+                {"$set": {"locked_until": lock_until}},
+            )
+            logger.warning(
+                f"Account '{username}' locked for {LOCKOUT_DURATION_MINUTES} min "
+                f"after {new_count} failed attempts"
+            )
+        return new_count
+    except Exception as e:
+        logger.warning(f"Failed to record login attempt: {e}")
+        return 0
+
+
+def _reset_failed_attempts(username: str) -> None:
+    """Reset failed login attempts on successful login."""
+    col = _users_col()
+    if col is None:
+        return
+    try:
+        col.update_one(
+            {"username": username},
+            {"$set": {"failed_attempts": 0, "locked_until": None}},
+        )
+    except Exception:
+        pass
+
+
 def authenticate_user(username: str, password: str) -> Optional[dict]:
     """
-    Verify credentials against MongoDB.
+    Verify credentials against MongoDB with account lockout protection.
     Returns the user document on success, None on failure.
+    Raises HTTPException 423 if the account is locked.
     """
+    # Check lockout status
+    lockout_info = _get_failed_attempts(username)
+    locked_until = lockout_info.get("locked_until")
+    if locked_until and isinstance(locked_until, datetime):
+        if datetime.now(timezone.utc) < locked_until:
+            remaining = int((locked_until - datetime.now(timezone.utc)).total_seconds() / 60) + 1
+            raise HTTPException(
+                status_code=423,
+                detail=f"Account locked due to too many failed attempts. "
+                       f"Try again in {remaining} minute(s).",
+            )
+        else:
+            # Lockout expired — reset
+            _reset_failed_attempts(username)
+
     user = get_user(username)
     if not user:
+        # Still record attempt to prevent username enumeration timing attacks
+        _record_failed_attempt(username)
         return None
     if not verify_password(password, user.get("password_hash", "")):
+        _record_failed_attempt(username)
         return None
+
+    # Success — reset failed attempts
+    _reset_failed_attempts(username)
     return user
 
 

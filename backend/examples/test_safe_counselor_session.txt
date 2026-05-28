@@ -1,0 +1,25 @@
+Counselor: Hi Tyler, come on in. How are you doing today?
+Student: I'm okay I guess.
+Counselor: You seem a bit down. Want to talk about what's going on?
+Student: It's just stuff at home. My parents are fighting a lot.
+Counselor: I'm sorry to hear that. That must be really stressful for you. You can talk to me about anything, this is a safe space.
+Student: Thanks. I just don't know what to do.
+Counselor: First, I want you to know that what's happening between your parents is not your fault. Do you feel safe at home?
+Student: Yeah, they're not like violent or anything. They just yell a lot.
+Counselor: That's still hard to deal with. How is it affecting your schoolwork?
+Student: I can't concentrate. I failed my math test last week.
+Counselor: That's understandable. Let me talk to your math teacher about maybe retaking that test. Would that help?
+Student: Yeah, that would be great.
+Counselor: I also want to make sure you have support. Do you have friends you can talk to about this?
+Student: Not really. I don't want people to know about my family stuff.
+Counselor: I understand wanting privacy. But it's important to have someone. What about your aunt you mentioned before?
+Student: Yeah, she's cool. I could talk to her.
+Counselor: Good. And I'm always here during school hours. My door is open Monday through Friday. You don't need an appointment.
+Student: Thanks, that helps.
+Counselor: I do need to let your parents know we're meeting, just so you're aware. It's school policy. But what you tell me stays confidential unless I'm worried about your safety.
+Student: That's fine. They know I come here sometimes.
+Counselor: Great. Let's set up a regular check-in. How about Wednesdays during your free period?
+Student: That works.
+Counselor: Perfect. And Tyler, if things ever feel overwhelming at home, you can call the school's crisis line anytime. The number is on the card I gave you.
+Student: I still have it. Thanks for listening.
+Counselor: Always. Take care of yourself, and I'll see you Wednesday.

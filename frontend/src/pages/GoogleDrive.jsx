@@ -20,7 +20,9 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 3000;
+const POLL_INITIAL_INTERVAL_MS = 2000;
+const POLL_MAX_INTERVAL_MS = 30000;
+const POLL_BACKOFF_FACTOR = 1.5;
 const POLL_TIMEOUT_MS  = 10 * 60 * 1000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -344,9 +346,10 @@ const GoogleDrive = () => {
     }, 500);
 
     const pollStart = Date.now();
-    const pollInterval = setInterval(async () => {
+    let currentInterval = POLL_INITIAL_INTERVAL_MS;
+
+    const poll = async () => {
       if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
-        clearInterval(pollInterval);
         clearInterval(progressInterval);
         toast.error('Analysis is taking longer than expected. Check the Dashboard for results.');
         setAnalyzing(false);
@@ -356,27 +359,30 @@ const GoogleDrive = () => {
       try {
         const s = await getReportStatus(resultId);
         if (s.status === 'COMPLETED') {
-          clearInterval(pollInterval);
           clearInterval(progressInterval);
           setProgress(100);
           setStatusMsg('Complete! Redirecting…');
           toast.success('Analysis complete! Opening report…');
           setTimeout(() => navigate(`/report/${resultId}`), 700);
         } else if (s.status === 'FAILED') {
-          clearInterval(pollInterval);
           clearInterval(progressInterval);
           toast.error(s.error_message || 'Analysis failed on the server.');
           setAnalyzing(false);
           setImporting(null);
+        } else {
+          // Schedule next poll with exponential backoff
+          currentInterval = Math.min(currentInterval * POLL_BACKOFF_FACTOR, POLL_MAX_INTERVAL_MS);
+          setTimeout(poll, currentInterval);
         }
       } catch {
-        clearInterval(pollInterval);
         clearInterval(progressInterval);
         toast.error('Lost connection while checking status. Check the Dashboard for results.');
         setAnalyzing(false);
         setImporting(null);
       }
-    }, POLL_INTERVAL_MS);
+    };
+
+    setTimeout(poll, currentInterval);
   };
 
   const handleImport = async (file) => {
@@ -473,7 +479,7 @@ const GoogleDrive = () => {
 
           <h2 className="heading-2" style={{ marginBottom: '0.75rem' }}>Connect Google Drive</h2>
           <p className="text-secondary" style={{ maxWidth: 480, margin: '0 auto 2rem auto', lineHeight: 1.6 }}>
-            Grant read-only access to your Google Drive so AuraSafety can list and import
+            Grant read-only access to your Google Drive so Melody Wings Safety can list and import
             text files and Google Docs for analysis. No files are modified.
           </p>
 

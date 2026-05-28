@@ -3,12 +3,56 @@ Celery tasks for the analysis pipeline.
 
 Replaces threading.Thread calls in app.py and audio_analysis_routes.py.
 When USE_CELERY=false, these functions run directly in a background thread.
+
+Dead Letter Queue:
+  Failed tasks (after max retries) are persisted to MongoDB collection
+  'dead_letter_queue' for manual inspection and replay. No analysis is
+  silently lost.
 """
 
 import logging
 import threading
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _save_to_dead_letter_queue(
+    task_name: str,
+    record_id: int,
+    filename: str,
+    error: str,
+    args: dict,
+) -> None:
+    """
+    Persist a failed task to the dead_letter_queue collection.
+    Allows operators to inspect and replay failed analyses.
+    """
+    try:
+        from database.mongo import get_mongo_db
+        db = get_mongo_db()
+        if db is None:
+            logger.error(
+                f"[DLQ] Cannot persist failed task (MongoDB unavailable): "
+                f"task={task_name}, record_id={record_id}, error={error}"
+            )
+            return
+        db["dead_letter_queue"].insert_one({
+            "task_name": task_name,
+            "record_id": record_id,
+            "filename": filename,
+            "error": str(error)[:2000],
+            "args": args,
+            "failed_at": datetime.now(timezone.utc),
+            "status": "failed",
+            "retry_count": 0,
+        })
+        logger.warning(
+            f"[DLQ] Task saved to dead letter queue: "
+            f"task={task_name}, record_id={record_id}, error={error[:200]}"
+        )
+    except Exception as dlq_err:
+        logger.error(f"[DLQ] Failed to save to dead letter queue: {dlq_err}")
 
 
 def _run_audio(record_id: int, filepath: str, filename: str):
@@ -24,6 +68,10 @@ def _run_audio(record_id: int, filepath: str, filename: str):
         )
     except Exception as exc:
         logger.error(f"[#{record_id}] Audio analysis failed: {exc}", exc_info=True)
+        _save_to_dead_letter_queue(
+            "run_audio_analysis", record_id, filename, str(exc),
+            {"filepath": filepath},
+        )
 
 
 def _run_video(record_id: int, audio_filepath: str, filename: str):
@@ -40,6 +88,10 @@ def _run_video(record_id: int, audio_filepath: str, filename: str):
         )
     except Exception as exc:
         logger.error(f"[#{record_id}] Video analysis failed: {exc}", exc_info=True)
+        _save_to_dead_letter_queue(
+            "run_video_analysis", record_id, filename, str(exc),
+            {"audio_filepath": audio_filepath},
+        )
 
 
 def _run_transcript(record_id: int, transcript: str, filename: str):
@@ -54,6 +106,10 @@ def _run_transcript(record_id: int, transcript: str, filename: str):
         )
     except Exception as exc:
         logger.error(f"[#{record_id}] Transcript analysis failed: {exc}", exc_info=True)
+        _save_to_dead_letter_queue(
+            "run_transcript_analysis", record_id, filename, str(exc),
+            {"transcript_length": len(transcript)},
+        )
 
 
 def _run_drive_import(record_id: int, transcript: str, filename: str):
@@ -68,6 +124,10 @@ def _run_drive_import(record_id: int, transcript: str, filename: str):
         )
     except Exception as exc:
         logger.error(f"[#{record_id}] Drive import analysis failed: {exc}", exc_info=True)
+        _save_to_dead_letter_queue(
+            "run_drive_import_analysis", record_id, filename, str(exc),
+            {"transcript_length": len(transcript)},
+        )
 
 
 # ── Register as Celery tasks if available, otherwise provide .delay() shim ────

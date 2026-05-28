@@ -1,11 +1,11 @@
 """
-LLM Summarizer — Ollama Mistral
+LLM Summarizer — Ollama Llama 3.1
 
 Fixes applied:
 - findings are now included in the prompt (were silently ignored before)
 - long transcripts are truncated to ~3000 words to stay within context window
 - graceful fallback if Ollama is not running
-- switched from Llama 3.1 to Mistral for faster inference
+- uses Llama 3.1 (same model as the chatbot) for consistency
 - prompt injection defense: transcript is sanitized before inclusion in prompt
 """
 
@@ -15,13 +15,11 @@ from typing import List, Dict, Any
 
 import ollama
 
-from modules.circuit_breaker import ollama_breaker, CircuitBreakerError
-
 logger = logging.getLogger(__name__)
 
 # Maximum words of transcript to send to the LLM.
-# Mistral has a 32k token context; ~3000 words ≈ 4000 tokens,
-# leaving room for the prompt template and the response.
+# Llama 3.1 has a 128k token context; ~3000 words ≈ 4000 tokens,
+# leaving plenty of room for the prompt template and the response.
 _MAX_TRANSCRIPT_WORDS = 3000
 
 # Patterns that indicate prompt injection attempts in user-supplied text
@@ -162,13 +160,10 @@ When quoting the transcript, use exact text from the conversation.
 """
 
     try:
-        def _call_ollama():
-            return ollama.chat(
-                model="mistral",
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-        response = ollama_breaker.call(_call_ollama)
+        response = ollama.chat(
+            model="llama3.1",
+            messages=[{"role": "user", "content": prompt}],
+        )
         raw_output = response["message"]["content"]
 
         # Validate LLM output — verify quotes exist in transcript
@@ -184,10 +179,6 @@ When quoting the transcript, use exact text from the conversation.
 
         return validation["output"]
 
-    except CircuitBreakerError as e:
-        logger.warning(f"LLM summary skipped (circuit breaker open): {e}")
-        return f"LLM Summary unavailable — service temporarily unavailable. Retry in {e.time_until_retry:.0f}s."
-
     except Exception as e:
-        logger.warning(f"LLM summary failed (Ollama may not be running or mistral model not pulled): {e}")
+        logger.warning(f"LLM summary failed (Ollama may not be running or llama3.1 model not pulled): {e}")
         return f"LLM Summary unavailable — Ollama error: {e}"

@@ -448,3 +448,65 @@ ul {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+
+/* ── Accessibility: Focus Styles ─────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.15);
+}
+
+.nav-link:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-full);
+}
+
+.data-table tbody tr:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+  background: rgba(56, 189, 248, 0.04);
+}
+
+/* Skip to content link (screen readers) */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--accent-primary);
+  color: white;
+  padding: 0.5rem 1rem;
+  z-index: 100;
+  transition: top 0.3s;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* ── Keyboard shortcut hints ─────────────────────────────────────── */
+.kbd-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+  padding: 0.1rem 0.35rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}

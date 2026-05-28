@@ -1,17 +1,14 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
-  PieChart, Pie, Legend, LineChart, Line, CartesianGrid,
-  ScatterChart, Scatter, ZAxis, ReferenceLine,
-} from 'recharts';
-import {
   ShieldAlert, Activity, FileAudio, Search, TrendingUp,
   CheckCircle, AlertTriangle, Clock, ChevronRight, RefreshCw,
-  BarChart2, Brain, Trash2, X,
+  BarChart2, Brain, Trash2, X, Download, GitCompare,
+  Square, CheckSquare,
 } from 'lucide-react';
-import { getHistory, getAnalyticsSummary, deleteReport } from '../api';
+import { getHistory, getAnalyticsSummary, deleteReport, bulkDeleteReports, exportReportsCSV } from '../api';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import toast from 'react-hot-toast';
 
 const getBadgeClass = (severity) => {
@@ -31,42 +28,9 @@ const getRiskColor = (score) => {
   return 'var(--status-safe)';
 };
 
-const SEV_COLORS = {
-  critical: 'var(--status-critical)',
-  high:     'var(--status-high)',
-  moderate: 'var(--status-moderate)',
-  medium:   'var(--status-moderate)',
-  low:      'var(--status-low)',
-  safe:     'var(--status-safe)',
-  unknown:  'var(--text-tertiary)',
-};
-
-const HIST_COLORS = [
-  'var(--status-safe)',
-  'var(--status-low)',
-  'var(--status-moderate)',
-  'var(--status-high)',
-  'var(--status-critical)',
-];
-
-const CONF_COLORS = [
-  'var(--text-tertiary)',
-  'var(--status-low)',
-  'var(--status-moderate)',
-  'var(--status-high)',
-];
-
-const CTX_COLORS = [
-  'var(--status-critical)',
-  'var(--accent-primary)',
-  'var(--status-safe)',
-  'var(--text-tertiary)',
-  'var(--status-moderate)',
-];
-
 const capitalize = (s) => (s || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
-const MiniRiskBar = ({ score }) => (
+const MiniRiskBar = memo(({ score }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
     <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 99 }}>
       <div style={{
@@ -78,19 +42,7 @@ const MiniRiskBar = ({ score }) => (
       {score != null ? score.toFixed(0) : '—'}
     </span>
   </div>
-);
-
-const ChartTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
-      <div style={{ fontWeight: 600, marginBottom: 2 }}>{label}</div>
-      {payload.map((p, i) => (
-        <div key={i} style={{ color: p.fill || p.color }}>{p.name || 'Count'}: <strong>{p.value}</strong></div>
-      ))}
-    </div>
-  );
-};
+));
 
 const Dashboard = () => {
   const [history, setHistory]     = useState([]);
@@ -105,10 +57,97 @@ const Dashboard = () => {
   const [endDate, setEndDate]     = useState('');
   const [sortKey, setSortKey]     = useState('id');
   const [sortDir, setSortDir]     = useState('desc');
+  // Pagination state
+  const [page, setPage]           = useState(0);
+  const [pageSize]                = useState(20);
+  const [totalReports, setTotalReports] = useState(0);
   // Delete state
   const [confirmDelete, setConfirmDelete] = useState(null); // item to confirm
   const [deleting, setDeleting]           = useState(null); // id being deleted
   const navigate = useNavigate();
+
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // Keyboard navigation state
+  const [focusedRow, setFocusedRow] = useState(-1);
+
+  // Bulk actions
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((r) => r.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkDeleting(true);
+    const ids = [...selectedIds];
+    const result = await bulkDeleteReports(ids);
+    if (result.deleted.length > 0) {
+      setHistory((prev) => prev.filter((h) => !result.deleted.includes(h.id)));
+      toast.success(`Deleted ${result.deleted.length} report${result.deleted.length > 1 ? 's' : ''}`);
+    }
+    if (result.failed.length > 0) {
+      toast.error(`Failed to delete ${result.failed.length} report${result.failed.length > 1 ? 's' : ''}`);
+    }
+    setSelectedIds(new Set());
+    setBulkDeleting(false);
+  };
+
+  const handleBulkExport = () => {
+    const reportsToExport = selectedIds.size > 0
+      ? filtered.filter((r) => selectedIds.has(r.id))
+      : filtered;
+    const csv = exportReportsCSV(reportsToExport);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `melody-wings-reports-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${reportsToExport.length} reports as CSV`);
+  };
+
+  const handleCompareSelected = () => {
+    const ids = [...selectedIds].slice(0, 2);
+    if (ids.length === 2) {
+      navigate(`/compare?ids=${ids[0]},${ids[1]}`);
+    } else {
+      toast.error('Select exactly 2 reports to compare');
+    }
+  };
+
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    onNewAnalysis: () => navigate('/upload'),
+    onArrowUp: () => setFocusedRow((r) => Math.max(r - 1, 0)),
+    onArrowDown: () => setFocusedRow((r) => Math.min(r + 1, filtered.length - 1)),
+    onEnter: () => {
+      if (focusedRow >= 0 && focusedRow < filtered.length) {
+        navigate(`/report/${filtered[focusedRow].id}`);
+      }
+    },
+    onDelete: () => {
+      if (focusedRow >= 0 && focusedRow < filtered.length) {
+        setConfirmDelete(filtered[focusedRow]);
+      }
+    },
+    onSelectAll: () => selectAll(),
+  });
 
   const handleDeleteClick = (e, item) => {
     e.stopPropagation();
@@ -137,11 +176,17 @@ const Dashboard = () => {
     setLoading(true);
     try {
       const [histData, analyticsData] = await Promise.all([
-        getHistory(),
+        getHistory(page * pageSize, pageSize),
         getAnalyticsSummary().catch(() => null),
       ]);
-      // getHistory() already normalises to an array in api.js
-      setHistory(Array.isArray(histData) ? histData : (histData?.reports || []));
+      // getHistory() returns { reports, total } or plain array
+      if (Array.isArray(histData)) {
+        setHistory(histData);
+        setTotalReports(histData.length);
+      } else {
+        setHistory(histData?.reports || []);
+        setTotalReports(histData?.total || 0);
+      }
       setAnalytics(analyticsData);
     } catch (err) {
       console.error('Failed to fetch dashboard data', err);
@@ -154,7 +199,7 @@ const Dashboard = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, pageSize]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -234,93 +279,6 @@ const Dashboard = () => {
   const SortIcon = ({ col }) => sortKey === col
     ? <span style={{ fontSize: '0.7rem', marginLeft: 3 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
     : null;
-
-  // ── Derived chart data from analytics summary ──────────────────────────────
-
-  // Severity × Status stacked bar (replaces plain severity pie)
-  const SEV_ORDER = ['Critical', 'High', 'Moderate', 'Low', 'Safe', 'Unknown'];
-  const STATUS_COLORS = {
-    COMPLETED: 'var(--status-safe)',
-    PROCESSING: 'var(--status-moderate)',
-    FAILED: 'var(--status-high)',
-  };
-  const statusStackData = useMemo(() => {
-    if (!analytics) return [];
-    const sevDist = analytics.severity_distribution || {};
-    const statusDist = analytics.status_distribution || {};
-    const grandTotal = Object.values(statusDist).reduce((a, b) => a + b, 0) || 1;
-
-    return SEV_ORDER
-      .filter(sev => (sevDist?.[sev] || 0) > 0)
-      .map(sev => {
-        const total = sevDist?.[sev] || 0;
-        return {
-          severity: sev,
-          Completed: Math.round(total * ((statusDist.COMPLETED || 0) / grandTotal)),
-          Processing: Math.round(total * ((statusDist.PROCESSING || 0) / grandTotal)),
-          Failed: Math.round(total * ((statusDist.FAILED || 0) / grandTotal)),
-          _total: total,
-        };
-      });
-  }, [analytics]);
-
-  const riskHistData = useMemo(() => (
-    analytics
-      ? Object.entries(analytics.risk_score_histogram || {}).map(([range, count], i) => ({ range, count, fill: HIST_COLORS[i] }))
-      : []
-  ), [analytics]);
-
-  const topCatData = useMemo(() => (
-    (analytics?.top_categories || []).slice(0, 8).map(d => ({
-      name: capitalize(d.category),
-      count: d.count,
-    }))
-  ), [analytics]);
-
-  const ctxData = useMemo(() => (
-    analytics
-      ? Object.entries(analytics.context_type_totals || {}).map(([name, value]) => ({
-        name: capitalize(name), value,
-      }))
-      : []
-  ), [analytics]);
-
-  const confHistData = useMemo(() => (
-    analytics
-      ? Object.entries(analytics.confidence_histogram || {}).map(([range, count], i) => ({
-        range: range + '%', count, fill: CONF_COLORS[i],
-      }))
-      : []
-  ), [analytics]);
-
-  // Findings timeline scatter: last 20 analyses, x=index, y=risk_score, size=finding count
-  const timelineScatterData = useMemo(() => (
-    [...history]
-      .filter(h => h.created_at && h.risk_score != null)
-      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-      .slice(-20)
-      .map((h, i) => ({
-        x: i + 1,
-        y: Math.round(h.risk_score),
-        z: 1,
-        label: h.filename ? h.filename.slice(0, 14) + (h.filename.length > 14 ? '…' : '') : `#${h.id}`,
-        severity: (h.severity || 'safe').toLowerCase(),
-      }))
-  ), [history]);
-
-  // ── Risk Score Trend: last 20 analyses sorted by date ──────────────────────
-  const trendData = useMemo(() => (
-    [...history]
-      .filter(h => h.created_at && h.risk_score != null)
-      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-      .slice(-20)
-      .map((h, i) => ({
-        idx: i + 1,
-        label: h.filename ? h.filename.slice(0, 12) + (h.filename.length > 12 ? '…' : '') : `#${h.id}`,
-        score: Math.round(h.risk_score),
-        severity: h.severity || 'safe',
-      }))
-  ), [history]);
 
   return (
     <div className="animate-fade-in" style={{ padding: 'var(--spacing-xl)', maxWidth: 1400, margin: '0 auto' }}>
@@ -413,295 +371,70 @@ const Dashboard = () => {
 
       {/* ── Analytics Charts Row ─────────────────────────────────────────────── */}
       {analytics && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--spacing-lg)', marginBottom: 'var(--spacing-xl)' }}>
-
-          {/* Severity × Status Stacked Bar (replaces plain severity pie) */}
-          {statusStackData.length > 0 && (
-            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <ShieldAlert size={16} style={{ color: 'var(--status-high)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>Severity Distribution</h3>
-              </div>
-              <div style={{ height: 240 }}>
-                <ResponsiveContainer>
-                  <BarChart data={statusStackData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                    <XAxis dataKey="severity" stroke="var(--text-tertiary)" fontSize={11} />
-                    <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                    <Tooltip
-                      content={({ active, payload, label }) => {
-                        if (!active || !payload?.length) return null;
-                        const total = statusStackData.find(d => d.severity === label)?._total || 0;
-                        return (
-                          <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
-                            <div style={{ fontWeight: 600, marginBottom: 4 }}>{label} <span style={{ color: 'var(--text-tertiary)' }}>({total} total)</span></div>
-                            {payload.map((p, i) => p.value > 0 && (
-                              <div key={i} style={{ color: p.fill }}>
-                                {p.name}: <strong>{p.value}</strong>
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      }}
-                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-                    />
-                    <Legend
-                      wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 11, paddingTop: 8 }}
-                    />
-                    <Bar dataKey="Completed" stackId="a" fill="var(--status-safe)" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="Processing" stackId="a" fill="var(--status-moderate)" />
-                    <Bar dataKey="Failed" stackId="a" fill="var(--status-high)" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+        <div className="glass-panel" style={{ padding: 'var(--spacing-lg)', marginBottom: 'var(--spacing-xl)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <BarChart2 size={20} style={{ color: 'var(--accent-primary)' }} />
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>Analytics & Charts</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                {analytics.total_findings} findings · {analytics.total_reports} reports · Avg score {analytics.avg_risk_score?.toFixed(1)}
               </div>
             </div>
-          )}
-
-          {/* Risk Score Histogram */}
-          {riskHistData.length > 0 && (
-            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <BarChart2 size={16} style={{ color: 'var(--accent-primary)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>Risk Score Distribution</h3>
-              </div>
-              <div style={{ height: 240 }}>
-                <ResponsiveContainer>
-                  <BarChart data={riskHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                    <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
-                    <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Reports">
-                      {riskHistData.map((entry, i) => (
-                        <Cell key={i} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-
-          {/* Top Categories Bar */}
-          {topCatData.length > 0 && (
-            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <TrendingUp size={16} style={{ color: 'var(--accent-secondary)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>Top Risk Categories</h3>
-              </div>
-              <div style={{ height: 240 }}>
-                <ResponsiveContainer>
-                  <BarChart data={topCatData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
-                    <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                    <YAxis dataKey="name" type="category" width={95} stroke="var(--text-secondary)" fontSize={11} tick={{ fill: 'var(--text-secondary)' }} />
-                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                    <Bar dataKey="count" radius={[0, 4, 4, 0]} name="Occurrences">
-                      {topCatData.map((_, i) => (
-                        <Cell key={i} fill={i < 2 ? 'var(--status-critical)' : i < 4 ? 'var(--status-high)' : 'var(--status-moderate)'} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-
-          {/* Findings Timeline Scatter (replaces Context Type donut) */}
-          {timelineScatterData.length > 1 && (
-            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <Activity size={16} style={{ color: 'var(--accent-primary)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>Risk Score Scatter</h3>
-                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 500 }}>
-                  Last {timelineScatterData.length} analyses
-                </span>
-              </div>
-              <div style={{ height: 260 }}>
-                <ResponsiveContainer>
-                  <ScatterChart margin={{ top: 8, right: 16, left: -10, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                    <XAxis
-                      dataKey="x"
-                      type="number"
-                      name="Analysis"
-                      stroke="var(--text-tertiary)"
-                      fontSize={11}
-                      tickCount={Math.min(timelineScatterData.length, 10)}
-                      domain={[1, timelineScatterData.length]}
-                      tick={{ fill: 'var(--text-tertiary)' }}
-                      label={{ value: 'Analysis #', position: 'insideBottom', offset: -2, fill: 'var(--text-tertiary)', fontSize: 10 }}
-                    />
-                    <YAxis
-                      dataKey="y"
-                      type="number"
-                      name="Risk Score"
-                      stroke="var(--text-tertiary)"
-                      fontSize={11}
-                      domain={[0, 100]}
-                      tickCount={6}
-                      tick={{ fill: 'var(--text-tertiary)' }}
-                    />
-                    <ZAxis dataKey="z" range={[60, 60]} />
-                    <ReferenceLine y={80} stroke="var(--status-critical)" strokeDasharray="4 3" strokeOpacity={0.5} />
-                    <ReferenceLine y={61} stroke="var(--status-high)" strokeDasharray="4 3" strokeOpacity={0.4} />
-                    <ReferenceLine y={41} stroke="var(--status-moderate)" strokeDasharray="4 3" strokeOpacity={0.35} />
-                    <Tooltip
-                      cursor={{ strokeDasharray: '3 3' }}
-                      content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null;
-                        const d = payload[0].payload;
-                        const color = getRiskColor(d.y);
-                        return (
-                          <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
-                            <div style={{ fontWeight: 600, marginBottom: 2, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</div>
-                            <div style={{ color }}>Risk Score: <strong>{d.y}</strong>/100</div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Scatter
-                      data={timelineScatterData}
-                      shape={(props) => {
-                        const { cx, cy, payload } = props;
-                        const color = getRiskColor(payload.y);
-                        return <circle cx={cx} cy={cy} r={7} fill={color} stroke="#fff" strokeWidth={1.5} fillOpacity={0.85} />;
-                      }}
-                    />
-                  </ScatterChart>
-                </ResponsiveContainer>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '1.25rem', marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
-                {[['var(--status-critical)', 'Critical 80+'], ['var(--status-high)', 'High 61–79'], ['var(--status-moderate)', 'Moderate 41–60'], ['var(--status-safe)', 'Safe <21']].map(([c, l]) => (
-                  <span key={l} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: c, display: 'inline-block' }} />{l}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-              {confHistData.some(d => d.count > 0) && (
-            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <Brain size={16} style={{ color: 'var(--accent-primary)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>Detection Confidence</h3>
-              </div>
-              <div style={{ height: 240 }}>
-                <ResponsiveContainer>
-                  <BarChart data={confHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                    <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
-                    <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Reports">
-                      {confHistData.map((entry, i) => (
-                        <Cell key={i} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              {analytics.high_confidence_count != null && analytics.total_findings > 0 && (
-                <div style={{ textAlign: 'center', marginTop: '0.5rem', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-                  High confidence (≥75%): <strong style={{ color: 'var(--status-safe)' }}>
-                    {analytics.high_confidence_count}
-                  </strong>
-                  <span style={{ marginLeft: '0.5rem', color: 'var(--text-tertiary)' }}>
-                    of {analytics.total_findings} findings
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Risk Score Trend */}
-          {trendData.length > 1 && (
-            <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-                <TrendingUp size={16} style={{ color: 'var(--accent-primary)' }} />
-                <h3 className="heading-3" style={{ margin: 0 }}>Risk Score Trend</h3>
-                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 500 }}>Last {trendData.length} analyses</span>
-              </div>
-              <div style={{ height: 260 }}>
-                <ResponsiveContainer>
-                  <LineChart data={trendData} margin={{ top: 8, right: 16, left: -10, bottom: 30 }}>
-                    <defs>
-                      <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--accent-primary)" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="var(--accent-primary)" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      stroke="var(--text-tertiary)"
-                      fontSize={10}
-                      angle={-35}
-                      textAnchor="end"
-                      interval={0}
-                      tick={{ fill: 'var(--text-tertiary)' }}
-                    />
-                    <YAxis
-                      stroke="var(--text-tertiary)"
-                      fontSize={11}
-                      domain={[0, 100]}
-                      tickCount={6}
-                      tick={{ fill: 'var(--text-tertiary)' }}
-                    />
-                    <Tooltip
-                      content={({ active, payload, label }) => {
-                        if (!active || !payload?.length) return null;
-                        const score = payload[0].value;
-                        const color =
-                          score >= 80 ? 'var(--status-critical)'
-                          : score >= 61 ? 'var(--status-high)'
-                          : score >= 41 ? 'var(--status-moderate)'
-                          : score >= 21 ? 'var(--status-low)'
-                          : 'var(--status-safe)';
-                        return (
-                          <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
-                            <div style={{ fontWeight: 600, marginBottom: 2, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
-                            <div style={{ color }}>Risk Score: <strong>{score}</strong>/100</div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="score"
-                      stroke="var(--accent-primary)"
-                      strokeWidth={2.5}
-                      dot={(props) => {
-                        const score = props.payload.score;
-                        const color =
-                          score >= 80 ? 'var(--status-critical)'
-                          : score >= 61 ? 'var(--status-high)'
-                          : score >= 41 ? 'var(--status-moderate)'
-                          : score >= 21 ? 'var(--status-low)'
-                          : 'var(--status-safe)';
-                        return <circle key={props.key} cx={props.cx} cy={props.cy} r={5} fill={color} stroke="#fff" strokeWidth={1.5} />;
-                      }}
-                      activeDot={{ r: 7, strokeWidth: 2 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '1.25rem', marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
-                {[['var(--status-critical)', 'Critical 80+'], ['var(--status-high)', 'High 61–79'], ['var(--status-moderate)', 'Moderate 41–60'], ['var(--status-safe)', 'Safe <21']].map(([c, l]) => (
-                  <span key={l} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: c, display: 'inline-block' }} />{l}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
+          </div>
+          <button className="btn btn-primary" style={{ padding: '0.5rem 1.25rem', fontSize: '0.9rem' }} onClick={() => navigate('/analytics')}>
+            <BarChart2 size={16} /> View Analytics
+          </button>
         </div>
       )}
-
       {/* Table Panel */}
       <div className="glass-panel animate-slide-up delay-400">
         <div className="flex-between" style={{ padding: 'var(--spacing-lg) var(--spacing-xl)', borderBottom: '1px solid var(--border-color)', flexWrap: 'wrap', gap: '1rem' }}>
           <h2 className="heading-3">Analysis History</h2>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+
+            {/* Bulk Actions */}
+            {selectedIds.size > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0.75rem', background: 'rgba(56,189,248,0.06)', borderRadius: 'var(--radius-full)', border: '1px solid rgba(56,189,248,0.15)' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent-primary)' }}>
+                  {selectedIds.size} selected
+                </span>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '0.25rem 0.6rem', fontSize: '0.78rem' }}
+                  onClick={handleBulkExport}
+                  title="Export selected as CSV"
+                >
+                  <Download size={13} /> Export
+                </button>
+                {selectedIds.size === 2 && (
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '0.25rem 0.6rem', fontSize: '0.78rem' }}
+                    onClick={handleCompareSelected}
+                    title="Compare selected reports"
+                  >
+                    <GitCompare size={13} /> Compare
+                  </button>
+                )}
+                <button
+                  className="btn"
+                  style={{ padding: '0.25rem 0.6rem', fontSize: '0.78rem', background: 'rgba(239,68,68,0.1)', color: 'var(--status-high)', border: '1px solid rgba(239,68,68,0.2)' }}
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  title="Delete selected reports"
+                >
+                  <Trash2 size={13} /> Delete
+                </button>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', padding: '0.2rem' }}
+                  title="Clear selection"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
             {/* Date Filters */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <select
@@ -793,6 +526,16 @@ const Dashboard = () => {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: 40, padding: '0.5rem' }}>
+                  <button
+                    onClick={selectAll}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.size === filtered.length && filtered.length > 0 ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}
+                    title={selectedIds.size === filtered.length ? 'Deselect all' : 'Select all'}
+                    aria-label="Select all rows"
+                  >
+                    {selectedIds.size === filtered.length && filtered.length > 0 ? <CheckSquare size={16} /> : <Square size={16} />}
+                  </button>
+                </th>
                 <th onClick={() => handleSort('id')} style={{ cursor: 'pointer', userSelect: 'none' }}>ID <SortIcon col="id" /></th>
                 <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none' }}>File Name <SortIcon col="filename" /></th>
                 <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none' }}>Risk Score <SortIcon col="risk_score" /></th>
@@ -807,6 +550,7 @@ const Dashboard = () => {
                 // ── Skeleton rows ──
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} style={{ opacity: 1 - i * 0.12 }}>
+                    <td><div className="skeleton" style={{ height: 16, width: 16, borderRadius: 3 }} /></td>
                     <td><div className="skeleton" style={{ height: 14, width: 40, borderRadius: 6 }} /></td>
                     <td><div className="skeleton" style={{ height: 14, width: '85%', borderRadius: 6 }} /></td>
                     <td>
@@ -828,7 +572,7 @@ const Dashboard = () => {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan="7" style={{ padding: 0 }}>
+                  <td colSpan="8" style={{ padding: 0 }}>
                     <div style={{
                       display: 'flex', flexDirection: 'column', alignItems: 'center',
                       justifyContent: 'center', padding: '4rem 2rem', gap: '1rem', textAlign: 'center'
@@ -876,7 +620,32 @@ const Dashboard = () => {
                   </td>
                 </tr>
               ) : filtered.map((item, i) => (
-                <tr key={item.id} className="animate-slide-up" style={{ cursor: 'pointer', animationDelay: `${Math.min(i * 50, 500)}ms` }} onClick={() => navigate(`/report/${item.id}`)}>
+                <tr
+                  key={item.id}
+                  className="animate-slide-up"
+                  style={{
+                    cursor: 'pointer',
+                    animationDelay: `${Math.min(i * 50, 500)}ms`,
+                    background: focusedRow === i ? 'rgba(56,189,248,0.04)' : selectedIds.has(item.id) ? 'rgba(56,189,248,0.02)' : undefined,
+                    outline: focusedRow === i ? '2px solid var(--accent-primary)' : 'none',
+                    outlineOffset: '-2px',
+                  }}
+                  onClick={() => navigate(`/report/${item.id}`)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`View report ${item.filename}, risk score ${item.risk_score?.toFixed(0)}, severity ${item.severity}`}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/report/${item.id}`); } }}
+                  onFocus={() => setFocusedRow(i)}
+                >
+                  <td style={{ width: 40, padding: '0.5rem' }} onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleSelect(item.id); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.has(item.id) ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}
+                      aria-label={selectedIds.has(item.id) ? `Deselect report ${item.id}` : `Select report ${item.id}`}
+                    >
+                      {selectedIds.has(item.id) ? <CheckSquare size={15} /> : <Square size={15} />}
+                    </button>
+                  </td>
                   <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.85rem' }}>#{item.id}</td>
                   <td style={{ fontWeight: 500, maxWidth: 350 }}>
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>
@@ -951,8 +720,36 @@ const Dashboard = () => {
         </div>
 
         {filtered.length > 0 && (
-          <div style={{ padding: 'var(--spacing-md) var(--spacing-xl)', borderTop: '1px solid var(--border-color)', color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>
-            Showing {filtered.length} of {history.length} records
+          <div style={{ padding: 'var(--spacing-md) var(--spacing-xl)', borderTop: '1px solid var(--border-color)', color: 'var(--text-tertiary)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <span>Showing {filtered.length} of {totalReports} total records (page {page + 1} of {Math.max(1, Math.ceil(totalReports / pageSize))})</span>
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                onClick={handleBulkExport}
+                title="Export all visible reports as CSV"
+              >
+                <Download size={12} /> Export CSV
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}
+                disabled={page === 0}
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+              >
+                ← Previous
+              </button>
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}
+                disabled={(page + 1) * pageSize >= totalReports}
+                onClick={() => setPage(p => p + 1)}
+              >
+                Next →
+              </button>
+            </div>
           </div>
         )}
       </div>
