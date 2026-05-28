@@ -11,7 +11,7 @@ SQLite removed — MongoDB is the sole persistence layer.
 import os
 import logging
 from typing import Dict, Any, Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 from functools import wraps
 

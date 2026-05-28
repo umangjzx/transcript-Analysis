@@ -34,6 +34,7 @@ Output per finding
 """
 
 import re
+import unicodedata
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
@@ -43,6 +44,37 @@ from .confidence import ConfidenceCalculator
 from .filters import CombinedFilter
 from .evidence_grouping import EvidenceGroupingEngine
 from .ml_classifier import classify_text as ml_classify_text, fuse_with_regex as ml_fuse
+from .leetspeak_normalizer import normalize_leetspeak, is_likely_obfuscated
+
+
+def _normalize_unicode(text: str) -> str:
+    """
+    Normalize unicode to NFC form and strip zero-width / invisible characters.
+
+    This prevents detection bypass via:
+    - Homoglyph substitution (e.g. Cyrillic 'а' vs Latin 'a')
+    - Zero-width joiners/non-joiners inserted between characters
+    - Combining diacritical marks used to obfuscate words
+    """
+    # NFC normalization — canonical decomposition followed by canonical composition
+    text = unicodedata.normalize("NFC", text)
+    # Strip zero-width and invisible formatting characters
+    _INVISIBLE_CHARS = frozenset([
+        '\u200b',  # zero-width space
+        '\u200c',  # zero-width non-joiner
+        '\u200d',  # zero-width joiner
+        '\u200e',  # left-to-right mark
+        '\u200f',  # right-to-left mark
+        '\u2060',  # word joiner
+        '\u2061',  # function application
+        '\u2062',  # invisible times
+        '\u2063',  # invisible separator
+        '\u2064',  # invisible plus
+        '\ufeff',  # BOM / zero-width no-break space
+        '\u00ad',  # soft hyphen
+    ])
+    text = "".join(ch for ch in text if ch not in _INVISIBLE_CHARS)
+    return text
 
 
 class GroomingDetector:
@@ -121,6 +153,13 @@ class GroomingDetector:
         """
         if not sentence or not sentence.strip():
             return []
+
+        # Unicode normalization — prevent bypass via homoglyphs / invisible chars
+        sentence = _normalize_unicode(sentence)
+        if previous_sentence:
+            previous_sentence = _normalize_unicode(previous_sentence)
+        if next_sentence:
+            next_sentence = _normalize_unicode(next_sentence)
 
         # Extract embedded speaker label if present
         if not speaker:
@@ -386,6 +425,20 @@ class GroomingDetector:
                     hits.append({"text": m.group(0), "start": m.start(), "end": m.end()})
             if hits:
                 matches[category] = {"count": len(hits), "matched_patterns": hits}
+
+        # If no matches found on original text, try leetspeak-normalized version
+        if not matches and is_likely_obfuscated(sentence):
+            normalized = normalize_leetspeak(sentence)
+            if normalized != sentence.lower():
+                for category, patterns in PATTERNS.items():
+                    hits = []
+                    for pattern in patterns:
+                        m = pattern.search(normalized)
+                        if m:
+                            hits.append({"text": m.group(0), "start": m.start(), "end": m.end(), "normalized": True})
+                    if hits:
+                        matches[category] = {"count": len(hits), "matched_patterns": hits, "was_normalized": True}
+
         return matches
 
     def _split_transcript(self, transcript: str) -> List[Dict[str, str]]:

@@ -104,13 +104,15 @@ def get_auth_url() -> str:
 def exchange_code_for_tokens(code: str) -> Dict[str, Any]:
     """
     Exchange the OAuth2 authorization code for access + refresh tokens.
-    Persists credentials to .google_credentials.json for reuse.
+    Persists credentials encrypted to disk for reuse.
     Returns a dict with token info (no raw secrets echoed to the caller).
     """
     try:
         from google_auth_oauthlib.flow import Flow  # type: ignore
     except ImportError:
         raise RuntimeError("google-auth-oauthlib is not installed.")
+
+    from modules.credential_encryption import encrypt_credentials
 
     cfg = _get_client_config()
     flow = Flow.from_client_config(
@@ -129,7 +131,7 @@ def exchange_code_for_tokens(code: str) -> Dict[str, Any]:
     flow.fetch_token(code=code)
     creds = flow.credentials
 
-    # Persist to disk so the user doesn't need to re-auth on every restart
+    # Persist encrypted to disk so the user doesn't need to re-auth on every restart
     creds_data = {
         "token": creds.token,
         "refresh_token": creds.refresh_token,
@@ -138,9 +140,8 @@ def exchange_code_for_tokens(code: str) -> Dict[str, Any]:
         "client_secret": creds.client_secret,
         "scopes": list(creds.scopes) if creds.scopes else _SCOPES,
     }
-    with open(_CREDS_FILE, "w", encoding="utf-8") as f:
-        json.dump(creds_data, f, indent=2)
-    logger.info(f"Google credentials saved to {_CREDS_FILE}")
+    encrypt_credentials(creds_data, _CREDS_FILE)
+    logger.info(f"Google credentials saved (encrypted at rest)")
 
     return {"status": "authenticated", "scopes": creds_data["scopes"]}
 
@@ -149,7 +150,7 @@ def exchange_code_for_tokens(code: str) -> Dict[str, Any]:
 
 def _load_credentials():
     """
-    Load and (if needed) refresh credentials from the persisted JSON file.
+    Load and (if needed) refresh credentials from the persisted (encrypted) file.
     Returns a google.oauth2.credentials.Credentials object or raises.
     """
     try:
@@ -161,14 +162,15 @@ def _load_credentials():
             "Run: pip install google-auth google-auth-oauthlib google-api-python-client"
         )
 
-    if not os.path.exists(_CREDS_FILE):
+    from modules.credential_encryption import decrypt_credentials, encrypt_credentials
+
+    try:
+        data = decrypt_credentials(_CREDS_FILE)
+    except FileNotFoundError:
         raise PermissionError(
             "Not authenticated with Google Drive. "
             "Call GET /api/v1/google-drive/auth-url first."
         )
-
-    with open(_CREDS_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
 
     creds = Credentials(
         token=data.get("token"),
@@ -182,10 +184,9 @@ def _load_credentials():
     # Refresh if expired
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        # Persist refreshed token
+        # Persist refreshed token (encrypted)
         data["token"] = creds.token
-        with open(_CREDS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        encrypt_credentials(data, _CREDS_FILE)
         logger.info("Google credentials refreshed and saved.")
 
     return creds
@@ -290,6 +291,6 @@ def is_authenticated() -> bool:
 
 def revoke_credentials() -> None:
     """Delete stored credentials (logout)."""
-    if os.path.exists(_CREDS_FILE):
-        os.remove(_CREDS_FILE)
-        logger.info("Google credentials revoked and deleted.")
+    from modules.credential_encryption import delete_credentials
+    delete_credentials(_CREDS_FILE)
+    logger.info("Google credentials revoked and deleted.")

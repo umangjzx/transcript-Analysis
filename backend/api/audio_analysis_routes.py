@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status
@@ -9,6 +9,8 @@ from fastapi.responses import FileResponse
 # Import schemas
 from schemas.audio_analysis_schemas import (
     AnalysisResponse,
+    BatchAnalysisItem,
+    BatchAnalysisResponse,
     HistoryResponse,
     HistoryItem,
     ReportResponse,
@@ -120,26 +122,41 @@ async def analyze_audio(
             detail=f"Unsupported audio format: {extension}. Supported: {', '.join(ALLOWED_EXTENSIONS)}"
         )
 
-    # Read into memory so we can enforce the size limit
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
-        )
-
-    # Use a UUID-based filename on disk to prevent path traversal
+    # Stream upload to disk in chunks — prevents OOM on concurrent large uploads
     safe_disk_name = f"{_uuid.uuid4().hex}{extension}"
     original_filename = file.filename or safe_disk_name
 
+    _CHUNK_SIZE = 1024 * 1024  # 1 MB
+    file_size = 0
     try:
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
         filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
         with open(filepath, "wb") as buffer:
-            buffer.write(content)
+            while True:
+                chunk = await file.read(size=_CHUNK_SIZE)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > MAX_UPLOAD_BYTES:
+                    buffer.close()
+                    try:
+                        os.remove(filepath)
+                    except Exception:
+                        pass
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+                    )
+                buffer.write(chunk)
         logger.info(f"File saved to: {filepath}")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"File save failed: {str(e)}")
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save file: {str(e)}"
@@ -150,7 +167,7 @@ async def analyze_audio(
     save_meeting_metadata(
         meeting_id=record_id,
         filename=original_filename,
-        file_size_bytes=len(content),
+        file_size_bytes=file_size,
         status="PROCESSING",
     )
 
@@ -173,6 +190,185 @@ async def analyze_audio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {str(e)}"
         )
+
+
+# ============================================================================
+# ANALYZE AUDIO — BATCH
+# ============================================================================
+
+# Cap how many files a single batch request may contain. Configurable via env.
+MAX_BATCH_FILES = int(os.getenv("MAX_BATCH_FILES", "20"))
+
+
+@router.post(
+    "/analyze/batch",
+    response_model=BatchAnalysisResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Analyze Multiple Audio Files",
+    description=(
+        "Upload multiple audio files in a single request. Each file is "
+        "validated, persisted, assigned a record ID, and processed "
+        "concurrently in its own background thread. Returns immediately with "
+        "the per-file outcome — poll GET /api/v1/report/{id} for each "
+        "accepted record to track progress and fetch results."
+    ),
+    responses={
+        202: {"description": "Batch accepted (per-file status in response body)"},
+        400: {"model": ErrorResponse, "description": "No files supplied or batch too large"},
+    },
+)
+async def analyze_audio_batch(
+    files: List[UploadFile] = File(..., description="Audio files to analyze"),
+):
+    """
+    Accept N audio files and kick off one background pipeline per file.
+
+    Validation is per-file: a malformed or oversized file is reported as
+    REJECTED but does not abort the batch. The response always returns 202
+    if the request itself was well-formed.
+    """
+    import uuid as _uuid
+    from app import MAX_UPLOAD_BYTES
+    from database.mongo import audit_log
+
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files supplied. Attach at least one file under the 'files' field.",
+        )
+
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many files in batch ({len(files)}). Maximum allowed is {MAX_BATCH_FILES}.",
+        )
+
+    logger.info(f"Batch analysis request received: {len(files)} file(s)")
+
+    items: List[BatchAnalysisItem] = []
+    accepted_count = 0
+
+    for upload in files:
+        original_filename = upload.filename or "unnamed"
+        extension = os.path.splitext(original_filename)[1].lower()
+
+        # Per-file validation — extension
+        if extension not in ALLOWED_EXTENSIONS:
+            items.append(BatchAnalysisItem(
+                filename=original_filename,
+                id=None,
+                status="REJECTED",
+                accepted=False,
+                detail=f"Unsupported audio format: {extension or '(none)'}. "
+                       f"Supported: {', '.join(ALLOWED_EXTENSIONS)}",
+            ))
+            continue
+
+        # Read into memory — needed to enforce size limit and persist atomically
+        try:
+            content = await upload.read()
+        except Exception as e:
+            items.append(BatchAnalysisItem(
+                filename=original_filename,
+                id=None,
+                status="ERROR",
+                accepted=False,
+                detail=f"Failed to read upload: {e}",
+            ))
+            continue
+
+        if len(content) > MAX_UPLOAD_BYTES:
+            items.append(BatchAnalysisItem(
+                filename=original_filename,
+                id=None,
+                status="REJECTED",
+                accepted=False,
+                detail=f"File too large. Maximum allowed size is "
+                       f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+            ))
+            continue
+
+        # Persist to disk under a UUID name (prevents collisions / path traversal)
+        try:
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+            safe_disk_name = f"{_uuid.uuid4().hex}{extension}"
+            filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
+            with open(filepath, "wb") as buffer:
+                buffer.write(content)
+        except Exception as e:
+            logger.error(f"Failed to save batch file {original_filename}: {e}")
+            items.append(BatchAnalysisItem(
+                filename=original_filename,
+                id=None,
+                status="ERROR",
+                accepted=False,
+                detail=f"Failed to save file: {e}",
+            ))
+            continue
+
+        # Allocate record ID and initial PROCESSING row
+        try:
+            record_id = next_meeting_id()
+            save_meeting_metadata(
+                meeting_id=record_id,
+                filename=original_filename,
+                file_size_bytes=len(content),
+                status="PROCESSING",
+            )
+        except Exception as e:
+            logger.error(f"Failed to register batch file {original_filename} in DB: {e}")
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            items.append(BatchAnalysisItem(
+                filename=original_filename,
+                id=None,
+                status="ERROR",
+                accepted=False,
+                detail=f"Failed to register file: {e}",
+            ))
+            continue
+
+        # Dispatch the pipeline as a Celery task (replaces threading.Thread)
+        from tasks.analysis_tasks import run_audio_analysis
+        run_audio_analysis.delay(record_id, filepath, original_filename)
+
+        try:
+            audit_log(
+                "file_uploaded",
+                meeting_id=record_id,
+                user_action="batch_upload",
+                details={
+                    "filename": original_filename,
+                    "size_bytes": len(content),
+                    "batch_size": len(files),
+                },
+            )
+        except Exception:
+            pass  # audit is best-effort
+
+        accepted_count += 1
+        items.append(BatchAnalysisItem(
+            filename=original_filename,
+            id=record_id,
+            status="ACCEPTED",
+            accepted=True,
+            detail=None,
+        ))
+        logger.info(f"[#{record_id}] Batch upload accepted: {original_filename} "
+                    f"({len(content) // 1024} KB)")
+
+    # Invalidate caches so the new in-flight records show up promptly in /history
+    if accepted_count:
+        history_cache.invalidate()
+
+    return BatchAnalysisResponse(
+        total=len(files),
+        accepted=accepted_count,
+        rejected=len(files) - accepted_count,
+        items=items,
+    )
 
 
 # ============================================================================

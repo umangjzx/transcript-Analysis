@@ -38,5 +38,8 @@ reports/
 vectors/chroma.sqlite3
 vectors/**/*.sqlite3
 
+# Fine-tuned ML models (large binary files — don't commit)
+models/
+
 # Google OAuth2 credentials (contains refresh tokens — never commit)
 .google_credentials.json

@@ -1,4 +1,4 @@
-﻿"""
+"""
 drive_watcher.py
 ================
 Background polling watcher for Google Drive.
@@ -29,6 +29,14 @@ POLL_INTERVAL: int = int(os.getenv("DRIVE_POLL_INTERVAL_SECONDS", "120"))
 WATCH_FOLDER_ID: str = os.getenv("DRIVE_WATCH_FOLDER_ID", "")
 AUTO_WATCH: bool = os.getenv("DRIVE_AUTO_WATCH", "false").lower() == "true"
 
+
+def _get_poll_interval() -> int:
+    """Read poll interval from env at runtime so .env changes take effect without restart."""
+    try:
+        return int(os.getenv("DRIVE_POLL_INTERVAL_SECONDS", "120"))
+    except (ValueError, TypeError):
+        return 120
+
 # ── State ─────────────────────────────────────────────────────────────────────
 _watcher_thread: Optional[threading.Thread] = None
 _stop_event = threading.Event()
@@ -40,7 +48,7 @@ watcher_status = {
     "last_checked": None,
     "files_processed": 0,
     "errors": 0,
-    "poll_interval_seconds": POLL_INTERVAL,
+    "poll_interval_seconds": _get_poll_interval(),
 }
 
 
@@ -94,7 +102,7 @@ def _poll_once() -> None:
     # Build query: files modified in the last POLL_INTERVAL * 2 seconds
     # Subtract the lookback window so we catch files added since the last poll
     from datetime import timedelta
-    lookback_seconds = POLL_INTERVAL * 2
+    lookback_seconds = _get_poll_interval() * 2
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=lookback_seconds)
     # RFC 3339 format required by Drive API
     cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -146,12 +154,9 @@ def _poll_once() -> None:
                 status="PROCESSING",
             )
 
-            # Run analysis in its own thread so the watcher isn't blocked
-            threading.Thread(
-                target=_run_pipeline,
-                args=(record_id, transcript_text, filename),
-                daemon=True,
-            ).start()
+            # Run analysis via Celery task instead of a thread
+            from tasks.analysis_tasks import run_drive_import_analysis
+            run_drive_import_analysis.delay(record_id, transcript_text, filename)
 
             _mark_seen(file_id, filename)
             watcher_status["files_processed"] += 1
@@ -162,25 +167,21 @@ def _poll_once() -> None:
             watcher_status["errors"] += 1
 
 
-def _run_pipeline(record_id: int, transcript: str, filename: str) -> None:
-    """Thin wrapper — delegates to the same pipeline used by the manual import."""
-    try:
-        from api.google_drive_routes import _run_transcript_pipeline
-        _run_transcript_pipeline(record_id, transcript, filename)
-    except Exception as e:
-        logger.error(f"[DriveWatcher] Pipeline failed for #{record_id}: {e}", exc_info=True)
-
-
 # ── Watcher thread ────────────────────────────────────────────────────────────
 
 def _watcher_loop() -> None:
+    interval = _get_poll_interval()
     logger.info(
-        f"[DriveWatcher] Started — polling every {POLL_INTERVAL}s"
+        f"[DriveWatcher] Started — polling every {interval}s"
         + (f", folder={WATCH_FOLDER_ID}" if WATCH_FOLDER_ID else ", all Drive files")
     )
     watcher_status["running"] = True
 
     while not _stop_event.is_set():
+        # Re-read interval each cycle so .env changes take effect live
+        interval = _get_poll_interval()
+        watcher_status["poll_interval_seconds"] = interval
+
         try:
             _poll_once()
         except Exception as e:
@@ -188,7 +189,7 @@ def _watcher_loop() -> None:
             watcher_status["errors"] += 1
 
         watcher_status["last_checked"] = datetime.now(timezone.utc).isoformat()
-        _stop_event.wait(timeout=POLL_INTERVAL)
+        _stop_event.wait(timeout=interval)
 
     watcher_status["running"] = False
     logger.info("[DriveWatcher] Stopped.")
@@ -230,4 +231,4 @@ def stop_watcher() -> bool:
 
 def get_status() -> dict:
     """Return current watcher status dict (safe to serialise as JSON)."""
-    return {**watcher_status, "poll_interval_seconds": POLL_INTERVAL}
+    return {**watcher_status, "poll_interval_seconds": _get_poll_interval()}

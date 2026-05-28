@@ -1,5 +1,5 @@
 """
-MongoDB client — 7-collection schema for AuraSafety.
+MongoDB client — 7-collection schema for Melody Wings Safety.
 
 Collections
 -----------
@@ -39,7 +39,14 @@ _db     = None
 # ── Connection ────────────────────────────────────────────────────────────────
 
 def get_mongo_db():
-    """Lazy singleton — returns None gracefully if MongoDB is unavailable."""
+    """Lazy singleton — returns None gracefully if MongoDB is unavailable.
+
+    Connection pooling is configured via environment variables:
+    - MONGO_POOL_MIN_SIZE: Minimum connections in pool (default: 5)
+    - MONGO_POOL_MAX_SIZE: Maximum connections in pool (default: 50)
+    - MONGO_MAX_IDLE_TIME_MS: Max idle time before connection is closed (default: 30000)
+    - MONGO_WAIT_QUEUE_TIMEOUT_MS: Max wait for a connection from pool (default: 5000)
+    """
     global _client, _db
     if _db is not None:
         return _db
@@ -57,14 +64,36 @@ def get_mongo_db():
             logger.warning("MONGO_URI not set — MongoDB disabled")
             return None
 
-        _client = MongoClient(uri, server_api=ServerApi("1"),
-                              serverSelectionTimeoutMS=5000)
+        # Connection pool configuration
+        pool_min = int(os.getenv("MONGO_POOL_MIN_SIZE", "5"))
+        pool_max = int(os.getenv("MONGO_POOL_MAX_SIZE", "50"))
+        max_idle_ms = int(os.getenv("MONGO_MAX_IDLE_TIME_MS", "30000"))
+        wait_queue_ms = int(os.getenv("MONGO_WAIT_QUEUE_TIMEOUT_MS", "5000"))
+
+        _client = MongoClient(
+            uri,
+            server_api=ServerApi("1"),
+            serverSelectionTimeoutMS=5000,
+            # Connection pooling
+            minPoolSize=pool_min,
+            maxPoolSize=pool_max,
+            maxIdleTimeMS=max_idle_ms,
+            waitQueueTimeoutMS=wait_queue_ms,
+            # Connection resilience
+            retryWrites=True,
+            retryReads=True,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=30000,
+        )
         _client.admin.command("ping")
         _db = _client[name]
 
         # Ensure indexes on first connect
         _ensure_indexes(_db)
-        logger.info(f"MongoDB connected -> {name}")
+        logger.info(
+            f"MongoDB connected -> {name} "
+            f"(pool: {pool_min}-{pool_max}, idle: {max_idle_ms}ms)"
+        )
         return _db
 
     except Exception as e:
@@ -89,6 +118,22 @@ def _ensure_indexes(db) -> None:
         # users — unique username index for fast login lookups
         db["users"].create_index([("username", ASCENDING)], unique=True)
         # counters collection — no extra index needed (_id is already indexed)
+
+        # TTL indexes — auto-expire old documents
+        # Audit logs: expire after 90 days (configurable via AUDIT_LOG_TTL_DAYS)
+        audit_ttl_days = int(os.getenv("AUDIT_LOG_TTL_DAYS", "90"))
+        db["audit_logs"].create_index(
+            [("timestamp", ASCENDING)],
+            expireAfterSeconds=audit_ttl_days * 86400,
+            name="ttl_audit_logs_timestamp",
+        )
+        # Processing status: expire completed/failed records after 30 days
+        processing_ttl_days = int(os.getenv("PROCESSING_STATUS_TTL_DAYS", "30"))
+        db["processing_status"].create_index(
+            [("updated_at", ASCENDING)],
+            expireAfterSeconds=processing_ttl_days * 86400,
+            name="ttl_processing_status_updated_at",
+        )
     except Exception as e:
         logger.warning(f"MongoDB index creation warning: {e}")
 
@@ -438,10 +483,189 @@ def save_full_analysis(
     s3_pdf_url: Optional[str] = None,
 ) -> Dict[str, bool]:
     """
-    Write all 7 collections in one call.
+    Write all 7 collections in one call using a MongoDB transaction.
+    If any write fails, the entire operation is rolled back.
     Returns a dict of {collection: success} for observability.
     """
     now = _now()
+    db = get_mongo_db()
+    if db is None:
+        return {col: False for col in [
+            "meeting_metadata", "transcripts", "analysis_results",
+            "safety_findings", "action_items", "processing_status", "audit_logs"
+        ]}
+
+    # Attempt transactional write (requires replica set)
+    try:
+        with _client.start_session() as session:
+            with session.start_transaction():
+                _save_full_analysis_in_session(
+                    db, session, meeting_id, filename, transcript, timeline,
+                    findings, risk_score, severity, llm_summary, rule_summary,
+                    stats, started_at, now, s3_url, evidence, pdf_path, s3_pdf_url,
+                )
+        logger.info(f"MongoDB: all 7 collections saved (transactional) for meeting #{meeting_id}")
+        return {col: True for col in [
+            "meeting_metadata", "transcripts", "analysis_results",
+            "safety_findings", "action_items", "processing_status", "audit_logs"
+        ]}
+    except Exception as tx_err:
+        # Transaction not supported (standalone MongoDB) — fall back to non-transactional
+        logger.warning(
+            f"MongoDB transaction failed (falling back to non-transactional): {tx_err}"
+        )
+        return _save_full_analysis_no_transaction(
+            meeting_id, filename, transcript, timeline, findings, risk_score,
+            severity, llm_summary, rule_summary, stats, started_at, now,
+            s3_url, evidence, pdf_path, s3_pdf_url,
+        )
+
+
+def _save_full_analysis_in_session(
+    db, session, meeting_id, filename, transcript, timeline,
+    findings, risk_score, severity, llm_summary, rule_summary,
+    stats, started_at, now, s3_url, evidence, pdf_path, s3_pdf_url,
+):
+    """Execute all 7 collection writes within a MongoDB session/transaction."""
+    # 1. meeting_metadata
+    meta_doc = {
+        "meeting_id": meeting_id,
+        "title": filename,
+        "date": now,
+        "duration_seconds": timeline[-1]["end"] if timeline else None,
+        "participants": list({s.get("speaker") for s in timeline if s.get("speaker")}),
+        "s3_recording_url": s3_url,
+        "s3_pdf_url": s3_pdf_url,
+        "pdf_path": pdf_path,
+        "file_size_bytes": None,
+        "status": "COMPLETED",
+        "created_at": now,
+        "updated_at": now,
+    }
+    db["meeting_metadata"].update_one(
+        {"meeting_id": meeting_id}, {"$set": meta_doc}, upsert=True, session=session
+    )
+
+    # 2. transcripts
+    segments = [{"start": s.get("start"), "end": s.get("end"), "text": s.get("text", "")} for s in timeline]
+    transcript_doc = {
+        "meeting_id": meeting_id,
+        "full_transcript": transcript,
+        "segments": segments,
+        "word_count": len(transcript.split()),
+        "char_count": len(transcript),
+        "segment_count": len(timeline),
+        "created_at": now,
+    }
+    db["transcripts"].update_one(
+        {"meeting_id": meeting_id}, {"$set": transcript_doc}, upsert=True, session=session
+    )
+
+    # 3. analysis_results
+    analysis_doc = {
+        "meeting_id": meeting_id,
+        "risk_score": risk_score,
+        "severity": severity,
+        "llm_summary": llm_summary,
+        "rule_summary": rule_summary,
+        "finding_count": len(findings),
+        "unique_categories": stats.get("unique_categories", 0),
+        "category_breakdown": stats.get("categories", {}),
+        "confidence_stats": stats.get("confidence_stats", {}),
+        "severity_distribution": stats.get("severity_distribution", {}),
+        "context_type_distribution": stats.get("context_type_distribution", {}),
+        "ml_stats": stats.get("ml_stats", {}),
+        "word_count": stats.get("word_count"),
+        "evidence": evidence or [],
+        "analyzed_at": now,
+    }
+    db["analysis_results"].update_one(
+        {"meeting_id": meeting_id}, {"$set": analysis_doc}, upsert=True, session=session
+    )
+
+    # 4. safety_findings
+    db["safety_findings"].delete_many({"meeting_id": meeting_id}, session=session)
+    if findings:
+        docs = []
+        for f in findings:
+            cats = f.get("categories") or ([f["category"]] if f.get("category") else [])
+            docs.append({
+                "meeting_id": meeting_id,
+                "categories": cats,
+                "category": cats[0] if cats else "unknown",
+                "evidence": f.get("evidence") or f.get("text", ""),
+                "confidence": f.get("confidence") or f.get("max_confidence") or 0,
+                "context_type": f.get("context_type") or (f.get("context", {}) or {}).get("primary", "NEUTRAL"),
+                "severity": f.get("severity", "unknown"),
+                "speaker": f.get("speaker"),
+                "timestamp": f.get("timestamp"),
+                "matched_text": f.get("matched_text"),
+                "is_negated": (f.get("filters") or {}).get("is_negated", False),
+                "is_joke": (f.get("filters") or {}).get("is_joke", False),
+                "ml_label": (f.get("ml") or {}).get("top_label"),
+                "ml_confidence": (f.get("ml") or {}).get("top_confidence"),
+                "ml_agreement": (f.get("ml") or {}).get("agreement"),
+                "created_at": now,
+            })
+        db["safety_findings"].insert_many(docs, session=session)
+
+    # 5. action_items
+    action_items = [
+        {
+            "category": (f.get("categories") or [f.get("category", "")])[0],
+            "evidence": f.get("evidence") or f.get("text", ""),
+            "confidence": f.get("confidence") or f.get("max_confidence") or 0,
+            "severity": f.get("severity", "unknown"),
+            "speaker": f.get("speaker"),
+            "priority": "HIGH" if f.get("severity") in ("critical", "high") else "MEDIUM",
+        }
+        for f in findings if f.get("severity") in ("critical", "high")
+    ]
+    topics = list(stats.get("categories", {}).keys())
+    keywords = list({f.get("matched_text") for f in findings if f.get("matched_text")})
+    action_doc = {
+        "meeting_id": meeting_id,
+        "action_items": action_items,
+        "topics": topics,
+        "keywords": keywords,
+        "action_count": len(action_items),
+        "created_at": now,
+    }
+    db["action_items"].update_one(
+        {"meeting_id": meeting_id}, {"$set": action_doc}, upsert=True, session=session
+    )
+
+    # 6. processing_status
+    status_doc = {
+        "meeting_id": meeting_id,
+        "status": "COMPLETED",
+        "stage": "done",
+        "started_at": started_at or now,
+        "completed_at": now,
+        "error": None,
+        "updated_at": now,
+    }
+    db["processing_status"].update_one(
+        {"meeting_id": meeting_id}, {"$set": status_doc}, upsert=True, session=session
+    )
+
+    # 7. audit_logs
+    audit_doc = {
+        "event": "analysis_completed",
+        "meeting_id": meeting_id,
+        "user_action": None,
+        "details": {"severity": severity, "risk_score": risk_score, "findings": len(findings)},
+        "timestamp": now,
+    }
+    db["audit_logs"].insert_one(audit_doc, session=session)
+
+
+def _save_full_analysis_no_transaction(
+    meeting_id, filename, transcript, timeline, findings, risk_score,
+    severity, llm_summary, rule_summary, stats, started_at, now,
+    s3_url, evidence, pdf_path, s3_pdf_url,
+) -> Dict[str, bool]:
+    """Non-transactional fallback for standalone MongoDB instances."""
     results = {}
 
     results["meeting_metadata"] = save_meeting_metadata(
@@ -496,9 +720,9 @@ def save_full_analysis(
         event="analysis_completed",
         meeting_id=meeting_id,
         details={
-            "severity":    severity,
-            "risk_score":  risk_score,
-            "findings":    len(findings),
+            "severity": severity,
+            "risk_score": risk_score,
+            "findings": len(findings),
         },
     )
 
@@ -809,89 +1033,107 @@ def get_full_report(meeting_id: int) -> Optional[Dict[str, Any]]:
 
 def get_analytics_summary() -> Dict[str, Any]:
     """
-    Aggregate analytics across all meetings — replaces the SQLite analytics query.
+    Aggregate analytics across all meetings using MongoDB aggregation pipelines.
     """
     db = get_mongo_db()
     if db is None:
         return _empty_analytics()
 
     try:
-        # Pull lightweight fields from analysis_results
-        ar_docs = list(db["analysis_results"].find(
-            {},
+        # Pipeline 1: Aggregate analysis_results
+        ar_pipeline = [
             {
-                "meeting_id": 1, "risk_score": 1, "severity": 1,
-                "category_breakdown": 1, "context_type_distribution": 1,
-                "ml_stats": 1, "finding_count": 1,
-                "confidence_stats": 1, "_id": 0,
-            },
-        ))
+                "$group": {
+                    "_id": None,
+                    "total_reports": {"$sum": 1},
+                    "total_findings": {"$sum": {"$ifNull": ["$finding_count", 0]}},
+                    "avg_risk_score": {"$avg": {"$ifNull": ["$risk_score", 0]}},
+                    "risk_scores": {"$push": "$risk_score"},
+                    "severities": {"$push": "$severity"},
+                    "category_breakdowns": {"$push": "$category_breakdown"},
+                    "context_distributions": {"$push": "$context_type_distribution"},
+                    "ml_stats_list": {"$push": "$ml_stats"},
+                    "confidence_stats_list": {"$push": "$confidence_stats"},
+                    "meeting_ids": {"$push": "$meeting_id"},
+                }
+            }
+        ]
+        ar_result = list(db["analysis_results"].aggregate(ar_pipeline))
 
-        # Pull status from processing_status
-        ps_docs = list(db["processing_status"].find({}, {"meeting_id": 1, "status": 1, "_id": 0}))
-        status_map = {d["meeting_id"]: d.get("status", "COMPLETED") for d in ps_docs}
+        if not ar_result:
+            return _empty_analytics()
 
+        agg = ar_result[0]
+        total_reports = agg.get("total_reports", 0)
+        total_findings = agg.get("total_findings", 0)
+        avg_risk = round(agg.get("avg_risk_score", 0) or 0, 2)
+
+        # Severity distribution
         severity_dist: Dict[str, int] = {}
-        status_dist:   Dict[str, int] = {}
+        for sev in (agg.get("severities") or []):
+            s = (sev or "unknown").capitalize()
+            severity_dist[s] = severity_dist.get(s, 0) + 1
+
+        # Risk score histogram
         risk_histogram = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
+        for score in (agg.get("risk_scores") or []):
+            s = score or 0
+            if s <= 20:   risk_histogram["0-20"] += 1
+            elif s <= 40: risk_histogram["21-40"] += 1
+            elif s <= 60: risk_histogram["41-60"] += 1
+            elif s <= 80: risk_histogram["61-80"] += 1
+            else:         risk_histogram["81-100"] += 1
+
+        # Category totals
         category_totals: Dict[str, int] = {}
-        context_totals:  Dict[str, int] = {}
+        for breakdown in (agg.get("category_breakdowns") or []):
+            if breakdown:
+                for cat, cnt in breakdown.items():
+                    category_totals[cat] = category_totals.get(cat, 0) + (cnt or 0)
+
+        # Context type totals
+        context_totals: Dict[str, int] = {}
+        for dist in (agg.get("context_distributions") or []):
+            if dist:
+                for ctx, cnt in dist.items():
+                    context_totals[ctx] = context_totals.get(ctx, 0) + (cnt or 0)
+
+        # ML agreement totals
         ml_agreed = ml_disagreed = ml_total = 0
-        total_findings = 0
-        risk_scores: List[float] = []
-        # Confidence histogram aggregated across all reports (using avg confidence per report)
+        for ml_s in (agg.get("ml_stats_list") or []):
+            if ml_s:
+                ml_agreed += ml_s.get("agreed", 0)
+                ml_disagreed += ml_s.get("disagreed", 0)
+                ml_total += ml_s.get("total_with_ml", 0)
+        ml_rate = round(ml_agreed / ml_total, 4) if ml_total > 0 else None
+
+        # Confidence histogram
         conf_histogram: Dict[str, int] = {"0-25": 0, "25-50": 0, "50-75": 0, "75-100": 0}
+        for conf_s in (agg.get("confidence_stats_list") or []):
+            if conf_s:
+                avg_conf = conf_s.get("average")
+                if avg_conf is not None:
+                    pct = float(avg_conf) * 100
+                    if pct <= 25:   conf_histogram["0-25"] += 1
+                    elif pct <= 50: conf_histogram["25-50"] += 1
+                    elif pct <= 75: conf_histogram["50-75"] += 1
+                    else:           conf_histogram["75-100"] += 1
 
-        for doc in ar_docs:
-            sev = (doc.get("severity") or "unknown").capitalize()
-            severity_dist[sev] = severity_dist.get(sev, 0) + 1
+        # Pipeline 2: Status distribution from processing_status
+        status_pipeline = [
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+        ]
+        status_result = list(db["processing_status"].aggregate(status_pipeline))
+        status_dist = {doc["_id"]: doc["count"] for doc in status_result if doc["_id"]}
 
-            st = status_map.get(doc["meeting_id"], "COMPLETED")
-            status_dist[st] = status_dist.get(st, 0) + 1
-
-            score = doc.get("risk_score") or 0
-            risk_scores.append(score)
-            if score <= 20:   risk_histogram["0-20"] += 1
-            elif score <= 40: risk_histogram["21-40"] += 1
-            elif score <= 60: risk_histogram["41-60"] += 1
-            elif score <= 80: risk_histogram["61-80"] += 1
-            else:             risk_histogram["81-100"] += 1
-
-            for cat, cnt in (doc.get("category_breakdown") or {}).items():
-                category_totals[cat] = category_totals.get(cat, 0) + (cnt or 0)
-
-            for ctx, cnt in (doc.get("context_type_distribution") or {}).items():
-                context_totals[ctx] = context_totals.get(ctx, 0) + (cnt or 0)
-
-            ml_s = doc.get("ml_stats") or {}
-            ml_agreed    += ml_s.get("agreed", 0)
-            ml_disagreed += ml_s.get("disagreed", 0)
-            ml_total     += ml_s.get("total_with_ml", 0)
-
-            total_findings += doc.get("finding_count", 0)
-
-            # Bucket average confidence per report into the histogram
-            conf_s = doc.get("confidence_stats") or {}
-            avg_conf = conf_s.get("average")
-            if avg_conf is not None:
-                pct = float(avg_conf) * 100
-                if pct <= 25:   conf_histogram["0-25"]   += 1
-                elif pct <= 50: conf_histogram["25-50"]  += 1
-                elif pct <= 75: conf_histogram["50-75"]  += 1
-                else:
-                    conf_histogram["75-100"] += 1
-
-        avg_risk = round(sum(risk_scores) / len(risk_scores), 2) if risk_scores else 0.0
-        ml_rate  = round(ml_agreed / ml_total, 4) if ml_total > 0 else None
         top_categories = sorted(
             [{"category": k, "count": v} for k, v in category_totals.items()],
             key=lambda x: x["count"], reverse=True,
         )
-        # High-confidence count: reports whose average confidence is in the 75-100% bucket
         high_confidence_count = conf_histogram.get("75-100", 0)
 
         return {
-            "total_reports":       len(ar_docs),
+            "total_reports":       total_reports,
             "total_findings":      total_findings,
             "avg_risk_score":      avg_risk,
             "severity_distribution": severity_dist,

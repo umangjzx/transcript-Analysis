@@ -253,6 +253,45 @@ class AnalysisResponse(BaseModel):
         }
 
 
+class BatchAnalysisItem(BaseModel):
+    """Per-file result inside a batch upload response."""
+
+    filename: str = Field(..., description="Original filename as uploaded")
+    id: Optional[int] = Field(None, description="Allocated record ID (null if accepted=false)")
+    status: str = Field(..., description="ACCEPTED, REJECTED, or ERROR")
+    accepted: bool = Field(..., description="Whether the file was queued for analysis")
+    detail: Optional[str] = Field(None, description="Reason for rejection or error, if any")
+
+
+class BatchAnalysisResponse(BaseModel):
+    """Response for POST /api/v1/analyze/batch."""
+
+    total: int = Field(..., description="Total files received in the request")
+    accepted: int = Field(..., description="Number of files accepted for processing")
+    rejected: int = Field(..., description="Number of files rejected")
+    items: List[BatchAnalysisItem] = Field(..., description="Per-file outcome")
+    message: str = Field(
+        default="Batch accepted; poll GET /api/v1/report/{id} for each accepted record.",
+        description="Human-readable status message",
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "total": 3,
+                "accepted": 2,
+                "rejected": 1,
+                "items": [
+                    {"filename": "call1.mp3", "id": 42, "status": "ACCEPTED", "accepted": True, "detail": None},
+                    {"filename": "call2.wav", "id": 43, "status": "ACCEPTED", "accepted": True, "detail": None},
+                    {"filename": "notes.pdf", "id": None, "status": "REJECTED", "accepted": False,
+                     "detail": "Unsupported audio format: .pdf"},
+                ],
+                "message": "Batch accepted; poll GET /api/v1/report/{id} for each accepted record.",
+            }
+        }
+
+
 class HistoryItem(BaseModel):
     """History list item."""
 

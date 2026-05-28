@@ -25,7 +25,7 @@ from database.mongo import get_mongo_db
 
 
 def main():
-    print("\n── AuraSafety Admin Setup ──────────────────────────────")
+    print("\n── Melody Wings Safety Admin Setup ─────────────────────")
 
     # Verify MongoDB is reachable
     db = get_mongo_db()

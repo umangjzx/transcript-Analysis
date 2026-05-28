@@ -24,7 +24,6 @@ import json
 import uuid
 import logging
 import time
-import threading
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 
@@ -57,6 +56,7 @@ from modules.report_generator import generate_pdf_report
 from modules.chatbot import store_transcript, answer_question, delete_transcript
 from modules.email_notifier import send_alert_email, send_summary_email, should_auto_alert
 from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
+from modules.virus_scanner import scan_file as virus_scan_file
 from auth import get_current_user, authenticate_user, create_access_token
 
 # -- Logging -------------------------------------------------------------------
@@ -64,11 +64,21 @@ from auth import get_current_user, authenticate_user, create_access_token
 os.makedirs("logs", exist_ok=True)
 os.makedirs("reports", exist_ok=True)
 
+from logging.handlers import RotatingFileHandler
+
+_log_max_bytes = int(os.getenv("LOG_MAX_SIZE_MB", "50")) * 1024 * 1024  # Default 50 MB
+_log_backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))  # Keep 5 rotated files
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
     handlers=[
-        logging.FileHandler("logs/app.log", encoding="utf-8"),
+        RotatingFileHandler(
+            "logs/app.log",
+            maxBytes=_log_max_bytes,
+            backupCount=_log_backup_count,
+            encoding="utf-8",
+        ),
         logging.StreamHandler(),
     ],
 )
@@ -101,39 +111,10 @@ def _get_enable_llm_summary() -> bool:
     return os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
 
 # -- TTL cache -----------------------------------------------------------------
+# Use the shared Redis-backed cache from modules.cache
+from modules.cache import TTLCache as _TTLCache_cls
 
-_CACHE_TTL = 60  # seconds
-
-
-class _TTLCache:
-    """Minimal thread-safe TTL cache for read-heavy endpoints."""
-
-    def __init__(self, ttl: int = _CACHE_TTL):
-        self._ttl = ttl
-        self._store: Dict[str, Any] = {}
-        self._ts: Dict[str, float] = {}
-        self._lock = threading.Lock()
-
-    def get(self, key: str):
-        with self._lock:
-            if key in self._store and (time.monotonic() - self._ts[key]) < self._ttl:
-                return self._store[key]
-            return None
-
-    def set(self, key: str, value: Any):
-        with self._lock:
-            self._store[key] = value
-            self._ts[key] = time.monotonic()
-
-    def invalidate(self, key: str = None):
-        with self._lock:
-            if key:
-                self._store.pop(key, None); self._ts.pop(key, None)
-            else:
-                self._store.clear(); self._ts.clear()
-
-
-_cache = _TTLCache()
+_cache = _TTLCache_cls(ttl=60, name="app")
 
 # -- Database init -------------------------------------------------------------
 
@@ -163,6 +144,32 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(RequestIDMiddleware)
+
+# -- Content-Security-Policy headers -------------------------------------------
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "font-src 'self'; "
+            "connect-src 'self' ws: wss:; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # -- API Key auth middleware ----------------------------------------------------
 
@@ -198,6 +205,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# -- Rate Limiting -------------------------------------------------------------
+
+from middleware.rate_limiter import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
+
 # -- Global exception handler --------------------------------------------------
 
 @app.exception_handler(Exception)
@@ -227,6 +239,18 @@ risk_scorer = WeightedRiskScorer()
 
 @app.on_event("startup")
 async def startup_event():
+    # ── Fail-fast: JWT_SECRET must be set in production ───────────────────────
+    _env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower()
+    _jwt_secret = os.getenv("JWT_SECRET", "")
+    if _env in ("production", "prod", "staging") and not _jwt_secret:
+        logger.critical(
+            "FATAL: JWT_SECRET is not set. The server refuses to start in "
+            f"'{_env}' mode without a JWT signing secret. "
+            "Set JWT_SECRET in your environment or .env file."
+        )
+        import sys
+        sys.exit(1)
+
     logger.info("=" * 70)
     logger.info("Audio Safety Analyzer v2.1 Starting...")
     logger.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
@@ -258,6 +282,7 @@ async def startup_event():
 
     # ML warm-up — load model into memory before first real request
     if _enable_ml:
+        import threading as _threading
         def _warmup():
             try:
                 logger.info("ML classifier warm-up: loading model...")
@@ -265,7 +290,7 @@ async def startup_event():
                 logger.info("ML classifier warm-up complete")
             except Exception as _e:
                 logger.warning(f"ML warm-up failed (non-fatal): {_e}")
-        threading.Thread(target=_warmup, daemon=True).start()
+        _threading.Thread(target=_warmup, daemon=True).start()
 
     # Chatbot warm-up — pre-load SentenceTransformer + ChromaDB so the first
     # import doesn't pay the cold-start cost mid-request (~4s on CPU).
@@ -278,51 +303,127 @@ async def startup_event():
             logger.info("Chatbot warm-up complete")
         except Exception as _e:
             logger.warning(f"Chatbot warm-up failed (non-fatal): {_e}")
-    threading.Thread(target=_warmup_chatbot, daemon=True).start()
 
-    # Upload cleanup daemon
+    import threading as _threading_chatbot
+    _threading_chatbot.Thread(target=_warmup_chatbot, daemon=True).start()
+
+    # Upload cleanup — scheduled via Celery Beat (see celery_app.py)
+    # The old threading daemon is removed; use:
+    #   celery -A celery_app beat --loglevel=info
+    # with a schedule entry for tasks.cleanup_old_uploads every hour.
     if UPLOAD_TTL_HOURS > 0:
-        def _cleanup():
-            while True:
-                try:
-                    cutoff_ts = time.time() - UPLOAD_TTL_HOURS * 3600
-                    deleted = 0
-                    if os.path.isdir(UPLOAD_FOLDER):
-                        for fname in os.listdir(UPLOAD_FOLDER):
-                            fpath = os.path.join(UPLOAD_FOLDER, fname)
-                            try:
-                                if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff_ts:
-                                    os.remove(fpath)
-                                    deleted += 1
-                            except Exception:
-                                pass
-                    if deleted:
-                        logger.info(f"Upload cleanup: removed {deleted} file(s) older than {UPLOAD_TTL_HOURS}h")
-                except Exception as _e:
-                    logger.warning(f"Upload cleanup error: {_e}")
-                time.sleep(3600)
-        threading.Thread(target=_cleanup, daemon=True).start()
-        logger.info(f"Upload cleanup daemon started (TTL={UPLOAD_TTL_HOURS}h)")
+        logger.info(f"Upload cleanup configured (TTL={UPLOAD_TTL_HOURS}h) — run via Celery Beat")
 
     logger.info("Service initialized successfully")
 
-    # Auto-start Drive watcher if enabled in .env
-    from modules.drive_watcher import start_watcher as _start_drive_watcher, AUTO_WATCH as _auto_watch
+    # Run database migrations
+    try:
+        from database.migrations import run_migrations
+        migration_result = run_migrations()
+        if migration_result["applied"]:
+            logger.info(f"Database migrations applied: {migration_result['applied']}")
+        if migration_result["failed"]:
+            logger.error(f"Database migrations FAILED: {migration_result['failed']}")
+    except Exception as _e:
+        logger.warning(f"Database migration check failed (non-fatal): {_e}")
+
+    # Auto-start Drive watcher — now handled by Celery Beat periodic task
+    from modules.drive_watcher import AUTO_WATCH as _auto_watch
     if _auto_watch:
-        _start_drive_watcher()
-        logger.info("Google Drive auto-watcher started (DRIVE_AUTO_WATCH=true)")
+        logger.info("Google Drive auto-watcher configured (DRIVE_AUTO_WATCH=true) — run via Celery Beat")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """Graceful shutdown — clean up resources."""
     logger.info("Audio Safety Analyzer shutting down...")
+
+    # Stop WebSocket progress queue
+    from modules.websocket_manager import _progress_queue
+    if _progress_queue:
+        try:
+            _progress_queue.put_nowait(None)  # Signal to stop
+        except Exception:
+            pass
+
+    # Close MongoDB connection pool
+    try:
+        from database.mongo import _client as mongo_client
+        if mongo_client:
+            mongo_client.close()
+            logger.info("MongoDB connection pool closed")
+    except Exception as e:
+        logger.warning(f"MongoDB shutdown error: {e}")
+
+    # Close Redis connections
+    try:
+        from modules.cache import _get_redis
+        r = _get_redis()
+        if r:
+            r.close()
+            logger.info("Redis connection closed")
+    except Exception as e:
+        logger.warning(f"Redis shutdown error: {e}")
+
+    # Reset circuit breakers
+    try:
+        from modules.circuit_breaker import ollama_breaker, s3_breaker
+        ollama_breaker.reset()
+        s3_breaker.reset()
+    except Exception:
+        pass
+
+    logger.info("Graceful shutdown complete")
 
 # -- Register versioned router -------------------------------------------------
 
 from api.audio_analysis_routes import router as v1_router  # noqa: E402
 from api.google_drive_routes import router as gdrive_router  # noqa: E402
+from api.auth_routes import router as auth_router  # noqa: E402
+from api.notification_routes import router as notify_router  # noqa: E402
+from api.analytics_routes import router as analytics_router  # noqa: E402
 app.include_router(v1_router)
 app.include_router(gdrive_router)
+app.include_router(auth_router)
+app.include_router(notify_router)
+app.include_router(analytics_router)
+
+# -- WebSocket endpoint for real-time progress ---------------------------------
+
+from fastapi import WebSocket, WebSocketDisconnect as _WSD  # noqa: E402
+from modules.websocket_manager import manager as ws_manager, process_progress_queue, init_progress_queue  # noqa: E402
+
+@app.websocket("/ws/progress")
+async def websocket_progress(websocket: WebSocket, report_id: int = None):
+    """WebSocket endpoint for real-time analysis progress updates."""
+    await ws_manager.connect(websocket, report_id)
+    try:
+        while True:
+            # Keep connection alive, handle client messages
+            data = await websocket.receive_text()
+            # Client can send {"subscribe": report_id} to subscribe to specific reports
+            try:
+                import json as _json
+                msg = _json.loads(data)
+                if "subscribe" in msg:
+                    rid = int(msg["subscribe"])
+                    async with ws_manager._lock:
+                        if rid not in ws_manager._subscriptions:
+                            ws_manager._subscriptions[rid] = set()
+                        ws_manager._subscriptions[rid].add(websocket)
+            except Exception:
+                pass
+    except _WSD:
+        await ws_manager.disconnect(websocket)
+    except Exception:
+        await ws_manager.disconnect(websocket)
+
+@app.on_event("startup")
+async def _start_ws_queue():
+    """Start the WebSocket progress queue processor."""
+    import asyncio
+    init_progress_queue(asyncio.get_event_loop())
+    asyncio.create_task(process_progress_queue())
 
 if _enable_ml:
     logger.info("ML classifier ENABLED (distilbert-mnli)")
@@ -340,383 +441,24 @@ class NotifyRequest(BaseModel):
     recipients: Optional[list] = None
 
 
-# -- Background pipeline -------------------------------------------------------
+# -- Background pipeline (Celery tasks) ----------------------------------------
 
 def process_audio_background(record_id: int, filepath: str, filename: str):
-    """Full analysis pipeline — runs in a background thread. Writes to MongoDB + S3 only."""
-    started_at = datetime.now(timezone.utc)
-    save_processing_status(record_id, "PROCESSING", "transcription", started_at=started_at)
-    audit_log("analysis_started", meeting_id=record_id, details={"filename": filename})
-    s3_url: Optional[str] = None
-    s3_pdf_url: Optional[str] = None
-    pdf_path: Optional[str] = None
+    """Dispatch audio analysis to Celery worker."""
+    from tasks.analysis_tasks import run_audio_analysis
+    run_audio_analysis.delay(record_id, filepath, filename)
 
-    try:
-        # S3 audio upload (non-fatal)
-        try:
-            s3_url = s3_upload_audio(filepath, record_id, filename)
-            if s3_url:
-                logger.info(f"[#{record_id}] Audio uploaded to S3: {s3_url}")
-                update_s3_urls(record_id, s3_audio_url=s3_url)
-                audit_log("s3_upload_success", meeting_id=record_id, details={"s3_url": s3_url})
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] S3 upload failed: {_e}")
-
-        # Transcription
-        transcript, timeline = transcribe_audio(filepath)
-        logger.info(f"[#{record_id}] Transcription complete: {len(transcript)} chars")
-        save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
-
-        # Detection
-        analysis_result = grooming_detector.analyze_transcript(transcript=transcript, speaker_aware=True)
-        findings = analysis_result.get("grouped_findings", [])
-        evidence = extract_evidence(findings)
-        save_processing_status(record_id, "PROCESSING", "scoring", started_at=started_at)
-
-        # Scoring & severity
-        risk_result = risk_scorer.calculate_score(findings)
-        risk_score = risk_result.get("score", 0)
-        severity = classify_severity(risk_score)
-        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} ? {severity}")
-
-        # Stats & summaries
-        stats = generate_stats(transcript, findings, severity, risk_score)
-        summary = generate_summary(transcript, findings, risk_score, severity)
-
-        if _get_enable_llm_summary():
-            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
-            try:
-                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-                llm_summary = f"LLM Summary unavailable: {_e}"
-        else:
-            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
-            llm_summary = summary  # fall back to rule-based summary
-
-        # Vector store
-        try:
-            store_transcript(record_id, transcript)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] Vector store failed: {_e}")
-
-        # PDF
-        try:
-            pdf_path = generate_pdf_report(
-                report_id=record_id, filename=filename, severity=severity,
-                risk_score=risk_score, findings=findings, summary=llm_summary,
-            )
-            update_pdf_path(record_id, pdf_path)
-            try:
-                s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
-                if s3_pdf_url:
-                    update_s3_urls(record_id, s3_pdf_url=s3_pdf_url)
-                    audit_log("s3_pdf_uploaded", meeting_id=record_id, details={"s3_url": s3_pdf_url})
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
-        except Exception as _e:
-            logger.error(f"[#{record_id}] PDF generation failed: {_e}", exc_info=True)
-
-        # MongoDB — full analysis save
-        try:
-            save_full_analysis(
-                meeting_id=record_id, filename=filename, transcript=transcript,
-                timeline=timeline, findings=findings, risk_score=risk_score,
-                severity=severity, llm_summary=llm_summary, rule_summary=summary,
-                stats=stats, started_at=started_at, s3_url=s3_url,
-                evidence=evidence, pdf_path=pdf_path, s3_pdf_url=s3_pdf_url,
-            )
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
-            # Ensure processing_status is not left stuck in PROCESSING
-            try:
-                save_processing_status(
-                    record_id,
-                    "FAILED",
-                    "error",
-                    started_at=started_at,
-                    completed_at=datetime.now(timezone.utc),
-                    error=str(_e),
-                )
-                update_meeting_status(record_id, "FAILED")
-            except Exception:
-                # Best-effort; original warning above is primary signal
-                pass
-
-        # Invalidate both cache layers so next /history and /analytics reflect new data
-        _cache.invalidate()
-        from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
-        _h_cache.invalidate()
-        _r_cache.invalidate()
-        _e_cache.invalidate()
-
-        # Auto-alert email
-        if should_auto_alert(severity):
-            try:
-                send_alert_email(
-                    report_id=record_id, filename=filename, severity=severity,
-                    risk_score=risk_score, findings=findings, summary=llm_summary,
-                    stats=stats, pdf_path=pdf_path, app_url=APP_URL,
-                )
-                audit_log("alert_email_sent", meeting_id=record_id,
-                          details={"severity": severity, "risk_score": risk_score})
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] Auto-alert email failed: {_e}")
-
-        logger.info(f"[#{record_id}] Analysis COMPLETED — severity={severity}, score={risk_score:.1f}")
-
-    except Exception as _e:
-        save_processing_status(record_id, "FAILED", "error",
-                               started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(_e))
-        update_meeting_status(record_id, "FAILED")
-        audit_log("analysis_failed", meeting_id=record_id, details={"error": str(_e)})
-        logger.error(f"[#{record_id}] Background processing FAILED: {_e}", exc_info=True)
 
 def process_video_background(record_id: int, audio_filepath: str, filename: str):
-    """
-    Analysis pipeline for video-sourced audio.
-    - Skips S3 audio upload (we never store the video or its extracted audio)
-    - Deletes the temporary WAV file immediately after transcription
-    - Stores only transcript text + analysis results in MongoDB
-    """
-    started_at = datetime.now(timezone.utc)
-    save_processing_status(record_id, "PROCESSING", "transcription", started_at=started_at)
-    audit_log("video_analysis_started", meeting_id=record_id, details={"filename": filename})
-    pdf_path: Optional[str] = None
-    s3_pdf_url: Optional[str] = None
-
-    try:
-        # Transcription — use the temp WAV, then delete it immediately
-        try:
-            transcript, timeline = transcribe_audio(audio_filepath)
-            logger.info(f"[#{record_id}] Transcription complete: {len(transcript)} chars")
-        finally:
-            # Always remove the temp audio file — video source is never stored
-            try:
-                os.remove(audio_filepath)
-                logger.info(f"[#{record_id}] Temp audio file deleted: {audio_filepath}")
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] Could not delete temp audio: {_e}")
-
-        save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
-
-        # Detection
-        analysis_result = grooming_detector.analyze_transcript(transcript=transcript, speaker_aware=True)
-        findings = analysis_result.get("grouped_findings", [])
-        evidence = extract_evidence(findings)
-        save_processing_status(record_id, "PROCESSING", "scoring", started_at=started_at)
-
-        # Scoring & severity
-        risk_result = risk_scorer.calculate_score(findings)
-        risk_score = risk_result.get("score", 0)
-        severity = classify_severity(risk_score)
-        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} ? {severity}")
-
-        # Stats & summaries
-        stats = generate_stats(transcript, findings, severity, risk_score)
-        summary = generate_summary(transcript, findings, risk_score, severity)
-
-        if _get_enable_llm_summary():
-            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
-            try:
-                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-                llm_summary = f"LLM Summary unavailable: {_e}"
-        else:
-            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
-            llm_summary = summary  # fall back to rule-based summary
-
-        # Vector store
-        try:
-            store_transcript(record_id, transcript)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] Vector store failed: {_e}")
-
-        # PDF
-        try:
-            pdf_path = generate_pdf_report(
-                report_id=record_id, filename=filename, severity=severity,
-                risk_score=risk_score, findings=findings, summary=llm_summary,
-            )
-            update_pdf_path(record_id, pdf_path)
-            try:
-                s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
-                if s3_pdf_url:
-                    update_s3_urls(record_id, s3_pdf_url=s3_pdf_url)
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
-        except Exception as _e:
-            logger.error(f"[#{record_id}] PDF generation failed: {_e}", exc_info=True)
-
-        # MongoDB — save transcript + analysis, no s3_url for audio
-        try:
-            save_full_analysis(
-                meeting_id=record_id, filename=filename, transcript=transcript,
-                timeline=timeline, findings=findings, risk_score=risk_score,
-                severity=severity, llm_summary=llm_summary, rule_summary=summary,
-                stats=stats, started_at=started_at, s3_url=None,
-                evidence=evidence, pdf_path=pdf_path, s3_pdf_url=s3_pdf_url,
-            )
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
-            # Ensure processing_status is not left stuck in PROCESSING
-            try:
-                save_processing_status(
-                    record_id,
-                    "FAILED",
-                    "error",
-                    started_at=started_at,
-                    completed_at=datetime.now(timezone.utc),
-                    error=str(_e),
-                )
-                update_meeting_status(record_id, "FAILED")
-            except Exception:
-                pass
-
-        _cache.invalidate()
-        from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
-        _h_cache.invalidate()
-        _r_cache.invalidate()
-        _e_cache.invalidate()
-
-        # Auto-alert email
-        if should_auto_alert(severity):
-            try:
-                send_alert_email(
-                    report_id=record_id, filename=filename, severity=severity,
-                    risk_score=risk_score, findings=findings, summary=llm_summary,
-                    stats=stats, pdf_path=pdf_path, app_url=APP_URL,
-                )
-                audit_log("alert_email_sent", meeting_id=record_id,
-                          details={"severity": severity, "risk_score": risk_score})
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] Auto-alert email failed: {_e}")
-
-        logger.info(f"[#{record_id}] Video analysis COMPLETED — severity={severity}, score={risk_score:.1f}")
-
-    except Exception as _e:
-        save_processing_status(record_id, "FAILED", "error",
-                               started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(_e))
-        update_meeting_status(record_id, "FAILED")
-        audit_log("video_analysis_failed", meeting_id=record_id, details={"error": str(_e)})
-        logger.error(f"[#{record_id}] Video background processing FAILED: {_e}", exc_info=True)
+    """Dispatch video analysis to Celery worker."""
+    from tasks.analysis_tasks import run_video_analysis
+    run_video_analysis.delay(record_id, audio_filepath, filename)
 
 
 def process_transcript_background(record_id: int, transcript: str, filename: str):
-    """
-    Analysis pipeline for a pre-supplied transcript — skips transcription.
-    Writes to MongoDB + S3 only (no audio file to upload).
-    """
-    started_at = datetime.now(timezone.utc)
-    save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
-    audit_log("transcript_analysis_started", meeting_id=record_id, details={"filename": filename})
-    pdf_path: Optional[str] = None
-    s3_pdf_url: Optional[str] = None
-
-    try:
-        # Build a minimal timeline (no timestamps available for raw text)
-        timeline = [{"start": 0.0, "end": 0.0, "text": transcript, "speaker": "UNKNOWN"}]
-
-        # Detection
-        analysis_result = grooming_detector.analyze_transcript(transcript=transcript, speaker_aware=True)
-        findings = analysis_result.get("grouped_findings", [])
-        evidence = extract_evidence(findings)
-        save_processing_status(record_id, "PROCESSING", "scoring", started_at=started_at)
-
-        # Scoring & severity
-        risk_result = risk_scorer.calculate_score(findings)
-        risk_score = risk_result.get("score", 0)
-        severity = classify_severity(risk_score)
-        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} ? {severity}")
-
-        # Stats & summaries
-        stats = generate_stats(transcript, findings, severity, risk_score)
-        summary = generate_summary(transcript, findings, risk_score, severity)
-
-        if _get_enable_llm_summary():
-            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
-            try:
-                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-                llm_summary = f"LLM Summary unavailable: {_e}"
-        else:
-            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
-            llm_summary = summary  # fall back to rule-based summary
-
-        # Vector store
-        try:
-            store_transcript(record_id, transcript)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] Vector store failed: {_e}")
-
-        # PDF
-        try:
-            pdf_path = generate_pdf_report(
-                report_id=record_id, filename=filename, severity=severity,
-                risk_score=risk_score, findings=findings, summary=llm_summary,
-            )
-            update_pdf_path(record_id, pdf_path)
-            try:
-                s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
-                if s3_pdf_url:
-                    update_s3_urls(record_id, s3_pdf_url=s3_pdf_url)
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
-        except Exception as _e:
-            logger.error(f"[#{record_id}] PDF generation failed: {_e}", exc_info=True)
-
-        # MongoDB — full analysis save
-        try:
-            save_full_analysis(
-                meeting_id=record_id, filename=filename, transcript=transcript,
-                timeline=timeline, findings=findings, risk_score=risk_score,
-                severity=severity, llm_summary=llm_summary, rule_summary=summary,
-                stats=stats, started_at=started_at, s3_url=None,
-                evidence=evidence, pdf_path=pdf_path, s3_pdf_url=s3_pdf_url,
-            )
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] MongoDB save failed: {_e}")
-            # Ensure processing_status is not left stuck in PROCESSING
-            try:
-                save_processing_status(
-                    record_id,
-                    "FAILED",
-                    "error",
-                    started_at=started_at,
-                    completed_at=datetime.now(timezone.utc),
-                    error=str(_e),
-                )
-                update_meeting_status(record_id, "FAILED")
-            except Exception:
-                pass
-
-        _cache.invalidate()
-        from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
-        _h_cache.invalidate()
-        _r_cache.invalidate()
-        _e_cache.invalidate()
-
-        # Auto-alert email
-        if should_auto_alert(severity):
-            try:
-                send_alert_email(
-                    report_id=record_id, filename=filename, severity=severity,
-                    risk_score=risk_score, findings=findings, summary=llm_summary,
-                    stats=stats, pdf_path=pdf_path, app_url=APP_URL,
-                )
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] Auto-alert email failed: {_e}")
-
-        logger.info(f"[#{record_id}] Transcript analysis COMPLETED — severity={severity}, score={risk_score:.1f}")
-
-    except Exception as _e:
-        save_processing_status(record_id, "FAILED", "error",
-                               started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(_e))
-        update_meeting_status(record_id, "FAILED")
-        audit_log("transcript_analysis_failed", meeting_id=record_id, details={"error": str(_e)})
-        logger.error(f"[#{record_id}] Transcript background processing FAILED: {_e}", exc_info=True)
+    """Dispatch transcript analysis to Celery worker."""
+    from tasks.analysis_tasks import run_transcript_analysis
+    run_transcript_analysis.delay(record_id, transcript, filename)
 
 
 # -- Routes --------------------------------------------------------------------
@@ -734,7 +476,7 @@ class LoginRequest(BaseModel):
 def login(body: LoginRequest):
     """
     Authenticate with username + password.
-    Returns a signed JWT on success.
+    Returns a signed JWT in an httpOnly cookie and in the response body.
     """
     from auth import authenticate_user, create_access_token
     user = authenticate_user(body.username, body.password)
@@ -746,22 +488,36 @@ def login(body: LoginRequest):
     token = create_access_token(user["username"], user.get("role", "admin"))
     audit_log("login_success", details={"username": user["username"]})
     logger.info(f"Login: '{user['username']}' authenticated successfully.")
-    return {
+
+    response = JSONResponse(content={
         "access_token": token,
         "token_type": "bearer",
         "username": user["username"],
         "role": user.get("role", "admin"),
-    }
+    })
+    # Set JWT in httpOnly cookie — secure, not accessible via JavaScript
+    from auth import JWT_EXPIRE_MINUTES
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        samesite="lax",
+        max_age=JWT_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+    return response
 
 
 @app.post("/auth/logout")
 def logout():
     """
-    Stateless logout — the client discards the token.
-    Logged for audit purposes.
+    Logout — clears the httpOnly cookie and logs for audit.
     """
     audit_log("logout")
-    return {"message": "Logged out successfully."}
+    response = JSONResponse(content={"message": "Logged out successfully."})
+    response.delete_cookie(key="access_token", path="/")
+    return response
 
 
 @app.get("/auth/me")
@@ -776,14 +532,85 @@ def home():
 
 @app.get("/health")
 def health():
+    import shutil
     from modules.s3_storage import ping as s3_ping
     from database.mongo import ping as mongo_ping
+
+    # Disk space check
+    try:
+        disk = shutil.disk_usage(UPLOAD_FOLDER)
+        disk_free_gb = round(disk.free / (1024**3), 2)
+        disk_total_gb = round(disk.total / (1024**3), 2)
+        disk_ok = disk.free > 1 * 1024**3  # At least 1 GB free
+    except Exception:
+        disk_free_gb = None
+        disk_total_gb = None
+        disk_ok = True  # Can't check, assume OK
+
+    # Whisper model check
+    whisper_status = {"available": False, "model": None}
+    try:
+        from modules.transcriber import get_whisper_model_info
+        whisper_info = get_whisper_model_info()
+        whisper_status = {"available": True, **whisper_info}
+    except ImportError:
+        # Function doesn't exist yet — check if whisper is importable
+        try:
+            import whisper
+            whisper_status = {"available": True, "model": "base"}
+        except ImportError:
+            whisper_status = {"available": False, "error": "whisper not installed"}
+    except Exception as e:
+        whisper_status = {"available": False, "error": str(e)}
+
+    # ChromaDB check
+    chromadb_status = {"available": False}
+    try:
+        from modules.chatbot import _get_collection
+        col = _get_collection()
+        chromadb_status = {"available": col is not None, "collection_count": col.count() if col else 0}
+    except Exception as e:
+        chromadb_status = {"available": False, "error": str(e)}
+
+    # Ollama LLM check
+    ollama_status = {"available": False}
+    try:
+        import requests as _req
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        resp = _req.get(f"{ollama_url}/api/tags", timeout=3)
+        if resp.status_code == 200:
+            models = resp.json().get("models", [])
+            ollama_status = {"available": True, "models": len(models)}
+        else:
+            ollama_status = {"available": False, "error": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        ollama_status = {"available": False, "error": str(e)}
+
+    # Redis check
+    redis_status = {"available": False}
+    try:
+        from modules.cache import _get_redis
+        r = _get_redis()
+        redis_status = {"available": r is not None}
+    except Exception as e:
+        redis_status = {"available": False, "error": str(e)}
+
+    all_healthy = mongo_ping() and disk_ok
     return {
-        "status": "healthy",
+        "status": "healthy" if all_healthy else "degraded",
         "service": "Audio Safety Analyzer",
         "ml_classifier": {"enabled": _enable_ml},
         "s3": s3_ping(),
         "mongodb": {"connected": mongo_ping()},
+        "whisper": whisper_status,
+        "chromadb": chromadb_status,
+        "ollama": ollama_status,
+        "redis": redis_status,
+        "disk": {
+            "ok": disk_ok,
+            "free_gb": disk_free_gb,
+            "total_gb": disk_total_gb,
+        },
     }
 
 
@@ -797,8 +624,21 @@ def collect_telemetry():
     return {"status": "ok"}
 
 
+_AUDIO_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks — stream to disk, never hold full file in memory
+
+
 @app.post("/analyze")
 async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    # Disk space pre-check before accepting upload
+    from modules.disk_space_checker import check_disk_space
+    disk_check = check_disk_space()
+    if not disk_check["ok"]:
+        raise HTTPException(
+            status_code=507,
+            detail=f"Insufficient disk space: {disk_check['free_mb']:.0f} MB available, "
+                   f"need {disk_check['required_mb']} MB.",
+        )
+
     extension = os.path.splitext(file.filename or "")[1].lower()
     if extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -806,18 +646,46 @@ async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = Fi
             detail=f"Unsupported audio format '{extension}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
         )
 
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
-        )
-
+    # Stream upload to disk in chunks — prevents OOM on concurrent large uploads
     safe_disk_name = f"{uuid.uuid4().hex}{extension}"
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
-    with open(filepath, "wb") as buffer:
-        buffer.write(content)
+    file_size = 0
+    try:
+        with open(filepath, "wb") as buffer:
+            while True:
+                chunk = await file.read(size=_AUDIO_CHUNK_SIZE)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > MAX_UPLOAD_BYTES:
+                    buffer.close()
+                    try:
+                        os.remove(filepath)
+                    except Exception:
+                        pass
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
+
+    # Virus scan
+    scan_result = virus_scan_file(filepath)
+    if not scan_result["safe"]:
+        os.remove(filepath)
+        raise HTTPException(
+            status_code=422,
+            detail=f"File rejected: virus detected ({scan_result['threat']})",
+        )
 
     original_filename = file.filename or safe_disk_name
 
@@ -827,14 +695,14 @@ async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = Fi
     _save_meta(
         meeting_id=record_id,
         filename=original_filename,
-        file_size_bytes=len(content),
+        file_size_bytes=file_size,
         status="PROCESSING",
     )
 
     background_tasks.add_task(process_audio_background, record_id, filepath, original_filename)
     audit_log("file_uploaded", meeting_id=record_id, user_action="upload",
-              details={"filename": original_filename, "size_bytes": len(content)})
-    logger.info(f"[#{record_id}] Upload accepted: {original_filename} ({len(content)//1024} KB)")
+              details={"filename": original_filename, "size_bytes": file_size})
+    logger.info(f"[#{record_id}] Upload accepted: {original_filename} ({file_size//1024} KB)")
 
     return {"id": record_id, "filename": original_filename,
             "status": "PROCESSING", "message": "Analysis started in background"}
@@ -854,6 +722,16 @@ async def analyze_video(background_tasks: BackgroundTasks, file: UploadFile = Fi
     in memory. The video file is deleted immediately after audio extraction.
     Only the transcript text and analysis results are stored.
     """
+    # Disk space pre-check
+    from modules.disk_space_checker import check_disk_space
+    disk_check = check_disk_space()
+    if not disk_check["ok"]:
+        raise HTTPException(
+            status_code=507,
+            detail=f"Insufficient disk space: {disk_check['free_mb']:.0f} MB available, "
+                   f"need {disk_check['required_mb']} MB.",
+        )
+
     extension = os.path.splitext(file.filename or "")[1].lower()
     if extension not in ALLOWED_VIDEO_EXTENSIONS:
         raise HTTPException(
@@ -899,6 +777,19 @@ async def analyze_video(background_tasks: BackgroundTasks, file: UploadFile = Fi
     # Extract audio from video to a WAV file
     audio_disk_name = f"{uuid.uuid4().hex}.wav"
     audio_filepath = os.path.join(UPLOAD_FOLDER, audio_disk_name)
+
+    # Virus scan the video file before processing
+    scan_result = virus_scan_file(video_filepath)
+    if not scan_result["safe"]:
+        try:
+            os.remove(video_filepath)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=422,
+            detail=f"File rejected: virus detected ({scan_result['threat']})",
+        )
+
     try:
         from modules.transcriber import extract_audio_from_video
         extract_audio_from_video(video_filepath, audio_filepath)

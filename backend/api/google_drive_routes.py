@@ -1,4 +1,4 @@
-﻿"""
+"""
 Google Drive / Docs Integration Routes
 =======================================
 Prefix: /api/v1/google-drive
@@ -20,7 +20,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -200,11 +200,13 @@ def list_files(
     try:
         query = None
         if search:
+            # Escape single quotes in search term to prevent query injection
+            safe_search = search.replace("\\", "\\\\").replace("'", "\\'")
             # Combine name search with MIME type filter
             mime_filter = (
                 "(mimeType='text/plain' or mimeType='application/vnd.google-apps.document')"
             )
-            query = f"{mime_filter} and name contains '{search}' and trashed=false"
+            query = f"{mime_filter} and name contains '{safe_search}' and trashed=false"
 
         files = list_drive_files(page_size=page_size, query=query)
         return {
@@ -235,7 +237,6 @@ def list_files(
 )
 def import_drive_file(
     body: ImportRequest,
-    background_tasks: BackgroundTasks,
 ):
     """
     Import a Google Drive file as a transcript and run the full analysis pipeline.
@@ -285,13 +286,8 @@ def import_drive_file(
         status="PROCESSING",
     )
 
-    # Run the transcript analysis pipeline in the background
-    background_tasks.add_task(
-        _run_transcript_pipeline,
-        record_id=record_id,
-        transcript=transcript_text,
-        filename=filename,
-    )
+    # Run the transcript analysis pipeline via Celery
+    _run_transcript_pipeline(record_id, transcript_text, filename)
 
     logger.info(
         f"[#{record_id}] Google Drive import queued: '{filename}' "
@@ -307,167 +303,15 @@ def import_drive_file(
     )
 
 
-# ── Background pipeline (transcript-only) ────────────────────────────────────
+# ── Background pipeline (Celery task) ─────────────────────────────────────────
 
 def _run_transcript_pipeline(record_id: int, transcript: str, filename: str):
     """
-    Runs the full analysis pipeline on a plain-text transcript.
-    Mirrors process_audio_background() in app.py but skips transcription.
+    Dispatches the transcript analysis to a Celery worker.
+    Kept as a function for backward compatibility with drive_watcher imports.
     """
-    from database.mongo import (
-        save_full_analysis, save_processing_status,
-        update_meeting_status, audit_log, update_pdf_path,
-        update_s3_urls,
-    )
-    from modules.grooming_detector import GroomingDetector
-    from modules.evidence_extractor import extract_evidence
-    from modules.risk_scorer import WeightedRiskScorer
-    from modules.severity_classifier import classify_severity
-    from modules.summarizer import generate_summary
-    from modules.stats import generate_stats
-    from modules.llm_summarizer import generate_llm_summary
-    from modules.report_generator import generate_pdf_report
-    from modules.chatbot import store_transcript
-    from modules.email_notifier import send_alert_email, should_auto_alert
-    from modules.s3_storage import upload_pdf_report as s3_upload_pdf
-    import os
-
-    started_at = datetime.now(timezone.utc)
-    save_processing_status(record_id, "PROCESSING", "analysis", started_at=started_at)
-    audit_log(
-        "gdrive_transcript_analysis_started",
-        meeting_id=record_id,
-        details={"filename": filename},
-    )
-
-    pdf_path = None
-    s3_pdf_url = None
-
-    try:
-        # Minimal timeline — no timestamps for raw text
-        timeline = [{"start": 0.0, "end": 0.0, "text": transcript, "speaker": "UNKNOWN"}]
-
-        # Detection
-        grooming_detector = GroomingDetector(min_confidence_threshold=0.3)
-        analysis_result = grooming_detector.analyze_transcript(
-            transcript=transcript, speaker_aware=True
-        )
-        findings = analysis_result.get("grouped_findings", [])
-        evidence = extract_evidence(findings)
-        save_processing_status(record_id, "PROCESSING", "scoring", started_at=started_at)
-
-        # Scoring & severity
-        risk_scorer = WeightedRiskScorer()
-        risk_result = risk_scorer.calculate_score(findings)
-        risk_score = risk_result.get("score", 0)
-        severity = classify_severity(risk_score)
-        logger.info(f"[#{record_id}] Risk score: {risk_score:.1f} → {severity}")
-
-        # Stats & summaries
-        stats = generate_stats(transcript, findings, severity, risk_score)
-        summary = generate_summary(transcript, findings, risk_score, severity)
-
-        enable_llm = os.getenv("ENABLE_LLM_SUMMARY", "true").strip().lower() == "true"
-        if enable_llm:
-            save_processing_status(record_id, "PROCESSING", "llm_summary", started_at=started_at)
-            try:
-                llm_summary = generate_llm_summary(transcript, findings, risk_score, severity)
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] LLM summary failed: {_e}")
-                llm_summary = f"LLM Summary unavailable: {_e}"
-        else:
-            logger.info(f"[#{record_id}] LLM summary skipped (ENABLE_LLM_SUMMARY=false)")
-            llm_summary = summary
-
-        # Vector store
-        try:
-            store_transcript(record_id, transcript)
-        except Exception as _e:
-            logger.warning(f"[#{record_id}] Vector store failed: {_e}")
-
-        # PDF
-        try:
-            pdf_path = generate_pdf_report(
-                report_id=record_id,
-                filename=filename,
-                severity=severity,
-                risk_score=risk_score,
-                findings=findings,
-                summary=llm_summary,
-            )
-            update_pdf_path(record_id, pdf_path)
-            try:
-                s3_pdf_url = s3_upload_pdf(pdf_path, record_id)
-                if s3_pdf_url:
-                    update_s3_urls(record_id, s3_pdf_url=s3_pdf_url)
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] S3 PDF upload failed: {_e}")
-        except Exception as _e:
-            logger.error(f"[#{record_id}] PDF generation failed: {_e}", exc_info=True)
-
-        # MongoDB — full save
-        save_full_analysis(
-            meeting_id=record_id,
-            filename=filename,
-            transcript=transcript,
-            timeline=timeline,
-            findings=findings,
-            risk_score=risk_score,
-            severity=severity,
-            llm_summary=llm_summary,
-            rule_summary=summary,
-            stats=stats,
-            started_at=started_at,
-            s3_url=None,
-            evidence=evidence,
-            pdf_path=pdf_path,
-            s3_pdf_url=s3_pdf_url,
-        )
-
-        # Auto-alert email
-        if should_auto_alert(severity):
-            try:
-                from config import APP_URL
-                send_alert_email(
-                    report_id=record_id,
-                    filename=filename,
-                    severity=severity,
-                    risk_score=risk_score,
-                    findings=findings,
-                    summary=llm_summary,
-                    stats=stats,
-                    pdf_path=pdf_path,
-                    app_url=APP_URL,
-                )
-                audit_log(
-                    "alert_email_sent",
-                    meeting_id=record_id,
-                    details={"severity": severity, "risk_score": risk_score},
-                )
-            except Exception as _e:
-                logger.warning(f"[#{record_id}] Auto-alert email failed: {_e}")
-
-        logger.info(
-            f"[#{record_id}] GDrive transcript analysis COMPLETED "
-            f"— severity={severity}, score={risk_score:.1f}"
-        )
-
-    except Exception as _e:
-        save_processing_status(
-            record_id, "FAILED", "error",
-            started_at=started_at,
-            completed_at=datetime.now(timezone.utc),
-            error=str(_e),
-        )
-        update_meeting_status(record_id, "FAILED")
-        audit_log(
-            "gdrive_transcript_analysis_failed",
-            meeting_id=record_id,
-            details={"error": str(_e)},
-        )
-        logger.error(
-            f"[#{record_id}] GDrive transcript pipeline FAILED: {_e}", exc_info=True
-        )
+    from tasks.analysis_tasks import run_drive_import_analysis
+    run_drive_import_analysis.delay(record_id, transcript, filename)
 
 
 # ── Watcher control endpoints ─────────────────────────────────────────────────

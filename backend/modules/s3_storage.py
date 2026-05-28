@@ -1,5 +1,5 @@
 """
-AWS S3 Storage — 5-type file storage for AuraSafety.
+AWS S3 Storage — 5-type file storage for Melody Wings Safety.
 
 Bucket layout
 -------------
@@ -109,7 +109,7 @@ def _content_type(filename: str) -> str:
 
 
 def _upload(local_path: str, key: str, content_type: str) -> Optional[str]:
-    """Core upload — returns public-style URL or None."""
+    """Core upload — uses multipart for files > 100 MB, returns public-style URL or None."""
     s3     = _get_client()
     bucket = _get_bucket()
     region = _get_region()
@@ -119,20 +119,98 @@ def _upload(local_path: str, key: str, content_type: str) -> Optional[str]:
     if not os.path.exists(local_path):
         logger.warning(f"S3: file not found: {local_path}")
         return None
+
+    file_size = os.path.getsize(local_path)
+    multipart_threshold = 100 * 1024 * 1024  # 100 MB
+
     try:
-        s3.upload_file(
-            local_path, bucket, key,
-            ExtraArgs={
-                "ContentType": content_type,
-                "ServerSideEncryption": "AES256",
-            },
-        )
-        url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
-        logger.info(f"S3 uploaded: {url}")
+        if file_size > multipart_threshold:
+            # Use multipart upload for large files
+            url = _multipart_upload(s3, bucket, region, local_path, key, content_type, file_size)
+        else:
+            # Standard upload for smaller files
+            s3.upload_file(
+                local_path, bucket, key,
+                ExtraArgs={
+                    "ContentType": content_type,
+                    "ServerSideEncryption": "AES256",
+                },
+            )
+            url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+
+        logger.info(f"S3 uploaded: {url} ({file_size / (1024*1024):.1f} MB)")
         return url
     except Exception as e:
         logger.error(f"S3 upload failed [{key}]: {e}")
         return None
+
+
+def _multipart_upload(
+    s3, bucket: str, region: str, local_path: str, key: str,
+    content_type: str, file_size: int,
+) -> str:
+    """
+    S3 multipart upload for large files.
+    Splits file into 50 MB parts and uploads in parallel-ready chunks.
+    """
+    part_size = 50 * 1024 * 1024  # 50 MB parts
+    upload_id = None
+
+    try:
+        # Initiate multipart upload
+        response = s3.create_multipart_upload(
+            Bucket=bucket,
+            Key=key,
+            ContentType=content_type,
+            ServerSideEncryption="AES256",
+        )
+        upload_id = response["UploadId"]
+        logger.info(f"S3 multipart upload started: {key} ({file_size / (1024*1024):.1f} MB, upload_id={upload_id[:8]}...)")
+
+        parts = []
+        part_number = 1
+
+        with open(local_path, "rb") as f:
+            while True:
+                data = f.read(part_size)
+                if not data:
+                    break
+
+                response = s3.upload_part(
+                    Bucket=bucket,
+                    Key=key,
+                    UploadId=upload_id,
+                    PartNumber=part_number,
+                    Body=data,
+                )
+                parts.append({
+                    "PartNumber": part_number,
+                    "ETag": response["ETag"],
+                })
+                logger.debug(f"S3 multipart part {part_number} uploaded ({len(data) / (1024*1024):.1f} MB)")
+                part_number += 1
+
+        # Complete multipart upload
+        s3.complete_multipart_upload(
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+
+        url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+        logger.info(f"S3 multipart upload completed: {key} ({len(parts)} parts)")
+        return url
+
+    except Exception as e:
+        # Abort the multipart upload on failure
+        if upload_id:
+            try:
+                s3.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+                logger.info(f"S3 multipart upload aborted: {key}")
+            except Exception as abort_err:
+                logger.warning(f"S3 multipart abort failed: {abort_err}")
+        raise
 
 
 def _upload_bytes(data: bytes, key: str, content_type: str) -> Optional[str]:

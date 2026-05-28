@@ -1,5 +1,5 @@
 """
-Authentication for AuraSafety.
+Authentication for Melody Wings Safety.
 
 Strategy
 --------
@@ -28,7 +28,7 @@ from typing import Optional
 
 import bcrypt
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 logger = logging.getLogger(__name__)
@@ -154,24 +154,41 @@ def authenticate_user(username: str, password: str) -> Optional[dict]:
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    request: Request = None,
 ):
     """
     FastAPI dependency — validates the Bearer JWT on every protected route.
+
+    Token resolution order:
+    1. Authorization: Bearer <token> header
+    2. access_token httpOnly cookie
 
     Falls back gracefully:
     - If JWT_SECRET is not set, auth is disabled (dev mode).
     - If the token is missing/invalid, raises 401.
     """
+    from fastapi import Request as _Request
+
     # Dev mode: no JWT_SECRET configured → skip auth entirely
     if not JWT_SECRET:
         return {"username": "dev", "role": "admin"}
 
-    if credentials is None or not credentials.credentials:
+    token = None
+
+    # Try Bearer header first
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+
+    # Fall back to httpOnly cookie
+    if not token and request is not None:
+        token = request.cookies.get("access_token")
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated. Please log in.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = decode_access_token(credentials.credentials)
+    payload = decode_access_token(token)
     return {"username": payload["sub"], "role": payload.get("role", "admin")}

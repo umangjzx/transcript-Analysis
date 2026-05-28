@@ -58,6 +58,7 @@ Output (MLResult dict)
 
 import hashlib
 import logging
+import os
 from functools import lru_cache
 from typing import Dict, List, Optional, Any
 
@@ -132,12 +133,32 @@ def _get_pipeline():
     if _pipeline is None:
         try:
             from transformers import pipeline as hf_pipeline
+
+            # Check if a fine-tuned model path is configured
+            finetuned_path = os.environ.get("FINETUNED_MODEL_PATH", "")
+            if finetuned_path:
+                # Resolve relative to backend/ directory
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                model_path = os.path.join(base_dir, finetuned_path)
+                if os.path.isdir(model_path):
+                    logger.info(f"Loading fine-tuned model from: {model_path}")
+                    _pipeline = hf_pipeline(
+                        "zero-shot-classification",
+                        model=model_path,
+                        multi_label=False,
+                    )
+                    logger.info("Fine-tuned ML classifier loaded successfully.")
+                    return _pipeline
+                else:
+                    logger.warning(
+                        f"FINETUNED_MODEL_PATH={finetuned_path} not found, "
+                        "falling back to base model."
+                    )
+
             logger.info("Loading typeform/distilbert-base-uncased-mnli (zero-shot classifier)...")
             _pipeline = hf_pipeline(
                 "zero-shot-classification",
                 model="typeform/distilbert-base-uncased-mnli",
-                # multi_label=False → comparative softmax across all labels
-                # This gives a proper ranked distribution, not independent scores.
                 multi_label=False,
             )
             logger.info("ML classifier loaded successfully.")

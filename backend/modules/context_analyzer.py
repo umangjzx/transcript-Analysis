@@ -11,7 +11,7 @@ ARCHITECTURE CHANGE:
 
 ContextType Enum
 ----------------
-    ADMINISTRATIVE        — event logistics, forms, schedules  → confidence -0.40
+    ADMINISTRATIVE        — event logistics, forms, schedules  → confidence -0.20
     INFORMATION_GATHERING — collecting personal details        → confidence +0.15
     TRUST_BUILDING        — "I care about you", "trust me"     → confidence +0.20
     RELATIONSHIP_BUILDING — "special connection", "best friends"→ confidence +0.15
@@ -61,7 +61,7 @@ class ContextType(str, Enum):
 # ---------------------------------------------------------------------------
 
 CONTEXT_MULTIPLIERS: Dict[ContextType, float] = {
-    ContextType.ADMINISTRATIVE:        -0.40,
+    ContextType.ADMINISTRATIVE:        -0.20,   # Reduced from -0.40 to prevent over-suppression
     ContextType.INFORMATION_GATHERING: +0.15,
     ContextType.TRUST_BUILDING:        +0.20,
     ContextType.RELATIONSHIP_BUILDING: +0.15,
