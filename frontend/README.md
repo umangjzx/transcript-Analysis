@@ -13,6 +13,8 @@ React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection
 | `/upload` | Analyze Audio | Drag-and-drop or click-to-upload (audio, video, or `.txt` transcript) with real-time progress bar; polls status until complete then redirects to report |
 | `/report/:id` | Report | Full analysis view — 6 tabs + chatbot sidebar (see below) |
 | `/google-drive` | Google Drive | Connect Google Drive via OAuth2, browse importable `.txt` and Google Docs files, trigger imports, and manage the auto-watcher |
+| `/analytics` | Analytics | Cross-report analytics dashboard — aggregated statistics, trends, and category distributions across all analyses |
+| `/compare` | Compare | Side-by-side comparison of multiple reports — risk scores, severity, findings, and category breakdowns |
 
 ### Report Page Tabs
 
@@ -32,7 +34,18 @@ React 19 + Vite 8 dashboard for the Melody Wings Safety audio grooming detection
 | Component | Description |
 |---|---|
 | `Chatbot.jsx` | AI chatbot sidebar on the Report page — sends questions to `POST /chat`, displays answer with source excerpts |
+| `CommandPalette.jsx` | Keyboard-driven search and navigation overlay (Ctrl+K) — search reports by name, quick-navigate to pages |
+| `NotificationProvider.jsx` | Real-time notification system — WebSocket-powered notification bell with unread count and notification list |
 | `ErrorBoundary.jsx` | React error boundary wrapping all routes — catches render errors, shows fallback UI |
+
+---
+
+## Hooks
+
+| Hook | Description |
+|---|---|
+| `useKeyboardShortcuts.js` | Global keyboard shortcut handler — Ctrl+K (search), Ctrl+N (new analysis), Escape (close overlays) |
+| `useWebSocket.js` | WebSocket connection hook — manages connection to `/ws/progress` for real-time analysis updates |
 
 ---
 
@@ -68,7 +81,7 @@ All routes except `/login` require a token in `localStorage`. If `JWT_SECRET` is
 
 ### Navbar
 
-Shows the logged-in username, logout button, and avatar initials.
+Shows the logged-in username, notification bell, logout button, and avatar initials.
 
 ---
 
@@ -81,8 +94,8 @@ Shows the logged-in username, logout button, and avatar initials.
 | React Router | 7 | Client-side routing |
 | Axios | 1.x | HTTP client — `src/api.js` |
 | Recharts | 3.x | Bar, pie, scatter charts |
-| Lucide React | 1.x | Icons (Home, UploadCloud, HardDrive, LogOut, Shield) |
-| react-hot-toast | 2.x | Toast notifications (Dashboard, Report, Google Drive) |
+| Lucide React | 1.x | Icons (Home, UploadCloud, HardDrive, LogOut, Shield, GitCompare, BarChart2) |
+| react-hot-toast | 2.x | Toast notifications |
 
 ---
 
@@ -159,14 +172,20 @@ Upload flows call proxied `/api/v1/analyze` (→ backend `/analyze`, **backgroun
 
 ## Key Features
 
-- **Lazy-loaded pages** — Dashboard, Upload, Report, and GoogleDrive are loaded on demand via `React.lazy()`
+- **Lazy-loaded pages** — Dashboard, Upload, Report, GoogleDrive, Analytics, and Compare are loaded on demand via `React.lazy()`
 - **Error boundary** — catches render errors and shows a fallback UI
 - **Protected routes** — `ProtectedRoute` component checks for JWT before rendering
 - **Toast notifications** — success/error feedback via react-hot-toast
-- **Responsive navigation** — brand logo, nav links, username badge, logout button, avatar
+- **Real-time notifications** — WebSocket-powered notification bell with unread count
+- **Command palette** — Ctrl+K to search reports and navigate quickly
+- **Keyboard shortcuts** — Ctrl+K (search), Ctrl+N (new analysis), Escape (close)
+- **Responsive navigation** — brand logo, nav links (Dashboard, Analyze, Drive, Analytics, Compare), username badge, notification bell, logout button, avatar
 - **Real-time progress** — Upload page polls `/report/{id}/status` until analysis completes
+- **WebSocket updates** — `useWebSocket` hook for live progress events
 - **Chatbot sidebar** — available on Report page for per-report Q&A
 - **Google Drive integration** — OAuth2 connect flow, file browser with search, import trigger, watcher controls
+- **Cross-report analytics** — aggregated statistics and trends across all analyses
+- **Report comparison** — side-by-side comparison of multiple reports
 - **Delete action** — Dashboard supports report deletion with confirmation
 
 ---
@@ -191,3 +210,13 @@ npm run preview   # serve the production build locally
 ```
 
 The production build can be served by any static file server (nginx, Vercel, Netlify, S3+CloudFront). Configure the reverse proxy to forward `/api/v1/*` and `/auth/*` to the backend.
+
+---
+
+## Docker
+
+The frontend includes a Dockerfile that builds the React app and serves it via Nginx on port 80. Used by `docker-compose.yml` in the project root:
+
+```bash
+docker compose up frontend
+```

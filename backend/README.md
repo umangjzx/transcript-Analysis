@@ -1,6 +1,6 @@
 # Melody Wings Safety — Backend (v2.1.0)
 
-Production-grade FastAPI backend for detecting grooming behaviour, explicit content, and harmful language in audio conversations. Supports audio files, video files, plain-text transcripts, and Google Drive imports. Works with Discord voice chats, WhatsApp calls, Zoom meetings, gaming voice chats, and any general audio/video source.
+Production-grade FastAPI backend for detecting grooming behaviour, explicit content, and harmful language in audio conversations. Supports audio files, video files, plain-text transcripts, and Google Drive imports.
 
 ---
 
@@ -21,53 +21,44 @@ flowchart TD
         B2[(Timeline\nstart / end / text / speaker)]
     end
 
-    subgraph NORMALIZATION["③ TEXT NORMALIZATION"]
-        LEET[leetspeak_normalizer.py\nleetspeak · separators · repetition]
+    subgraph DETECTION["③ GROOMING DETECTION PIPELINE"]
+        LEET[Leetspeak Normalizer]
+        C[Sentence Splitter + Speaker Parser]
+        PAT[20 compiled regex categories]
+        CTX[Context Classifier · 13 ContextTypes]
+        FIL[Negation + Joke Filters]
+        CONF[Confidence Scorer]
+        ML[ML Classifier · DistilBERT-MNLI · 25% fusion]
+        EG[Evidence Grouping + Dedup]
     end
 
-    subgraph DETECTION["④ GROOMING DETECTION PIPELINE"]
-        C[Sentence Splitter\nSpeaker Label Parser]
-        PAT[patterns.py · 20 compiled regex categories]
-        CTX[context_analyzer.py · 13 ContextTypes · −0.40 to +0.50]
-        FIL[filters.py · NegationFilter ±5 tokens · JokeFilter ±2 sentences]
-        CONF[confidence.py · base + bonuses ± multipliers − penalties]
-        ML[ml_classifier.py · distilbert-base-uncased-mnli · 25% fusion]
-        EG[evidence_grouping.py · dedup + category merge]
+    subgraph SCORING["④ RISK SCORING"]
+        RS[Weighted Scorer · Diminishing Returns · Cap 100]
+        TW[Temporal Weighting · Position + Clustering + Escalation]
     end
 
-    subgraph SCORING["⑤ RISK SCORING"]
-        RS[risk_scorer.py · weighted · diminishing returns · cap 100]
-        TW[temporal_weighting.py · position + clustering + escalation]
+    subgraph OUTPUT["⑤ OUTPUT"]
+        SV[Severity Classifier]
+        SUM[Rule-Based Summary]
+        LLM[LLM Summary · Ollama Llama 3.1]
+        PDF[PDF Report · ReportLab]
+        BOT[RAG Chatbot · ChromaDB + Ollama]
+        EMAIL[Email Alert · HTML + PDF attachment]
     end
 
-    subgraph OUTPUT["⑥ OUTPUT"]
-        SV[severity_classifier.py]
-        SUM[summarizer.py · rule-based]
-        LLM[llm_summarizer.py · Ollama Llama 3.1]
-        VAL[llm_output_validator.py · post-generation validation]
-        PDF[report_generator.py · PDF]
-        BOT[chatbot.py · RAG · ChromaDB + Ollama]
-        EMAIL[email_notifier.py · alert + summary]
-    end
-
-    subgraph STORAGE["⑦ STORAGE"]
+    subgraph STORAGE["⑥ STORAGE"]
         MDB[(MongoDB · 7 collections)]
         S3[(AWS S3 · 5 storage types)]
         VEC[(ChromaDB · vectors/)]
         REDIS[(Redis · cache + broker)]
     end
 
-    A1 --> B --> B1 & B2
-    A2 --> B
-    A3 --> B1
-    A4 --> B1
+    A1 & A2 --> B --> B1 & B2
+    A3 & A4 --> B1
     B1 --> LEET --> C --> PAT --> CTX --> FIL --> CONF --> EG
     CONF --> ML --> EG
     EG --> RS --> TW --> SV & SUM & LLM
-    LLM --> VAL
-    SV & SUM & VAL --> PDF
-    PDF --> MDB & S3
-    A1 & A2 --> S3
+    SV & SUM & LLM --> PDF --> MDB & S3
     B1 --> VEC --> BOT
     EG --> MDB
 ```
@@ -81,8 +72,8 @@ flowchart TD
 | API Framework | FastAPI 0.136 + Uvicorn 0.47 |
 | Task Queue | Celery 5.4 + Redis (threading fallback when `USE_CELERY=false`) |
 | Audio Transcription | faster-whisper 1.2 (Whisper Base, CPU, int8) |
-| Video Audio Extraction | PyAV (streamed, never loads full file into memory) |
-| Text Normalization | Leetspeak normalizer (character substitution, separator removal, repetition collapse) |
+| Video Audio Extraction | PyAV (streamed, 1 MB chunks) |
+| Text Normalization | Leetspeak normalizer (character substitution, separator removal) |
 | Pattern Detection | Python `re` — 20 compiled regex categories |
 | ML Classifier | `typeform/distilbert-base-uncased-mnli` — Zero-Shot NLI |
 | LLM Summary | Ollama — Llama 3.1 (optional, graceful fallback) |
@@ -92,9 +83,9 @@ flowchart TD
 | Caching | Redis-backed TTL cache (in-memory fallback) |
 | File Storage | AWS S3 — 5 storage types, AES-256 encrypted |
 | Virus Scanning | ClamAV via pyclamd |
-| Email | SMTP (Gmail / any provider) — HTML alert + summary templates |
+| Email | SMTP — HTML alert + summary templates |
 | PDF Generation | ReportLab |
-| Google Drive | Google Drive API + Google Docs API (OAuth2, encrypted credentials) |
+| Google Drive | Google Drive API + Docs API (OAuth2, encrypted credentials) |
 | Real-time Updates | WebSocket (/ws/progress) |
 | Rate Limiting | Custom middleware (per-IP, configurable) |
 | Circuit Breaker | Custom implementation for Ollama + S3 |
@@ -111,23 +102,18 @@ flowchart TD
 - Login issues a signed JWT valid for `JWT_EXPIRE_MINUTES` (default 8 hours)
 - `get_current_user` FastAPI dependency validates the Bearer JWT on protected routes
 - JWT also set in httpOnly cookie (secure, not accessible via JavaScript)
-- If `JWT_SECRET` is not set, auth is disabled (dev mode — all requests pass through)
+- If `JWT_SECRET` is not set, auth is disabled (dev mode)
 - Server refuses to start without `JWT_SECRET` when `ENV=production`
 - X-API-Key middleware kept for backward-compat with direct script access
-
-### JWT payload
-
-```json
-{ "sub": "<username>", "role": "admin", "exp": <unix timestamp> }
-```
+- Account lockout after configurable failed attempts (`LOCKOUT_MAX_ATTEMPTS`)
 
 ### Auth endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → `{"access_token", "token_type", "username", "role"}` |
-| `POST` | `/auth/logout` | Stateless logout (clears httpOnly cookie, audit logged) |
-| `GET` | `/auth/me` | Current user from Bearer JWT (`Depends(get_current_user)`) |
+| `POST` | `/auth/login` | `{"username": "...", "password": "..."}` → JWT + user info |
+| `POST` | `/auth/logout` | Clears httpOnly cookie; audit logged |
+| `GET` | `/auth/me` | Current user from Bearer JWT |
 
 ### First-time setup
 
@@ -146,19 +132,15 @@ python create_admin.py
 
 ```
 backend/
-│
 ├── app.py                          # FastAPI application — routes, middleware, startup/shutdown
 ├── config.py                       # Paths, SMTP, S3, MongoDB, Google Drive config
 ├── auth.py                         # JWT + bcrypt authentication helpers
 ├── celery_app.py                   # Celery configuration — Redis broker, threading fallback
 ├── celery_beat_schedule.py         # Periodic task schedule (cleanup, watcher)
-├── create_admin.py                 # CLI script to create/reset admin user in MongoDB
-├── finetune_model.py               # Fine-tune the NLI model on custom grooming data
+├── create_admin.py                 # CLI script to create/reset admin user
+├── finetune_model.py               # Fine-tune the NLI model on custom data
 ├── requirements.txt                # Python dependencies
-├── test_pipeline.py                # Interactive CLI pipeline tester
-├── test_email.py                   # 4-step SMTP integration test
-├── debug_env.py                    # Low-level SMTP credential debugger
-├── run_server.py                   # Alternative uvicorn launcher
+├── Dockerfile                      # Multi-stage Docker build (Python 3.11-slim)
 ├── start.bat                       # Windows one-click server start
 ├── .env.example                    # Environment variable template
 │
@@ -170,22 +152,20 @@ backend/
 │   └── analytics_routes.py         # /api/v1/analytics/* — cross-report aggregation
 │
 ├── tasks/                          # Celery task definitions
-│   ├── __init__.py
 │   ├── analysis_tasks.py           # Audio, video, transcript, Drive import pipelines
 │   └── maintenance_tasks.py        # Cleanup, watcher polling, stuck-job recovery
 │
 ├── services/
-│   ├── audio_safety_service.py     # Async pipeline orchestration (sync /api/v1 path)
+│   ├── audio_safety_service.py     # Async pipeline orchestration
 │   └── google_drive_service.py     # Google OAuth2 + Drive/Docs file access
 │
 ├── schemas/
 │   └── audio_analysis_schemas.py   # Pydantic request/response models
 │
 ├── middleware/
-│   ├── rate_limiter.py             # Per-IP rate limiting middleware
-│   └── __init__.py
+│   └── rate_limiter.py             # Per-IP rate limiting middleware
 │
-├── modules/
+├── modules/                        # Core detection + infrastructure (31 files)
 │   ├── patterns.py                 # 20-category compiled regex library
 │   ├── context_analyzer.py         # ContextType enum + multipliers
 │   ├── confidence.py               # Confidence scoring engine
@@ -193,28 +173,29 @@ backend/
 │   ├── ml_classifier.py            # Zero-shot NLI (distilbert-mnli), LRU cache
 │   ├── grooming_detector.py        # Main pipeline orchestrator
 │   ├── evidence_grouping.py        # Deduplication + category merging
-│   ├── risk_scorer.py              # Weighted risk scoring (0–100) + diminishing returns
-│   ├── severity_classifier.py      # Score → Safe / Low / Moderate / High / Critical
-│   ├── temporal_weighting.py       # Position-based + clustering + escalation scoring
-│   ├── leetspeak_normalizer.py     # Obfuscation normalization (leetspeak, separators, repetition)
-│   ├── analysis_pipeline.py        # Unified analysis pipeline (Celery entry point)
+│   ├── risk_scorer.py              # Weighted risk scoring (0–100)
+│   ├── severity_classifier.py      # Score → Safe/Low/Moderate/High/Critical
+│   ├── temporal_weighting.py       # Position + clustering + escalation scoring
+│   ├── leetspeak_normalizer.py     # Obfuscation normalization
+│   ├── analysis_pipeline.py        # Unified pipeline (Celery entry point)
 │   ├── summarizer.py               # Rule-based summary generator
 │   ├── llm_summarizer.py           # Ollama Llama 3.1 summary
-│   ├── llm_output_validator.py     # LLM output validation (post-generation)
+│   ├── llm_output_validator.py     # LLM output validation
 │   ├── report_generator.py         # PDF report generation
 │   ├── transcriber.py              # faster-whisper + PyAV video extraction
-│   ├── evidence_extractor.py       # Evidence list extraction from grouped findings
+│   ├── evidence_extractor.py       # Evidence list extraction
 │   ├── stats.py                    # Statistics + timeline + ML agreement
 │   ├── chatbot.py                  # RAG chatbot (ChromaDB + Ollama)
 │   ├── email_notifier.py           # SMTP alert + summary HTML emails
 │   ├── s3_storage.py               # AWS S3 upload / presign / delete
-│   ├── drive_watcher.py            # Google Drive background auto-import watcher
+│   ├── drive_watcher.py            # Google Drive background auto-import
 │   ├── cache.py                    # Redis-backed TTL cache with in-memory fallback
 │   ├── circuit_breaker.py          # Circuit breaker for Ollama + S3
-│   ├── credential_encryption.py    # Fernet encryption for OAuth credentials at rest
-│   ├── virus_scanner.py            # ClamAV virus scanning for uploads
+│   ├── credential_encryption.py    # Fernet encryption for OAuth credentials
+│   ├── virus_scanner.py            # ClamAV virus scanning
 │   ├── disk_space_checker.py       # Pre-upload disk space validation
 │   ├── websocket_manager.py        # Real-time WebSocket progress updates
+│   ├── structured_logging.py       # JSON structured logging setup
 │   └── file_cleanup.py             # Upload file cleanup daemon
 │
 ├── database/
@@ -224,17 +205,11 @@ backend/
 ├── models/
 │   └── grooming-nli-finetuned/     # Fine-tuned DistilBERT model checkpoints
 │
-├── examples/
-│   ├── test_script_bad.txt         # CRITICAL — all categories triggered
-│   ├── test_script_medium.txt      # MODERATE — ambiguous online gaming chat
-│   ├── test_script_good.txt        # LOW — safe classroom exchange
-│   └── run_test_scripts.py         # Pipeline test runner
-│
-└── (auto-created on first run, git-ignored)
-    ├── uploads/                    # Uploaded audio/video files (temp)
-    ├── reports/                    # Generated PDF reports
-    ├── vectors/                    # ChromaDB persistent vector store
-    └── logs/app.log                # Application log (UTF-8, rotated)
+└── examples/                       # Test scripts for pipeline validation
+    ├── test_script_bad.txt         # CRITICAL — all categories triggered
+    ├── test_script_medium.txt      # MODERATE — ambiguous online chat
+    ├── test_script_good.txt        # LOW — safe classroom exchange
+    └── run_test_scripts.py         # Pipeline test runner
 ```
 
 ---
@@ -280,93 +255,6 @@ The pipeline detects **20 categories** across the full grooming lifecycle.
 
 ---
 
-## Temporal Weighting
-
-Findings are weighted based on their position in the conversation:
-
-| Phase | Position | Multiplier | Rationale |
-|---|---|---|---|
-| Early | First 25% | 0.8x | Exploratory, testing boundaries |
-| Middle | 25–75% | 1.0x | Baseline |
-| Late | Last 25% | 1.2x | Escalation phase |
-
-**Additional bonuses:**
-- **Clustering bonus** (+0.15): 3+ findings within 10% of conversation length
-- **Escalation bonus** (+0.20): Severity increases over time (second half more severe than first)
-- **Progression detection**: Known grooming chains (trust_building → secrecy → meeting)
-
----
-
-## Leetspeak Normalization
-
-Applied before pattern matching to catch obfuscated text:
-
-| Technique | Example | Normalized |
-|---|---|---|
-| Character substitution | `m33t`, `s3cr3t` | `meet`, `secret` |
-| Separator insertion | `s.e.c.r.e.t` | `secret` |
-| Character repetition | `seeecret` | `secret` |
-| Known obfuscations | `d0nt t3ll`, `4ddr3ss` | `dont tell`, `address` |
-| Symbol substitution | `@ddre$$`, `tru$t` | `address`, `trust` |
-
-Both original and normalized text are checked against patterns to avoid false positives on legitimate use of numbers/symbols.
-
----
-
-## Context Classification
-
-Every sentence is classified into one or more `ContextType` values before confidence scoring.
-
-| ContextType | Multiplier | Meaning |
-|---|---|---|
-| `ADMINISTRATIVE` | −0.40 | Event logistics, forms, schedules |
-| `INFORMATION_GATHERING` | +0.15 | Collecting personal details |
-| `TRUST_BUILDING` | +0.20 | "I care about you", "trust me" |
-| `RELATIONSHIP_BUILDING` | +0.15 | "special connection", "best friends" |
-| `MANIPULATION` | +0.30 | "they won't understand", coercion |
-| `SECRECY` | +0.40 | "don't tell anyone", "our secret" |
-| `ESCALATION` | +0.35 | Private call, move to another platform |
-| `MEETING` | +0.35 | Meet up, in person, hang out |
-| `PERSONAL_INFORMATION` | +0.30 | Address, phone, email, route |
-| `VIDEO_CALL` | +0.25 | Video chat, FaceTime, camera requests |
-| `EXPLICIT_CONTENT` | +0.50 | Sexual language — highest multiplier |
-| `BAD_LANGUAGE` | +0.20 | Profanity, slurs, threats |
-| `NEUTRAL` | 0.00 | No strong signal |
-
----
-
-## Confidence Scoring
-
-```
-score = pattern_strength
-      + exact_phrase_bonus      (+0.15 if matched text is a known exact phrase)
-      + keyword_bonus           (+0.10 if ≥2 supporting keywords present)
-      + context_multiplier      (from ContextType above, −0.40 to +0.50)
-      − negation_penalty        (up to −0.40, token-scoped within ±5 tokens)
-      − joke_penalty            (up to −0.50, ±2 sentence window)
-
-regex_confidence = clamp(score, 0.0, 1.0)
-
-# ML fusion (25% weight, when enabled)
-fused_confidence = 0.75 × regex_confidence + 0.25 × ml_category_score
-```
-
----
-
-## ML Classifier
-
-- Model: `typeform/distilbert-base-uncased-mnli` (Zero-Shot NLI via HuggingFace)
-- 13 labels mapped to detection categories
-- Temperature calibration T=1.3 for better-calibrated probabilities
-- Multi-label detection threshold: ≥0.15
-- Agreement/disagreement signal surfaced in each finding under `finding["ml"]`
-- LRU cache: 512 entries — repeated sentences are free after first inference
-- Fused at 25% weight into the final confidence score
-- **Disabled by default** (`ENABLE_ML_CLASSIFIER=false`) — enable once model is cached (~400 MB)
-- Fine-tuned model support via `FINETUNED_MODEL_PATH` env var
-
----
-
 ## Risk Scoring
 
 ```
@@ -387,15 +275,63 @@ Diminishing returns: 100% → 50% → 25% → 12.5% → …
 
 ---
 
+## Temporal Weighting
+
+| Phase | Position | Multiplier | Rationale |
+|---|---|---|---|
+| Early | First 25% | 0.8x | Exploratory, testing boundaries |
+| Middle | 25–75% | 1.0x | Baseline |
+| Late | Last 25% | 1.2x | Escalation phase |
+
+**Bonuses:**
+- **Clustering** (+0.15): 3+ findings within 10% of conversation length
+- **Escalation** (+0.20): Severity increases over time
+- **Progression detection**: Known grooming chains (trust → secrecy → meeting)
+
+---
+
+## Context Classification
+
+| ContextType | Multiplier | Meaning |
+|---|---|---|
+| `ADMINISTRATIVE` | −0.40 | Event logistics, forms, schedules |
+| `EXPLICIT_CONTENT` | +0.50 | Sexual language — highest multiplier |
+| `SECRECY` | +0.40 | "Don't tell anyone", "our secret" |
+| `ESCALATION` | +0.35 | Private call, move to another platform |
+| `MEETING` | +0.35 | Meet up, in person, hang out |
+| `MANIPULATION` | +0.30 | "They won't understand", coercion |
+| `PERSONAL_INFORMATION` | +0.30 | Address, phone, email, route |
+| `VIDEO_CALL` | +0.25 | Video chat, FaceTime, camera |
+| `TRUST_BUILDING` | +0.20 | "I care about you", "trust me" |
+| `BAD_LANGUAGE` | +0.20 | Profanity, slurs, threats |
+| `INFORMATION_GATHERING` | +0.15 | Collecting personal details |
+| `RELATIONSHIP_BUILDING` | +0.15 | "Special connection", "best friends" |
+| `NEUTRAL` | 0.00 | No strong signal |
+
+---
+
+## ML Classifier
+
+- Model: `typeform/distilbert-base-uncased-mnli` (Zero-Shot NLI)
+- 13 labels mapped to detection categories
+- Temperature calibration T=1.3 for better-calibrated probabilities
+- Multi-label detection threshold: ≥0.15
+- LRU cache: 512 entries — repeated sentences are free after first inference
+- Fused at 25% weight into the final confidence score
+- **Disabled by default** (`ENABLE_ML_CLASSIFIER=false`) — enable once model is cached (~400 MB)
+- Fine-tuned model support via `FINETUNED_MODEL_PATH` env var
+
+---
+
 ## Circuit Breaker
 
-External service calls (Ollama, S3) are wrapped in circuit breakers to prevent cascading failures:
+External service calls (Ollama, S3) are wrapped in circuit breakers:
 
 | State | Behavior |
 |---|---|
 | **CLOSED** | Normal operation, requests pass through |
-| **OPEN** | Service is down, requests fail immediately (no call made) |
-| **HALF_OPEN** | After cooldown, one test request allowed to check recovery |
+| **OPEN** | Service is down, requests fail immediately |
+| **HALF_OPEN** | After cooldown, one test request allowed |
 
 Configuration:
 - `CIRCUIT_BREAKER_FAILURE_THRESHOLD=5` — failures before opening
@@ -418,39 +354,21 @@ Background processing uses Celery with Redis as broker and result backend. Falls
 ### Running Workers
 
 ```bash
-# Start a worker (processes analysis tasks)
 celery -A celery_app worker --loglevel=info --pool=solo
-
-# Start Beat (periodic tasks: cleanup, watcher polling)
 celery -A celery_app beat --loglevel=info
-```
-
-### Configuration
-
-```env
-REDIS_URL=redis://localhost:6379/0
-CELERY_BROKER_URL=redis://localhost:6379/0
-CELERY_RESULT_BACKEND=redis://localhost:6379/0
-USE_CELERY=true    # false = threading fallback (no Redis needed)
 ```
 
 ---
 
 ## WebSocket Progress
 
-Real-time analysis progress is pushed to connected clients via WebSocket:
+Real-time analysis progress pushed to clients:
 
 ```
 WS /ws/progress?report_id=12
 ```
 
-Events:
-- `analysis:started` — `{ report_id, filename, stage: "started" }`
-- `analysis:progress` — `{ report_id, stage, progress_pct, message }`
-- `analysis:completed` — `{ report_id, severity, risk_score, stage: "completed" }`
-- `analysis:failed` — `{ report_id, error, stage: "failed" }`
-
-Clients can subscribe to specific reports by sending `{"subscribe": report_id}`.
+Events: `analysis:started`, `analysis:progress`, `analysis:completed`, `analysis:failed`
 
 ---
 
@@ -465,8 +383,6 @@ Versioned, tracked MongoDB schema changes run automatically on startup:
 | `003_ttl_indexes` | TTL indexes for audit logs and processing status |
 | `004_add_temporal_fields` | Temporal weighting fields in analysis_results |
 | `005_connection_pool_config` | Document connection pool settings |
-
-Migrations are tracked in the `_migrations` collection and are idempotent.
 
 ---
 
@@ -498,55 +414,7 @@ Migrations are tracked in the `_migrations` collection and are idempotent.
 
 ---
 
-## Modules Reference
-
-| Module | Purpose |
-|---|---|
-| `patterns.py` | 20-category compiled regex library, `CATEGORY_METADATA`, `match_patterns()` |
-| `context_analyzer.py` | `ContextType` enum, `CONTEXT_MULTIPLIERS`, `ContextAnalyzer.classify()` |
-| `confidence.py` | `ConfidenceCalculator` — full scoring breakdown per finding |
-| `filters.py` | `NegationFilter`, `JokeFilter`, `CombinedFilter` |
-| `ml_classifier.py` | Zero-shot NLI, 13 labels, temperature calibration, LRU cache, `fuse_with_regex()` |
-| `evidence_grouping.py` | `EvidenceGroupingEngine` — dedup + category merge + aggregate confidence |
-| `grooming_detector.py` | `GroomingDetector` — main pipeline orchestrator |
-| `risk_scorer.py` | `WeightedRiskScorer` — weighted scoring with diminishing returns |
-| `severity_classifier.py` | Score → Safe / Low / Moderate / High / Critical |
-| `temporal_weighting.py` | `apply_temporal_weighting()`, `detect_escalation_patterns()` |
-| `leetspeak_normalizer.py` | `normalize_leetspeak()`, `normalize_for_detection()`, `is_likely_obfuscated()` |
-| `analysis_pipeline.py` | Unified pipeline entry point for Celery tasks |
-| `summarizer.py` | Rule-based summary from findings + risk score |
-| `llm_summarizer.py` | Ollama Llama 3.1 executive summary — fails gracefully |
-| `llm_output_validator.py` | Post-generation LLM output validation |
-| `report_generator.py` | PDF report with findings, score, severity, LLM summary |
-| `transcriber.py` | faster-whisper transcription + PyAV video audio extraction |
-| `evidence_extractor.py` | Clean evidence list from grouped findings |
-| `stats.py` | Statistics dict — categories, confidence histogram, ML stats, context distribution |
-| `chatbot.py` | RAG chatbot — ChromaDB + SentenceTransformers + Ollama |
-| `email_notifier.py` | SMTP alert + summary emails, `should_auto_alert()` |
-| `s3_storage.py` | `upload_audio()`, `upload_pdf_report()`, `get_presigned_url()`, `delete_file()`, `ping()` |
-| `drive_watcher.py` | Background Google Drive polling watcher |
-| `cache.py` | Redis-backed TTL cache with in-memory fallback |
-| `circuit_breaker.py` | Circuit breaker for Ollama + S3 (CLOSED/OPEN/HALF_OPEN) |
-| `credential_encryption.py` | Fernet encryption for Google OAuth credentials at rest |
-| `virus_scanner.py` | ClamAV virus scanning for uploaded files |
-| `disk_space_checker.py` | Pre-upload disk space validation |
-| `websocket_manager.py` | Real-time WebSocket progress updates to frontend |
-| `file_cleanup.py` | Upload file cleanup daemon |
-
----
-
 ## API Endpoints
-
-### Route Layers
-
-| Layer | Prefix | Notes |
-|---|---|---|
-| **Root** (`app.py`) | `/analyze`, `/report/…`, `/notify/…`, `/auth/…` | Background analysis, full feature set |
-| **Versioned** (`audio_analysis_routes.py`) | `/api/v1/…` | Pydantic models, batch upload, JWT on history/report |
-| **Auth** (`auth_routes.py`) | `/auth/…` | Login, logout, me |
-| **Notifications** (`notification_routes.py`) | `/api/v1/notify/…` | Alert + summary emails |
-| **Analytics** (`analytics_routes.py`) | `/api/v1/analytics/…` | Cross-report aggregation |
-| **Google Drive** (`google_drive_routes.py`) | `/api/v1/google-drive/…` | OAuth, files, import, watcher |
 
 ### Core Routes
 
@@ -567,7 +435,7 @@ Migrations are tracked in the `_migrations` collection and are idempotent.
 | `GET` | `/analytics/summary` | Cross-report aggregation |
 | `WS` | `/ws/progress` | Real-time progress updates |
 
-### Versioned Routes
+### Versioned Routes (/api/v1)
 
 | Method | Path | Description |
 |---|---|---|
@@ -594,11 +462,19 @@ Migrations are tracked in the `_migrations` collection and are idempotent.
 | `POST` | `/api/v1/google-drive/watcher/start` | Start auto-import |
 | `POST` | `/api/v1/google-drive/watcher/stop` | Stop auto-import |
 
+### Notifications
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/notify/alert/{id}` | Send/re-send alert email |
+| `POST` | `/api/v1/notify/summary/{id}` | Send full analysis summary email |
+
 ---
 
 ## Security Features
 
 - **JWT authentication** — bcrypt-hashed passwords, HS256 signing, httpOnly cookies
+- **Account lockout** — configurable max attempts and lockout duration
 - **Rate limiting** — per-IP middleware with configurable thresholds
 - **Security headers** — CSP, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Permissions-Policy
 - **CORS** — locked to configured origins only
@@ -611,52 +487,7 @@ Migrations are tracked in the `_migrations` collection and are idempotent.
 - **Secure file handling** — UUID disk names, streaming uploads (1 MB chunks), size limits
 - **Stuck-job recovery** — PROCESSING jobs older than 30 min marked FAILED on startup
 - **Graceful shutdown** — closes MongoDB pool, Redis connections, resets circuit breakers
-
----
-
-## Configuration
-
-Key runtime parameters:
-
-```python
-# grooming_detector.py
-GroomingDetector(
-    min_confidence_threshold = 0.15,   # API default: 0.30
-    enable_context_analysis  = True,
-    enable_filters           = True,
-    enable_grouping          = True,
-    enable_ml_classifier     = False,  # set True once model cached
-)
-
-# risk_scorer.py
-WeightedRiskScorer(
-    custom_weights = {"explicit_content": 30, "threats_coercion": 25},
-    enable_diminishing_returns = True,
-)
-
-# audio_safety_service.py
-AudioSafetyService(
-    min_confidence_threshold = 0.30,
-    enable_llm_summary       = True,
-    enable_vector_storage    = True,
-)
-```
-
----
-
-## Environment Variables
-
-See `.env.example` for the full list with documentation. Key sections:
-
-- **Authentication** — JWT_SECRET, JWT_EXPIRE_MINUTES, API_KEY, COOKIE_SECURE
-- **MongoDB** — MONGO_URI, MONGO_DB_NAME, pool settings
-- **Redis/Celery** — REDIS_URL, CELERY_BROKER_URL, USE_CELERY
-- **AWS S3** — credentials, region, bucket name
-- **SMTP** — host, port, user, password, recipients, severity threshold
-- **Feature flags** — ENABLE_ML_CLASSIFIER, ENABLE_LLM_SUMMARY, upload limits
-- **Google Drive** — OAuth credentials, watcher settings
-- **Security** — ALLOWED_ORIGINS, virus scanning, credential encryption, circuit breaker
-- **Operations** — disk space, log rotation, TTL indexes
+- **Structured logging** — JSON format in production with configurable log rotation
 
 ---
 
@@ -692,11 +523,36 @@ Or on Windows: `start.bat`
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
+### Docker
+
+```bash
+# Build and run via docker-compose (from project root)
+docker compose up backend
+```
+
+The Dockerfile uses a multi-stage build with Python 3.11-slim, installs ffmpeg and system deps, then PyTorch CPU-only + requirements.txt. Runs with 2 Uvicorn workers.
+
 ### Supported input formats
 
-**Audio:** `.mp3` `.wav` `.m4a` `.aac` `.ogg`  
-**Video:** `.mp4` `.mkv` `.avi` `.mov` `.webm` `.flv` `.wmv`  
+**Audio:** `.mp3` `.wav` `.m4a` `.aac` `.ogg`
+**Video:** `.mp4` `.mkv` `.avi` `.mov` `.webm` `.flv` `.wmv`
 **Text:** Plain-text transcript via `POST /analyze/transcript` or Google Drive import
+
+---
+
+## Environment Variables
+
+See `.env.example` for the full documented list. Key sections:
+
+- **Authentication** — JWT_SECRET, JWT_EXPIRE_MINUTES, API_KEY, COOKIE_SECURE, LOCKOUT_MAX_ATTEMPTS, LOCKOUT_DURATION_MINUTES
+- **MongoDB** — MONGO_URI, MONGO_DB_NAME, pool settings (min/max size, idle time, wait queue timeout)
+- **Redis/Celery** — REDIS_URL, CELERY_BROKER_URL, USE_CELERY
+- **AWS S3** — credentials, region, bucket name
+- **SMTP** — host, port, user, password, recipients, severity threshold
+- **Feature flags** — ENABLE_ML_CLASSIFIER, ENABLE_LLM_SUMMARY, upload limits
+- **Google Drive** — OAuth credentials, watcher settings, encryption key
+- **Security** — ALLOWED_ORIGINS, virus scanning, credential encryption, circuit breaker
+- **Operations** — disk space, log rotation, TTL indexes, structured logging
 
 ---
 
@@ -712,15 +568,13 @@ python examples/run_test_scripts.py
 | `test_script_medium.txt` | ~53 | MODERATE |
 | `test_script_good.txt` | 0 | LOW |
 
----
-
-## Interactive Pipeline Tester
+### Interactive Pipeline Tester
 
 ```bash
 python test_pipeline.py
 ```
 
-Runs any text through the full detection pipeline interactively. Uses a lower confidence threshold (0.15) to surface borderline matches.
+Runs any text through the full detection pipeline interactively with a lower confidence threshold (0.15).
 
 ---
 
