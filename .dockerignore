@@ -1,0 +1,28 @@
+# Git
+.git/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules (frontend rebuilds in container)
+frontend/node_modules/
+frontend/dist/
+
+# Python venv
+backend/venv/
+backend/.venv/
+backend/__pycache__/
+
+# Logs and runtime data
+backend/logs/
+backend/uploads/
+backend/reports/
+backend/models/
+
+# Environment files
+backend/.env

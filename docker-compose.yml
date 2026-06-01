@@ -1,0 +1,131 @@
+version: "3.9"
+
+services:
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rmsi-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend (FastAPI) ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rmsi-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CLAMAV_HOST=clamav
+      - CLAMAV_PORT=3310
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_reports:/app/reports
+      - backend_logs:/app/logs
+      - model_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Celery Worker ───────────────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rmsi-celery-worker
+    restart: unless-stopped
+    command: celery -A celery_app worker --loglevel=info --concurrency=2
+    env_file:
+      - ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CLAMAV_HOST=clamav
+      - CLAMAV_PORT=3310
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_reports:/app/reports
+      - backend_logs:/app/logs
+      - model_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Celery Beat (scheduler) ─────────────────────────────────────────────────
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rmsi-celery-beat
+    restart: unless-stopped
+    command: celery -A celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Frontend (React + Nginx) ────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rmsi-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  # ── ClamAV (optional virus scanning) ───────────────────────────────────────
+  clamav:
+    image: clamav/clamav:latest
+    container_name: rmsi-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    profiles:
+      - full  # Only starts with: docker compose --profile full up
+
+  # ── Ollama (optional LLM summaries) ────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rmsi-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - full  # Only starts with: docker compose --profile full up
+
+volumes:
+  redis_data:
+  backend_uploads:
+  backend_reports:
+  backend_logs:
+  model_cache:
+  clamav_data:
+  ollama_data:

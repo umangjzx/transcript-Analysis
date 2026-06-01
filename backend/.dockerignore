@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment (loaded via env_file in compose)
+.env
+
+# Logs and uploads (mounted as volumes)
+logs/
+uploads/
+reports/
+
+# Models — keep fine-tuned model in image; HuggingFace cache uses a volume
+# models/
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Examples / test data (not needed in image)
+examples/

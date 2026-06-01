@@ -136,22 +136,23 @@ try:
     from celery_app import celery_app, USE_CELERY
 
     if USE_CELERY and celery_app is not None:
-        # Wrap as proper Celery tasks
-        run_audio_analysis = celery_app.task(
-            bind=True, name="tasks.run_audio_analysis", max_retries=2
-        )(lambda self, *a, **kw: _run_audio(*a, **kw))
+        # Wrap as proper Celery tasks (using named functions instead of lambdas
+        # to avoid Celery's head_from_fun SyntaxError with bound tasks)
+        @celery_app.task(bind=True, name="tasks.run_audio_analysis", max_retries=2)
+        def run_audio_analysis(self, record_id, filepath, filename):
+            return _run_audio(record_id, filepath, filename)
 
-        run_video_analysis = celery_app.task(
-            bind=True, name="tasks.run_video_analysis", max_retries=2
-        )(lambda self, *a, **kw: _run_video(*a, **kw))
+        @celery_app.task(bind=True, name="tasks.run_video_analysis", max_retries=2)
+        def run_video_analysis(self, record_id, audio_filepath, filename):
+            return _run_video(record_id, audio_filepath, filename)
 
-        run_transcript_analysis = celery_app.task(
-            bind=True, name="tasks.run_transcript_analysis", max_retries=2
-        )(lambda self, *a, **kw: _run_transcript(*a, **kw))
+        @celery_app.task(bind=True, name="tasks.run_transcript_analysis", max_retries=2)
+        def run_transcript_analysis(self, record_id, transcript, filename):
+            return _run_transcript(record_id, transcript, filename)
 
-        run_drive_import_analysis = celery_app.task(
-            bind=True, name="tasks.run_drive_import_analysis", max_retries=2
-        )(lambda self, *a, **kw: _run_drive_import(*a, **kw))
+        @celery_app.task(bind=True, name="tasks.run_drive_import_analysis", max_retries=2)
+        def run_drive_import_analysis(self, record_id, transcript, filename):
+            return _run_drive_import(record_id, transcript, filename)
 
     else:
         raise ImportError("Celery disabled")

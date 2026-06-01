@@ -327,7 +327,7 @@ const Dashboard = () => {
             <span className="stat-title">Average Risk Score</span>
             <TrendingUp size={20} style={{ color: 'var(--status-moderate)' }} />
           </div>
-          <span className="stat-value" style={{ color: getRiskColor(avgScore) }}>{avgScore.toFixed(1)}</span>
+          <span className="stat-value" style={{ color: getRiskColor(analytics?.avg_risk_score ?? avgScore) }}>{(analytics?.avg_risk_score ?? avgScore).toFixed(1)}</span>
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>out of 100</span>
         </div>
 

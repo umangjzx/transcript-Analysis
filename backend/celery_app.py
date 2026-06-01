@@ -27,6 +27,18 @@ CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 # Set USE_CELERY=false in .env to disable Celery and use threading fallback
 USE_CELERY = os.getenv("USE_CELERY", "true").strip().lower() == "true"
 
+
+class _CeleryStub:
+    """No-op stub so @celery_app.task(...) does not crash at import time
+    when Celery is disabled. The decorator simply returns the original
+    function unchanged, allowing the threading fallback to call it directly."""
+
+    def task(self, *args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+
 celery_app = None
 
 if USE_CELERY:
@@ -57,12 +69,13 @@ if USE_CELERY:
         logger.info("Celery configured (broker=%s)", CELERY_BROKER_URL)
 
     except ImportError:
-        logger.warning("Celery not installed — falling back to threading mode")
+        logger.warning("Celery not installed \u2014 falling back to threading mode")
         USE_CELERY = False
-        celery_app = None
+        celery_app = _CeleryStub()
     except Exception as e:
-        logger.warning(f"Celery init failed — falling back to threading mode: {e}")
+        logger.warning(f"Celery init failed \u2014 falling back to threading mode: {e}")
         USE_CELERY = False
-        celery_app = None
+        celery_app = _CeleryStub()
 else:
-    logger.info("Celery disabled (USE_CELERY=false) — using threading fallback")
+    logger.info("Celery disabled (USE_CELERY=false) \u2014 using threading fallback")
+    celery_app = _CeleryStub()

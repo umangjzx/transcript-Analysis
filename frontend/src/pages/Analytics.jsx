@@ -315,7 +315,7 @@ const Analytics = () => {
         </div>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">Avg Risk Score</span>
-          <span className="stat-value" style={{ color: getRiskColor(avgScore) }}>{avgScore.toFixed(1)}</span>
+          <span className="stat-value" style={{ color: getRiskColor(analytics?.avg_risk_score ?? avgScore) }}>{(analytics?.avg_risk_score ?? avgScore).toFixed(1)}</span>
         </div>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">Safe / Low</span>
