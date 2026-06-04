@@ -6,8 +6,9 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { NotificationProvider, NotificationBell } from './components/NotificationProvider';
 import CommandPalette from './components/CommandPalette';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { getToken, getStoredUser, logout, getHistory } from './api';
+import { getToken, getStoredUser, logout } from './api';
 import { Toaster } from 'react-hot-toast';
+import { DataStoreProvider, useDataStore } from './store/dataStore';
 import './App.css';
 
 // ── Lazy-loaded page components ───────────────────────────────────────────────
@@ -114,17 +115,9 @@ const ProtectedRoute = ({ children }) => {
 const AppShell = ({ children }) => {
   const navigate = useNavigate();
   const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
-  const [reports, setReports] = useState([]);
 
-  // Load reports for command palette search
-  const loadReports = useCallback(() => {
-    getHistory(0, 100).then((data) => {
-      setReports(Array.isArray(data) ? data : data?.reports || []);
-    }).catch(() => {});
-  }, []);
-
-  // Load on mount
-  React.useEffect(() => { loadReports(); }, [loadReports]);
+  // Get reports from the shared DataStore — no independent fetch
+  const { history: reports } = useDataStore();
 
   useKeyboardShortcuts({
     onSearch: () => setCmdPaletteOpen(true),
@@ -157,27 +150,29 @@ function App() {
         {/* Protected — everything else */}
         <Route path="*" element={
           <ProtectedRoute>
-            <NotificationProvider>
-              <AppShell>
-                <div className="app-container">
-                  <Navigation />
-                  <main className="main-content">
-                    <ErrorBoundary>
-                      <Suspense fallback={<PageLoader />}>
-                        <Routes>
-                          <Route path="/"              element={<Dashboard />} />
-                          <Route path="/upload"        element={<Upload />} />
-                          <Route path="/report/:id"    element={<Report />} />
-                          <Route path="/google-drive"  element={<GoogleDrive />} />
-                          <Route path="/compare"       element={<Compare />} />
-                          <Route path="/analytics"     element={<Analytics />} />
-                        </Routes>
-                      </Suspense>
-                    </ErrorBoundary>
-                  </main>
-                </div>
-              </AppShell>
-            </NotificationProvider>
+            <DataStoreProvider>
+              <NotificationProvider>
+                <AppShell>
+                  <div className="app-container">
+                    <Navigation />
+                    <main className="main-content">
+                      <ErrorBoundary>
+                        <Suspense fallback={<PageLoader />}>
+                          <Routes>
+                            <Route path="/"              element={<Dashboard />} />
+                            <Route path="/upload"        element={<Upload />} />
+                            <Route path="/report/:id"    element={<Report />} />
+                            <Route path="/google-drive"  element={<GoogleDrive />} />
+                            <Route path="/compare"       element={<Compare />} />
+                            <Route path="/analytics"     element={<Analytics />} />
+                          </Routes>
+                        </Suspense>
+                      </ErrorBoundary>
+                    </main>
+                  </div>
+                </AppShell>
+              </NotificationProvider>
+            </DataStoreProvider>
           </ProtectedRoute>
         } />
       </Routes>

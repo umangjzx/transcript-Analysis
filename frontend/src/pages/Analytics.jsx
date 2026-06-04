@@ -16,7 +16,8 @@ import {
   CheckCircle, BarChart2, Brain, RefreshCw, ArrowLeft,
   Eye, EyeOff, Sparkles, Loader2, ChevronDown, ChevronUp,
 } from 'lucide-react';
-import { getHistory, getAnalyticsSummary, getAnalyticsInsights } from '../api';
+import { getAnalyticsInsights } from '../api';
+import { useDataStore } from '../store/dataStore';
 import toast from 'react-hot-toast';
 
 const getRiskColor = (score) => {
@@ -58,9 +59,9 @@ const ChartTooltip = memo(({ active, payload, label }) => {
 
 const Analytics = () => {
   const navigate = useNavigate();
-  const [history, setHistory] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
-  const [loading, setLoading] = useState(true);
+
+  // Use global DataStore — no independent fetching needed
+  const { history, analytics, loading, refreshing, refresh } = useDataStore();
 
   // LLM Insights state
   const [insights, setInsights] = useState(null);
@@ -80,24 +81,6 @@ const Analytics = () => {
     });
   };
   const isVisible = (chartId) => !hiddenCharts.includes(chartId);
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [histData, analyticsData] = await Promise.all([
-        getHistory(0, 200),
-        getAnalyticsSummary().catch(() => null),
-      ]);
-      setHistory(Array.isArray(histData) ? histData : histData?.reports || []);
-      setAnalytics(analyticsData);
-    } catch (err) {
-      toast.error('Failed to load analytics data');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const fetchInsights = useCallback(async () => {
     setInsightsLoading(true);
@@ -297,8 +280,8 @@ const Analytics = () => {
             <p className="page-subtitle">Visualizations and insights across all analyses</p>
           </div>
         </div>
-        <button className="btn btn-secondary" onClick={fetchAll} disabled={loading}>
-          <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+        <button className="btn btn-secondary" onClick={() => refresh(false)} disabled={loading || refreshing}>
+          <RefreshCw size={16} style={{ animation: (loading || refreshing) ? 'spin 1s linear infinite' : 'none' }} />
           Refresh
         </button>
       </div>

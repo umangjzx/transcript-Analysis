@@ -962,71 +962,91 @@ def download_pdf(
 @app.delete("/report/{report_id}", status_code=204, response_class=Response)
 def delete_report(
     report_id: int,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
-    """Delete a report record from MongoDB, S3, and local PDF."""
+    """
+    Delete a report — returns 204 instantly, all slow cleanup runs in background.
+
+    Flow:
+      1. Verify the report exists (fast MongoDB lookup) → 404 if not found
+      2. Invalidate caches so the item disappears from /history immediately
+      3. Return 204 to the frontend RIGHT NOW
+      4. Background: delete local PDF, S3 files, ChromaDB vectors, MongoDB docs
+    """
     meta = get_meeting(report_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # Snapshot URLs/paths before deleting
+    # Snapshot before we hand off to background
     pdf_path     = meta.get("pdf_path")
     s3_audio_url = meta.get("s3_recording_url")
     s3_pdf_url   = meta.get("s3_pdf_url")
 
-    # -- 1. Delete local PDF from disk -----------------------------------------
-    if pdf_path and os.path.exists(pdf_path):
-        try:
-            os.remove(pdf_path)
-            logger.info(f"[#{report_id}] Local PDF deleted: {pdf_path}")
-        except Exception as _e:
-            logger.warning(f"[#{report_id}] Could not delete local PDF: {_e}")
-
-    # -- 2. Delete audio file from S3 -----------------------------------------
-    if s3_audio_url:
-        try:
-            s3_delete_file(s3_audio_url)
-            logger.info(f"[#{report_id}] S3 audio deleted: {s3_audio_url}")
-        except Exception as _e:
-            logger.warning(f"[#{report_id}] S3 audio delete failed (non-fatal): {_e}")
-
-    # -- 3. Delete PDF from S3 -------------------------------------------------
-    if s3_pdf_url:
-        try:
-            s3_delete_file(s3_pdf_url)
-            logger.info(f"[#{report_id}] S3 PDF deleted: {s3_pdf_url}")
-        except Exception as _e:
-            logger.warning(f"[#{report_id}] S3 PDF delete failed (non-fatal): {_e}")
-
-    # -- 4. Delete vector-store transcript chunks -----------------------------
-    try:
-        delete_transcript(report_id)
-    except Exception as _e:
-        logger.warning(f"[#{report_id}] ChromaDB cleanup failed (non-fatal): {_e}")
-
-    # -- 5. Delete all MongoDB collections for this meeting --------------------
-    try:
-        delete_meeting_data(report_id)
-        logger.info(f"[#{report_id}] MongoDB records deleted")
-    except Exception as _e:
-        logger.warning(f"[#{report_id}] MongoDB cleanup failed (non-fatal): {_e}")
-
-    # -- 6. Invalidate caches --------------------------------------------------
+    # Invalidate caches immediately so the row vanishes from /history right away
     _cache.invalidate()
     from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
     _h_cache.invalidate()
     _r_cache.invalidate()
     _e_cache.invalidate()
 
-    logger.info(f"[#{report_id}] Report fully deleted (local PDF + S3 + MongoDB)")
-
+    # Audit log (fast, non-blocking)
     try:
-        audit_log("report_deleted", meeting_id=report_id,
-                  details={"report_id": report_id})
+        audit_log("report_deleted", meeting_id=report_id, details={"report_id": report_id})
     except Exception as _e:
         logger.warning(f"[#{report_id}] Audit log failed (non-fatal): {_e}")
 
+    # Schedule all slow I/O as background tasks — response returns before these run
+    background_tasks.add_task(_bg_delete_report, report_id, pdf_path, s3_audio_url, s3_pdf_url)
+
     return Response(status_code=204)
+
+
+def _bg_delete_report(
+    report_id: int,
+    pdf_path: str | None,
+    s3_audio_url: str | None,
+    s3_pdf_url: str | None,
+) -> None:
+    """Background cleanup — runs after 204 is already sent to the client."""
+    # 1. Local PDF
+    if pdf_path and os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+            logger.info(f"[#{report_id}] Local PDF deleted")
+        except Exception as _e:
+            logger.warning(f"[#{report_id}] Could not delete local PDF: {_e}")
+
+    # 2. S3 audio
+    if s3_audio_url:
+        try:
+            s3_delete_file(s3_audio_url)
+            logger.info(f"[#{report_id}] S3 audio deleted")
+        except Exception as _e:
+            logger.warning(f"[#{report_id}] S3 audio delete failed (non-fatal): {_e}")
+
+    # 3. S3 PDF
+    if s3_pdf_url:
+        try:
+            s3_delete_file(s3_pdf_url)
+            logger.info(f"[#{report_id}] S3 PDF deleted")
+        except Exception as _e:
+            logger.warning(f"[#{report_id}] S3 PDF delete failed (non-fatal): {_e}")
+
+    # 4. ChromaDB vectors
+    try:
+        delete_transcript(report_id)
+    except Exception as _e:
+        logger.warning(f"[#{report_id}] ChromaDB cleanup failed (non-fatal): {_e}")
+
+    # 5. MongoDB (all collections)
+    try:
+        delete_meeting_data(report_id)
+        logger.info(f"[#{report_id}] MongoDB records deleted")
+    except Exception as _e:
+        logger.warning(f"[#{report_id}] MongoDB cleanup failed (non-fatal): {_e}")
+
+    logger.info(f"[#{report_id}] Background cleanup complete")
 
 # -- Notifications -------------------------------------------------------------
 

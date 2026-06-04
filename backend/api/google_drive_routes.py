@@ -101,7 +101,8 @@ def get_google_auth_url():
     summary="OAuth2 Callback",
     description=(
         "Google redirects here after the user grants access. "
-        "Exchanges the authorization code for tokens and stores them."
+        "Exchanges the authorization code for tokens and stores them, "
+        "then redirects the browser back to the frontend Google Drive page."
     ),
 )
 def google_oauth_callback(
@@ -109,31 +110,35 @@ def google_oauth_callback(
     error: Optional[str] = Query(None),
 ):
     """Handle the OAuth2 redirect from Google."""
+    import os
+    frontend_url = os.getenv("APP_URL", "http://localhost:5173")
+    frontend_drive_page = f"{frontend_url.rstrip('/')}/google-drive"
+
     if error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Google OAuth error: {error}",
+        logger.warning(f"Google OAuth error returned: {error}")
+        return RedirectResponse(
+            url=f"{frontend_drive_page}?auth=error&reason={error}",
+            status_code=302,
         )
     if not code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing 'code' parameter in callback.",
+        return RedirectResponse(
+            url=f"{frontend_drive_page}?auth=error&reason=missing_code",
+            status_code=302,
         )
     try:
-        result = exchange_code_for_tokens(code)
+        exchange_code_for_tokens(code)
         logger.info("Google Drive authentication successful.")
-        # Return a simple success page — the frontend can poll /status
-        return JSONResponse(
-            content={
-                "message": "Google Drive connected successfully.",
-                "scopes": result.get("scopes", []),
-            }
+        # Redirect the browser back to the frontend — the page will re-check /status
+        # and flip to the "Connected" state automatically.
+        return RedirectResponse(
+            url=f"{frontend_drive_page}?auth=success",
+            status_code=302,
         )
     except Exception as e:
         logger.error(f"Token exchange failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Token exchange failed: {e}",
+        return RedirectResponse(
+            url=f"{frontend_drive_page}?auth=error&reason=token_exchange_failed",
+            status_code=302,
         )
 
 

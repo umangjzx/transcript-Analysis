@@ -196,6 +196,7 @@ class AudioSafetyService:
             # Step 14: Auto-alert email
             if should_auto_alert(severity):
                 try:
+                    _transcript_snap = transcript  # capture for lambda closure
                     await asyncio.get_event_loop().run_in_executor(
                         None,
                         lambda: send_alert_email(
@@ -208,6 +209,7 @@ class AudioSafetyService:
                             stats=stats,
                             pdf_path=pdf_path,
                             app_url=APP_URL,
+                            transcript=_transcript_snap,
                         ),
                     )
                     logger.info(f"Auto-alert email sent for severity={severity}")

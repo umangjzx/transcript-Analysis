@@ -13,6 +13,8 @@ Config (add to .env):
   DRIVE_POLL_INTERVAL_SECONDS=120   # how often to poll (default 2 min)
   DRIVE_WATCH_FOLDER_ID=            # optional: limit to a specific Drive folder ID
   DRIVE_AUTO_WATCH=true             # set to false to disable on startup
+  DRIVE_INTER_FILE_DELAY_SECONDS=2  # delay between downloading individual files
+                                    # (reduces per-user quota consumption; default 2s)
 """
 
 import os
@@ -36,6 +38,18 @@ def _get_poll_interval() -> int:
         return int(os.getenv("DRIVE_POLL_INTERVAL_SECONDS", "120"))
     except (ValueError, TypeError):
         return 120
+
+
+def _get_inter_file_delay() -> float:
+    """
+    Seconds to sleep between consecutive file downloads inside a single poll
+    cycle.  Spreading downloads reduces bursts that trigger per-user quota
+    limits (default 2 s; set DRIVE_INTER_FILE_DELAY_SECONDS=0 to disable).
+    """
+    try:
+        return max(0.0, float(os.getenv("DRIVE_INTER_FILE_DELAY_SECONDS", "2")))
+    except (ValueError, TypeError):
+        return 2.0
 
 # ── State ─────────────────────────────────────────────────────────────────────
 _watcher_thread: Optional[threading.Thread] = None
@@ -120,12 +134,22 @@ def _poll_once() -> None:
     new_files = [f for f in files if not _is_seen(f["id"])]
 
     if not new_files:
-        logger.debug(f"[DriveWatcher] Poll complete — no new files.")
+        logger.debug("[DriveWatcher] Poll complete — no new files.")
         return
 
     logger.info(f"[DriveWatcher] Found {len(new_files)} new file(s) to process.")
+    inter_file_delay = _get_inter_file_delay()
 
-    for file in new_files:
+    for idx, file in enumerate(new_files):
+        # Throttle between consecutive file downloads to stay inside per-user quota.
+        # Skip the delay before the very first file.
+        if idx > 0 and inter_file_delay > 0:
+            logger.debug(
+                f"[DriveWatcher] Waiting {inter_file_delay}s before next file download "
+                f"(rate-limit protection)."
+            )
+            time.sleep(inter_file_delay)
+
         file_id = file["id"]
         filename = file.get("name", f"drive_{file_id}.txt")
         mime_type = file.get("mimeType", "text/plain")

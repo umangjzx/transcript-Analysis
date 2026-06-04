@@ -2,9 +2,11 @@
 Redis-backed rate limiter middleware for FastAPI.
 
 Limits:
-  - Login:  5 requests/minute
-  - Upload: 10 requests/minute
-  - Chat:   30 requests/minute
+  - login:        5 requests/minute
+  - upload:       10 requests/minute
+  - chat:         30 requests/minute
+  - google_drive: 30 requests/minute  (only actual Drive API calls: /files, /import)
+  - drive_meta:   120 requests/minute (auth-url, status, watcher control — lightweight)
 
 Falls back to in-memory sliding window if Redis is unavailable.
 """
@@ -23,32 +25,37 @@ logger = logging.getLogger(__name__)
 
 # Rate limit configuration: (max_requests, window_seconds)
 RATE_LIMITS: Dict[str, Tuple[int, int]] = {
-    "login": (5, 60),          # 5 requests per minute
-    "upload": (10, 60),        # 10 requests per minute
-    "chat": (30, 60),          # 30 requests per minute
-    "google_drive": (20, 60),  # 20 requests per minute — prevent API quota exhaustion
+    "login":        (5,   60),   # 5 requests per minute
+    "upload":       (10,  60),   # 10 requests per minute
+    "chat":         (30,  60),   # 30 requests per minute
+    "google_drive": (30,  60),   # 30 req/min — actual Drive API calls (/files, /import)
+    "drive_meta":   (120, 60),   # 120 req/min — auth-url, status, watcher control (cheap)
 }
 
 # Path → rate limit category mapping
 _PATH_CATEGORIES = {
-    "/auth/login": "login",
-    "/analyze": "upload",
-    "/analyze/video": "upload",
-    "/analyze/transcript": "upload",
-    "/analyze/batch": "upload",
-    "/api/v1/analyze": "upload",
-    "/api/v1/analyze/video": "upload",
-    "/api/v1/analyze/transcript": "upload",
-    "/api/v1/analyze/batch": "upload",
-    "/api/v1/google-drive/import": "upload",
-    "/api/v1/google-drive/files": "google_drive",
-    "/api/v1/google-drive/auth-url": "google_drive",
-    "/api/v1/google-drive/status": "google_drive",
-    "/api/v1/google-drive/watcher/start": "google_drive",
-    "/api/v1/google-drive/watcher/stop": "google_drive",
-    "/api/v1/google-drive/watcher/status": "google_drive",
-    "/chat": "chat",
-    "/api/v1/chat": "chat",
+    "/auth/login":                              "login",
+    "/analyze":                                 "upload",
+    "/analyze/video":                           "upload",
+    "/analyze/transcript":                      "upload",
+    "/analyze/batch":                           "upload",
+    "/api/v1/analyze":                          "upload",
+    "/api/v1/analyze/video":                    "upload",
+    "/api/v1/analyze/transcript":               "upload",
+    "/api/v1/analyze/batch":                    "upload",
+    # Actual Drive API calls — rate-limited to protect Google quota
+    "/api/v1/google-drive/import":              "google_drive",
+    "/api/v1/google-drive/files":               "google_drive",
+    # Lightweight metadata / auth endpoints — generous limit so they never block the UI
+    "/api/v1/google-drive/auth-url":            "drive_meta",
+    "/api/v1/google-drive/status":              "drive_meta",
+    "/api/v1/google-drive/logout":              "drive_meta",
+    "/api/v1/google-drive/callback":            "drive_meta",
+    "/api/v1/google-drive/watcher/start":       "drive_meta",
+    "/api/v1/google-drive/watcher/stop":        "drive_meta",
+    "/api/v1/google-drive/watcher/status":      "drive_meta",
+    "/chat":                                    "chat",
+    "/api/v1/chat":                             "chat",
 }
 
 

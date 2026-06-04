@@ -16,12 +16,21 @@ Required env vars (add to .env):
   GOOGLE_CLIENT_ID
   GOOGLE_CLIENT_SECRET
   GOOGLE_REDIRECT_URI   (e.g. http://localhost:8000/api/v1/google-drive/callback)
+
+Rate-limit protection:
+  All Drive API calls use exponential back-off with jitter (up to
+  DRIVE_MAX_RETRIES attempts, default 5).  The Drive API service object is
+  cached per-process so googleapiclient.discovery.build() is not called on
+  every request.
 """
 
 import os
 import json
 import logging
-from typing import Optional, List, Dict, Any
+import random
+import time
+import functools
+from typing import Optional, List, Dict, Any, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +50,79 @@ _ACCEPTED_MIME_TYPES = {
     "application/vnd.google-apps.document",               # Google Docs
 }
 
+# ── Rate-limit / retry config ─────────────────────────────────────────────────
+# Maximum number of retry attempts on transient / rate-limit errors.
+_MAX_RETRIES: int = int(os.getenv("DRIVE_MAX_RETRIES", "5"))
+# Base delay (seconds) for exponential back-off.  Actual delay is:
+#   min(BASE * 2^attempt + jitter, MAX_BACKOFF)
+_BACKOFF_BASE: float = float(os.getenv("DRIVE_BACKOFF_BASE_SECONDS", "1.0"))
+_MAX_BACKOFF: float  = float(os.getenv("DRIVE_MAX_BACKOFF_SECONDS", "32.0"))
+
+# HTTP status codes that warrant a retry
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+# ── Service object cache ───────────────────────────────────────────────────────
+# Caches the Drive v3 service so googleapiclient.discovery.build() is only
+# called once per process (or after a credential refresh).
+_service_cache: Optional[Any] = None
+
+
+# ── Retry decorator ────────────────────────────────────────────────────────────
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _with_backoff(fn: F) -> F:
+    """
+    Decorator: retry *fn* up to _MAX_RETRIES times on Drive API rate-limit or
+    transient errors, using exponential back-off with full jitter.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        last_exc = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                # Detect retryable errors from googleapiclient
+                status_code = _extract_status_code(exc)
+                is_retryable = (
+                    status_code in _RETRYABLE_STATUS_CODES
+                    or "rateLimitExceeded" in str(exc)
+                    or "userRateLimitExceeded" in str(exc)
+                    or "Rate Limit" in str(exc)
+                    or "quota" in str(exc).lower()
+                    or "backendError" in str(exc)
+                )
+                if not is_retryable or attempt == _MAX_RETRIES:
+                    raise
+                last_exc = exc
+                delay = min(
+                    _BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 1),
+                    _MAX_BACKOFF,
+                )
+                logger.warning(
+                    f"[GoogleDrive] {fn.__name__} hit a transient error "
+                    f"(HTTP {status_code or 'unknown'}): {exc}. "
+                    f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{_MAX_RETRIES})."
+                )
+                time.sleep(delay)
+        raise last_exc  # unreachable but keeps type-checker happy
+    return wrapper  # type: ignore[return-value]
+
+
+def _extract_status_code(exc: Exception) -> Optional[int]:
+    """Pull an HTTP status code out of a googleapiclient HttpError if present."""
+    try:
+        from googleapiclient.errors import HttpError  # type: ignore
+        if isinstance(exc, HttpError):
+            return int(exc.resp.status)
+    except Exception:
+        pass
+    return None
+
+
+# ── Client config ─────────────────────────────────────────────────────────────
 
 def _get_client_config() -> Dict[str, str]:
     """Read OAuth2 client config from environment variables."""
@@ -141,7 +223,9 @@ def exchange_code_for_tokens(code: str) -> Dict[str, Any]:
         "scopes": list(creds.scopes) if creds.scopes else _SCOPES,
     }
     encrypt_credentials(creds_data, _CREDS_FILE)
-    logger.info(f"Google credentials saved (encrypted at rest)")
+    # Invalidate the service cache so the next call uses fresh credentials
+    _invalidate_service_cache()
+    logger.info("Google credentials saved (encrypted at rest)")
 
     return {"status": "authenticated", "scopes": creds_data["scopes"]}
 
@@ -184,16 +268,49 @@ def _load_credentials():
     # Refresh if expired
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        # Persist refreshed token (encrypted)
         data["token"] = creds.token
         encrypt_credentials(data, _CREDS_FILE)
+        # Credential changed — bust the service cache
+        _invalidate_service_cache()
         logger.info("Google credentials refreshed and saved.")
 
     return creds
 
 
+# ── Service cache ─────────────────────────────────────────────────────────────
+
+def _invalidate_service_cache() -> None:
+    """Bust the cached Drive service (e.g. after a credential refresh)."""
+    global _service_cache
+    _service_cache = None
+
+
+def _get_drive_service():
+    """
+    Return a cached Drive v3 service object.
+
+    googleapiclient.discovery.build() makes a network call to fetch the
+    discovery document on first use; caching it avoids that overhead (and one
+    extra network round-trip that counts against quotas) on every request.
+    """
+    global _service_cache
+    if _service_cache is not None:
+        return _service_cache
+
+    try:
+        from googleapiclient.discovery import build  # type: ignore
+    except ImportError:
+        raise RuntimeError("google-api-python-client is not installed.")
+
+    creds = _load_credentials()
+    _service_cache = build("drive", "v3", credentials=creds, cache_discovery=False)
+    logger.debug("[GoogleDrive] Drive service object created and cached.")
+    return _service_cache
+
+
 # ── List files ────────────────────────────────────────────────────────────────
 
+@_with_backoff
 def list_drive_files(
     page_size: int = 50,
     query: Optional[str] = None,
@@ -204,16 +321,11 @@ def list_drive_files(
 
     By default lists .txt files and Google Docs.
     Pass a custom `query` to override (uses Drive API query syntax).
+
+    Retries automatically on rate-limit / transient errors (see _with_backoff).
     """
-    try:
-        from googleapiclient.discovery import build  # type: ignore
-    except ImportError:
-        raise RuntimeError("google-api-python-client is not installed.")
+    service = _get_drive_service()
 
-    creds = _load_credentials()
-    service = build("drive", "v3", credentials=creds, cache_discovery=False)
-
-    # Build the MIME type filter
     if query is None:
         mime_filter = " or ".join(
             f"mimeType='{m}'" for m in _ACCEPTED_MIME_TYPES
@@ -232,29 +344,30 @@ def list_drive_files(
     )
 
     files = results.get("files", [])
-    logger.info(f"Google Drive: found {len(files)} file(s)")
+    logger.info(f"[GoogleDrive] Found {len(files)} file(s)")
     return files
 
 
 # ── Read file content ─────────────────────────────────────────────────────────
 
+@_with_backoff
 def read_drive_file(file_id: str, mime_type: str) -> str:
     """
     Download and return the plain-text content of a Drive file.
 
     - Google Docs  → exported as text/plain via the export API
     - .txt files   → downloaded directly via the media download API
+
+    Retries automatically on rate-limit / transient errors (see _with_backoff).
     """
     try:
-        from googleapiclient.discovery import build  # type: ignore
         from googleapiclient.http import MediaIoBaseDownload  # type: ignore
     except ImportError:
         raise RuntimeError("google-api-python-client is not installed.")
 
     import io
 
-    creds = _load_credentials()
-    service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    service = _get_drive_service()
 
     if mime_type == "application/vnd.google-apps.document":
         # Export Google Doc as plain text
@@ -292,5 +405,6 @@ def is_authenticated() -> bool:
 def revoke_credentials() -> None:
     """Delete stored credentials (logout)."""
     from modules.credential_encryption import delete_credentials
+    _invalidate_service_cache()
     delete_credentials(_CREDS_FILE)
     logger.info("Google credentials revoked and deleted.")

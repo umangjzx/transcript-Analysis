@@ -5,6 +5,7 @@ import {
   AlertCircle, Loader2, CheckCircle,
 } from 'lucide-react';
 import { uploadAudio, uploadVideo, analyzeTranscript, uploadTranscriptFile, getReportStatus } from '../api';
+import { useDataStore } from '../store/dataStore';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -100,6 +101,7 @@ const ErrorBox = ({ message }) => (
 
 const Upload = () => {
   const navigate = useNavigate();
+  const { refresh } = useDataStore();
 
   // 'audio' | 'video' | 'transcript'
   const [mode, setMode] = useState('audio');
@@ -196,6 +198,8 @@ const Upload = () => {
           clearInterval(progressInterval);
           setProgress(100);
           setStatusMsg('Complete! Redirecting…');
+          // Silently refresh the DataStore so Dashboard shows the new report
+          refresh(true);
           setTimeout(() => navigate(`/report/${resultId}`), 600);
         } else if (statusResult.status === 'FAILED') {
           clearInterval(progressInterval);

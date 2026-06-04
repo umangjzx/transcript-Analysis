@@ -59,12 +59,14 @@ def notify_alert(
     report = _load_report_for_notify(report_id)
     findings = _parse_json_field(report.get("findings"), [])
     stats = _parse_json_field(report.get("stats"), {})
+    transcript = report.get("transcript") or None
     result = send_alert_email(
         report_id=report_id, filename=report.get("filename", ""),
         severity=report.get("severity") or "Unknown", risk_score=report.get("risk_score") or 0,
         findings=findings, summary=report.get("llm_summary") or report.get("summary") or "",
         stats=stats, pdf_path=report.get("pdf_path"),
         recipients=body.recipients or None, app_url=APP_URL,
+        transcript=transcript,
     )
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["message"])
@@ -84,6 +86,7 @@ def notify_summary(
     report = _load_report_for_notify(report_id)
     findings = _parse_json_field(report.get("findings"), [])
     stats = _parse_json_field(report.get("stats"), {})
+    transcript = report.get("transcript") or None
     result = send_summary_email(
         report_id=report_id, filename=report.get("filename", ""),
         severity=report.get("severity") or "Unknown", risk_score=report.get("risk_score") or 0,
@@ -91,6 +94,7 @@ def notify_summary(
         rule_summary=report.get("summary") or "", stats=stats,
         pdf_path=report.get("pdf_path"),
         recipients=body.recipients or None, app_url=APP_URL,
+        transcript=transcript,
     )
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["message"])

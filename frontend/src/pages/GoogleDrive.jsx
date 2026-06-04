@@ -17,6 +17,7 @@ import {
   startDriveWatcher,
   stopDriveWatcher,
 } from '../api';
+import { useDataStore } from '../store/dataStore';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -225,6 +226,7 @@ const FileRow = ({ file, onImport, importing }) => {
 
 const GoogleDrive = () => {
   const navigate = useNavigate();
+  const { refresh } = useDataStore();
 
   const [connected, setConnected]     = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -261,6 +263,24 @@ const GoogleDrive = () => {
 
   useEffect(() => {
     checkStatus();
+  }, [checkStatus]);
+
+  // Handle ?auth=success / ?auth=error redirected back from the OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authResult = params.get('auth');
+    if (authResult === 'success') {
+      toast.success('Google Drive connected successfully!');
+      // Re-check status now that credentials are stored
+      checkStatus();
+    } else if (authResult === 'error') {
+      const reason = params.get('reason') || 'unknown error';
+      toast.error(`Google Drive connection failed: ${reason}`);
+    }
+    // Clean the query string so a refresh doesn't re-trigger the toast
+    if (authResult) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, [checkStatus]);
 
   // ── Watcher status ─────────────────────────────────────────────────────────
@@ -363,6 +383,8 @@ const GoogleDrive = () => {
           setProgress(100);
           setStatusMsg('Complete! Redirecting…');
           toast.success('Analysis complete! Opening report…');
+          // Refresh DataStore so Dashboard shows the new report immediately
+          refresh(true);
           setTimeout(() => navigate(`/report/${resultId}`), 700);
         } else if (s.status === 'FAILED') {
           clearInterval(progressInterval);

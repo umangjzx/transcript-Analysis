@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCircle, AlertTriangle, Loader2, X, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 import useWebSocket from '../hooks/useWebSocket';
+import { useDataStore } from '../store/dataStore';
 
 const NotificationContext = createContext(null);
 
@@ -22,6 +23,9 @@ export const NotificationProvider = ({ children }) => {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const navigate = useNavigate();
+
+  // DataStore — update history in real-time when WS events arrive
+  const { addReport, updateReport, refresh } = useDataStore();
 
   const addNotification = useCallback((notification) => {
     setNotifications((prev) => [notification, ...prev].slice(0, MAX_NOTIFICATIONS));
@@ -40,6 +44,18 @@ export const NotificationProvider = ({ children }) => {
       const { event, data } = msg;
 
       if (event === 'analysis:completed') {
+        // ── Push completed report into DataStore immediately ──────────────
+        // Build a minimal history row from WS data so Dashboard updates
+        // without waiting for a full /history re-fetch.
+        addReport({
+          id:         data.report_id,
+          filename:   data.filename  || `Report #${data.report_id}`,
+          severity:   data.severity  || 'Unknown',
+          risk_score: data.risk_score ?? 0,
+          status:     'COMPLETED',
+          created_at: data.created_at || new Date().toISOString(),
+        });
+
         const notif = {
           id: Date.now(),
           type: 'success',
@@ -66,6 +82,9 @@ export const NotificationProvider = ({ children }) => {
       }
 
       if (event === 'analysis:failed') {
+        // Mark the job as FAILED in the store
+        updateReport(data.report_id, { status: 'FAILED' });
+
         const notif = {
           id: Date.now(),
           type: 'error',
@@ -79,6 +98,9 @@ export const NotificationProvider = ({ children }) => {
       }
 
       if (event === 'analysis:started') {
+        // Show the job as PROCESSING immediately
+        updateReport(data.report_id, { status: 'PROCESSING' });
+
         const notif = {
           id: Date.now(),
           type: 'info',
@@ -89,10 +111,15 @@ export const NotificationProvider = ({ children }) => {
         };
         addNotification(notif);
       }
+
+      // Any analysis event → silently re-fetch analytics to keep counters fresh
+      if (['analysis:completed', 'analysis:failed'].includes(event)) {
+        setTimeout(() => refresh(true), 2000);
+      }
     });
 
     return unsubscribe;
-  }, [addListener, addNotification, navigate]);
+  }, [addListener, addNotification, navigate, addReport, updateReport, refresh]);
 
   const value = {
     notifications,

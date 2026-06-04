@@ -220,6 +220,7 @@ def run_analysis_pipeline(
                     report_id=record_id, filename=filename, severity=severity,
                     risk_score=risk_score, findings=findings, summary=llm_summary,
                     stats=stats, pdf_path=pdf_path, app_url=APP_URL,
+                    transcript=transcript,
                 )
                 audit_log("alert_email_sent", meeting_id=record_id,
                           details={"severity": severity, "risk_score": risk_score})
