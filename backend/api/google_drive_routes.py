@@ -207,11 +207,14 @@ def list_files(
         if search:
             # Escape single quotes in search term to prevent query injection
             safe_search = search.replace("\\", "\\\\").replace("'", "\\'")
-            # Combine name search with MIME type filter
+            # Combine name search with MIME type filter and ownership check
             mime_filter = (
                 "(mimeType='text/plain' or mimeType='application/vnd.google-apps.document')"
             )
-            query = f"{mime_filter} and name contains '{safe_search}' and trashed=false"
+            query = (
+                f"{mime_filter} and name contains '{safe_search}' "
+                f"and trashed=false and 'me' in owners"
+            )
 
         files = list_drive_files(page_size=page_size, query=query)
         return {

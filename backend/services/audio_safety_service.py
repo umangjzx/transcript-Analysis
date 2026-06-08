@@ -25,7 +25,7 @@ from modules.transcriber import transcribe_audio
 from modules.evidence_extractor import extract_evidence
 from modules.stats import generate_stats
 from modules.chatbot import store_transcript
-from modules.email_notifier import send_alert_email, should_auto_alert
+from modules.email_notifier import send_alert_email, send_admin_report, should_auto_alert, should_parent_alert
 from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf
 
 # MongoDB — sole persistence layer
@@ -194,25 +194,58 @@ class AudioSafetyService:
                 logger.warning(f"MongoDB save failed (non-fatal): {_e}")
 
             # Step 14: Auto-alert email
-            if should_auto_alert(severity):
+            _send_parent = should_parent_alert(severity)
+            _send_admin  = should_auto_alert(severity)
+
+            if _send_parent or _send_admin:
                 try:
-                    _transcript_snap = transcript  # capture for lambda closure
-                    await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: send_alert_email(
-                            report_id=record_id,
-                            filename=filename,
-                            severity=severity,
-                            risk_score=risk_result['score'],
-                            findings=detection_results['grouped_findings'],
-                            summary=llm_summary or rule_summary,
-                            stats=stats,
-                            pdf_path=pdf_path,
-                            app_url=APP_URL,
-                            transcript=_transcript_snap,
-                        ),
+                    _transcript_snap = transcript
+                    _llm_snap        = llm_summary or rule_summary
+                    _rule_snap       = rule_summary or ""
+                    _findings_snap   = detection_results['grouped_findings']
+                    _stats_snap      = stats
+
+                    if _send_parent:
+                        # Parent email — simplified, no internal/technical data
+                        await asyncio.get_event_loop().run_in_executor(
+                            None,
+                            lambda: send_alert_email(
+                                report_id=record_id,
+                                filename=filename,
+                                severity=severity,
+                                risk_score=risk_result['score'],
+                                findings=_findings_snap,
+                                summary=_llm_snap,
+                                stats=_stats_snap,
+                                pdf_path=pdf_path,
+                                app_url=APP_URL,
+                                transcript=_transcript_snap,
+                            ),
+                        )
+
+                    if _send_admin:
+                        # Admin email — full detail for internal staff
+                        await asyncio.get_event_loop().run_in_executor(
+                            None,
+                            lambda: send_admin_report(
+                                report_id=record_id,
+                                filename=filename,
+                                severity=severity,
+                                risk_score=risk_result['score'],
+                                findings=_findings_snap,
+                                llm_summary=_llm_snap,
+                                rule_summary=_rule_snap,
+                                stats=_stats_snap,
+                                pdf_path=pdf_path,
+                                app_url=APP_URL,
+                                transcript=_transcript_snap,
+                            ),
+                        )
+
+                    logger.info(
+                        f"Auto-alert emails sent — parent={_send_parent}, admin={_send_admin}, "
+                        f"severity={severity}"
                     )
-                    logger.info(f"Auto-alert email sent for severity={severity}")
                 except Exception as _e:
                     logger.warning(f"Auto-alert email failed (non-fatal): {_e}")
 

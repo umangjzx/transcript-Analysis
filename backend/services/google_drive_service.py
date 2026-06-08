@@ -330,7 +330,9 @@ def list_drive_files(
         mime_filter = " or ".join(
             f"mimeType='{m}'" for m in _ACCEPTED_MIME_TYPES
         )
-        query = f"({mime_filter}) and trashed=false"
+        # 'me' in owners → only files owned by the authenticated user (excludes
+        # shared-with-me, Shared Drives, and files synced from local desktop clients)
+        query = f"({mime_filter}) and trashed=false and 'me' in owners"
 
     results = (
         service.files()

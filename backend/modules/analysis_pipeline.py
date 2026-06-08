@@ -51,7 +51,7 @@ def run_analysis_pipeline(
     from modules.llm_summarizer import generate_llm_summary
     from modules.report_generator import generate_pdf_report
     from modules.chatbot import store_transcript
-    from modules.email_notifier import send_alert_email, should_auto_alert
+    from modules.email_notifier import send_alert_email, send_admin_report, should_auto_alert, should_parent_alert
     from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf
     from modules.cache import history_cache, report_cache, evidence_cache
     from config import APP_URL
@@ -214,16 +214,31 @@ def run_analysis_pipeline(
         evidence_cache.invalidate()
 
         # ── Step 9: Auto-alert email ──────────────────────────────────────────
-        if should_auto_alert(severity):
+        send_parent = should_parent_alert(severity)
+        send_admin  = should_auto_alert(severity)
+
+        if send_parent or send_admin:
             try:
-                send_alert_email(
-                    report_id=record_id, filename=filename, severity=severity,
-                    risk_score=risk_score, findings=findings, summary=llm_summary,
-                    stats=stats, pdf_path=pdf_path, app_url=APP_URL,
-                    transcript=transcript,
-                )
+                if send_parent:
+                    # Parent email — simplified, no internal data
+                    send_alert_email(
+                        report_id=record_id, filename=filename, severity=severity,
+                        risk_score=risk_score, findings=findings, summary=llm_summary,
+                        stats=stats, pdf_path=pdf_path, app_url=APP_URL,
+                        transcript=transcript,
+                    )
+                if send_admin:
+                    # Admin email — full detail for internal staff
+                    send_admin_report(
+                        report_id=record_id, filename=filename, severity=severity,
+                        risk_score=risk_score, findings=findings,
+                        llm_summary=llm_summary or "", rule_summary=rule_summary or "",
+                        stats=stats, pdf_path=pdf_path, app_url=APP_URL,
+                        transcript=transcript,
+                    )
                 audit_log("alert_email_sent", meeting_id=record_id,
-                          details={"severity": severity, "risk_score": risk_score})
+                          details={"severity": severity, "risk_score": risk_score,
+                                   "parent_notified": send_parent, "admin_notified": send_admin})
             except Exception as e:
                 logger.warning(f"[#{record_id}] Auto-alert email failed: {e}")
 

@@ -54,7 +54,7 @@ from modules.stats import generate_stats
 from modules.llm_summarizer import generate_llm_summary
 from modules.report_generator import generate_pdf_report
 from modules.chatbot import store_transcript, answer_question, delete_transcript
-from modules.email_notifier import send_alert_email, send_summary_email, should_auto_alert
+from modules.email_notifier import send_alert_email, send_summary_email, send_admin_report, should_auto_alert, should_parent_alert
 from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
 from modules.virus_scanner import scan_file as virus_scan_file
 from auth import get_current_user

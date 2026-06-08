@@ -28,7 +28,7 @@ RATE_LIMITS: Dict[str, Tuple[int, int]] = {
     "login":        (5,   60),   # 5 requests per minute
     "upload":       (10,  60),   # 10 requests per minute
     "chat":         (30,  60),   # 30 requests per minute
-    "google_drive": (30,  60),   # 30 req/min — actual Drive API calls (/files, /import)
+    "google_drive": (60,  120),  # 60 req/2min — actual Drive API calls (/files, /import)
     "drive_meta":   (120, 60),   # 120 req/min — auth-url, status, watcher control (cheap)
 }
 

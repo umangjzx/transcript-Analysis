@@ -31,7 +31,7 @@ FROM deps AS app
 COPY . .
 
 # Create required directories
-RUN mkdir -p uploads logs reports
+RUN mkdir -p uploads logs reports static
 
 # Fix model path for Linux (backslash in .env won't work)
 ENV FINETUNED_MODEL_PATH=models/grooming-nli-finetuned
