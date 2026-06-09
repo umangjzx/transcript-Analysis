@@ -60,106 +60,106 @@ All data is persisted to MongoDB (7 core collections, plus `users` and `counters
 
 ```mermaid
 flowchart TD
-    subgraph INPUT["🎙️ INPUT SOURCES"]
+    subgraph INPUT["INPUT SOURCES"]
         direction LR
-        A1([🎵 Audio\n.mp3 .wav .m4a .aac .ogg])
-        A2([🎬 Video\n.mp4 .mkv .avi .mov .webm .flv .wmv])
-        A3([📄 Transcript\nPlain text / .txt upload])
-        A4([☁️ Google Drive\n.txt / Google Docs])
+        A1([Audio - mp3 wav m4a aac ogg])
+        A2([Video - mp4 mkv avi mov webm])
+        A3([Transcript - Plain text or txt])
+        A4([Google Drive - txt or Docs])
     end
 
-    subgraph SECURITY["🔒 UPLOAD SECURITY"]
+    subgraph SECURITY["UPLOAD SECURITY"]
         direction LR
-        AUTH[JWT Auth\nBearer token validation]
-        RATE[Rate Limiter\nPer-IP throttling]
-        DISK[Disk Space Check\nMin 500 MB free]
-        VIRUS[Virus Scanner\nClamAV integration]
-        SIZE[Size Limit\n200 MB audio · 500 MB video]
+        AUTH[JWT Auth - Bearer token]
+        RATE[Rate Limiter - Per-IP]
+        DISK[Disk Space Check - Min 500 MB]
+        VIRUS[Virus Scanner - ClamAV]
+        SIZE[Size Limit - 200 MB audio / 500 MB video]
     end
 
-    subgraph QUEUE["⚙️ TASK QUEUE"]
+    subgraph QUEUE["TASK QUEUE"]
         direction LR
-        REDIS_B[(Redis\nBroker + Result Backend)]
-        CEL[Celery Workers\npool=solo · acks_late]
-        BEAT[Celery Beat\nCleanup · Watcher · Recovery]
+        REDIS_B[(Redis - Broker and Result Backend)]
+        CEL[Celery Workers - pool solo acks late]
+        BEAT[Celery Beat - Cleanup Watcher Recovery]
     end
 
-    subgraph TRANSCRIPTION["① TRANSCRIPTION"]
+    subgraph TRANSCRIPTION["TRANSCRIPTION"]
         direction TB
-        EXTRACT[PyAV\nVideo → Audio extraction\n1 MB streaming chunks]
-        WHISPER[faster-whisper\nWhisper Base · CPU · int8 quantization]
-        TRANSCRIPT[(Transcript Text\n+ Timeline with speaker labels)]
+        EXTRACT[PyAV - Video to Audio - 1 MB chunks]
+        WHISPER[faster-whisper - Base CPU int8]
+        TRANSCRIPT[(Transcript Text + Timeline)]
     end
 
-    subgraph DETECTION["② GROOMING DETECTION PIPELINE"]
+    subgraph DETECTION["GROOMING DETECTION PIPELINE"]
         direction TB
-        LEET[🔤 Leetspeak Normalizer\nm33t→meet · s3cr3t→secret\nseparator removal · repetition collapse]
-        SPLIT[Sentence Splitter\n+ Speaker Label Parser]
-        PAT[📋 Pattern Matching\n20 compiled regex categories\n~200 patterns total]
-        CTX[🎯 Context Classifier\n13 ContextTypes\n−0.40 to +0.50 multipliers]
-        FIL[🚫 Filters\nNegation ±5 tokens\nJoke ±2 sentences]
-        CONF[📊 Confidence Scorer\nbase + phrase bonus + keyword bonus\n+ context multiplier − penalties]
-        ML[🧠 ML Classifier\ndistilbert-base-uncased-mnli\nZero-Shot NLI · 25% fusion weight\nLRU cache 512 entries]
-        GROUP[Evidence Grouping\nDeduplication + category merge]
+        LEET[Leetspeak Normalizer - m33t to meet]
+        SPLIT[Sentence Splitter + Speaker Parser]
+        PAT[Pattern Matching - 20 regex categories]
+        CTX[Context Classifier - 13 types]
+        FIL[Filters - Negation and Joke detection]
+        CONF[Confidence Scorer - base + bonuses]
+        ML[ML Classifier - DistilBERT MNLI Zero-Shot NLI]
+        GROUP[Evidence Grouping - Dedup + merge]
     end
 
-    subgraph SCORING["③ RISK SCORING & TEMPORAL ANALYSIS"]
+    subgraph SCORING["RISK SCORING AND TEMPORAL ANALYSIS"]
         direction TB
-        RISK[⚖️ Weighted Risk Scorer\nDiminishing returns\n100% → 50% → 25% → 12.5%\nCapped at 100]
-        TEMPORAL[⏱️ Temporal Weighting\nEarly 0.8x · Middle 1.0x · Late 1.2x\nClustering bonus +0.15\nEscalation bonus +0.20]
-        ESCALATION[📈 Escalation Detection\nProgression chains\ntrust→secrecy→meeting]
+        RISK[Weighted Risk Scorer - Diminishing returns capped at 100]
+        TEMPORAL[Temporal Weighting - Early 0.8x Mid 1.0x Late 1.2x]
+        ESCALATION[Escalation Detection - trust to secrecy to meeting]
     end
 
-    subgraph OUTPUT["④ OUTPUT GENERATION"]
+    subgraph OUTPUT["OUTPUT GENERATION"]
         direction TB
-        SEV[Severity Classifier\nSafe · Low · Moderate · High · Critical]
-        RULESUM[Rule-Based Summary\nTop findings + risk breakdown]
-        LLMSUM[🤖 LLM Summary\nOllama Llama 3.1\nCircuit breaker protected]
-        LLMVAL[LLM Output Validator\nCross-reference with findings]
-        PDF[📄 PDF Report\nReportLab · findings + charts]
-        EMBED[Vector Embedding\nall-MiniLM-L6-v2\n→ ChromaDB storage]
-        ALERT[📧 Email Alert\nHTML template · PDF attachment\nAuto-trigger on High/Critical]
+        SEV[Severity Classifier - Safe Low Moderate High Critical]
+        RULESUM[Rule-Based Summary - Top findings]
+        LLMSUM[LLM Summary - Ollama Llama 3.1]
+        LLMVAL[LLM Output Validator]
+        PDF[PDF Report - ReportLab]
+        EMBED[Vector Embedding - all-MiniLM-L6-v2 to ChromaDB]
+        ALERT[Email Alert - HTML template + PDF - Auto on High/Critical]
     end
 
-    subgraph STORAGE["⑤ PERSISTENT STORAGE"]
+    subgraph STORAGE["PERSISTENT STORAGE"]
         direction LR
-        MONGO[(🍃 MongoDB Atlas\n7 collections + users + counters\nJSON Schema validation\nTTL indexes · Connection pooling)]
-        S3[(☁️ AWS S3\n5 storage types\nAES-256 encryption\nPresigned URLs)]
-        CHROMA[(🔮 ChromaDB\nPersistent vectors\nRAG retrieval)]
-        REDIS_C[(⚡ Redis\nTTL cache · 60s default\nIn-memory fallback)]
+        MONGO[(MongoDB Atlas - 7 collections + TTL indexes)]
+        S3[(AWS S3 - AES-256 encrypted)]
+        CHROMA[(ChromaDB - Persistent vectors RAG)]
+        REDIS_C[(Redis - TTL cache 60s default)]
     end
 
-    subgraph API["⑥ REST API · FastAPI :8000"]
+    subgraph API["REST API - FastAPI port 8000"]
         direction TB
         subgraph MIDDLEWARE["Middleware Stack"]
-            MW1[Request ID · Security Headers · CORS]
-            MW2[API Key Auth · Rate Limiting]
+            MW1[Request ID + Security Headers + CORS]
+            MW2[API Key Auth + Rate Limiting]
         end
         subgraph ROUTES["Route Modules"]
-            R1[POST /analyze · /analyze/video\n/analyze/transcript · /api/v1/analyze/batch]
-            R2[GET /report · /history · /evidence\n/stats · /pdf · DELETE /report]
-            R3[POST /chat · GET /analytics/summary]
-            R4[POST /notify/alert · /notify/summary]
-            R5[/api/v1/google-drive/*\nOAuth · Files · Import · Watcher]
-            R6[/auth/login · /auth/logout · /auth/me]
+            R1[POST analyze - audio video transcript batch]
+            R2[GET report history evidence stats pdf - DELETE report]
+            R3[POST chat - GET analytics summary]
+            R4[POST notify alert and summary]
+            R5[google-drive - OAuth Files Import Watcher]
+            R6[auth - login logout me]
         end
-        WS[🔌 WebSocket /ws/progress\nReal-time analysis updates]
+        WS[WebSocket ws/progress - Real-time updates]
     end
 
-    subgraph FRONTEND["⑦ FRONTEND · React 19 + Vite 8 :5173"]
+    subgraph FRONTEND["FRONTEND - React 19 + Vite port 5173"]
         direction TB
-        subgraph PAGES["Pages (lazy-loaded)"]
-            P1[🏠 Dashboard\nHistory · Search · Sort · Stats]
-            P2[📤 Upload\nDrag-drop · Progress · Status polling]
-            P3[📊 Report\n6 tabs · Risk ring · Chatbot sidebar]
-            P4[☁️ Google Drive\nOAuth · Browser · Watcher]
-            P5[🔐 Login\nJWT · Protected routes]
-            P6[📈 Analytics\nCross-report aggregation]
-            P7[🔀 Compare\nSide-by-side report comparison]
+        subgraph PAGES["Pages"]
+            P1[Dashboard - History Search Sort Stats]
+            P2[Upload - Drag-drop Progress Polling]
+            P3[Report - 6 tabs Risk ring Chatbot]
+            P4[Google Drive - OAuth Browser Watcher]
+            P5[Login - JWT Protected routes]
+            P6[Analytics - Cross-report charts]
+            P7[Compare - Side-by-side comparison]
         end
         subgraph LIBS["Libraries"]
-            L1[Recharts · Lucide · react-hot-toast]
-            L2[Axios · React Router 7]
+            L1[Recharts + Lucide + react-hot-toast]
+            L2[Axios + React Router 7]
         end
     end
 
@@ -204,7 +204,7 @@ flowchart TD
     BEAT --> REDIS_B
     REDIS_B --> CEL
 
-    SEV -->|High/Critical| ALERT
+    SEV -->|High or Critical| ALERT
 ```
 
 ---
