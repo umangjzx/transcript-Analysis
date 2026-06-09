@@ -43,3 +43,29 @@ models/
 
 # Google OAuth2 credentials (contains refresh tokens — never commit)
 .google_credentials.json
+.google_credentials.json.enc
+
+# Environment files — NEVER commit real secrets
+.env
+.env.*
+!.env.example
+
+# Any encrypted credential files
+*.enc
+
+# AWS credential files
+.aws/
+credentials
+aws_credentials.json
+
+# Private keys / certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Any file that looks like secrets
+secrets.json
+secrets.yaml
+secrets.yml
+service_account.json

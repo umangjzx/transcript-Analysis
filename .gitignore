@@ -61,7 +61,25 @@ backend/logs/
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
 secrets.json
+secrets.yaml
+secrets.yml
+
+# Google OAuth credentials (plaintext and encrypted)
+.google_credentials.json
+.google_credentials.json.enc
+backend/.google_credentials.json
+backend/.google_credentials.json.enc
+
+# Any encrypted credential files
+*.enc
+
+# AWS / cloud credentials
+credentials
+aws_credentials.json
+service_account.json
 
 # ── HuggingFace model cache (large, don't commit) ────────────────────────────
 .cache/
