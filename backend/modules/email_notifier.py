@@ -192,13 +192,25 @@ def _condense_summary(summary: str, tier: str, max_chars: int = 600) -> str:
 
     text = summary.strip()
 
+    def _strip_dividers(s: str) -> str:
+        """Remove lines that are purely decorative dividers (─, ═, -, etc.)."""
+        lines = s.split("\n")
+        cleaned = [
+            ln for ln in lines
+            if not re.match(r"^\s*[─═\-_~]{4,}\s*$", ln)
+        ]
+        return "\n".join(cleaned).strip()
+
     def _extract_section(label: str) -> str:
         pattern = re.compile(
-            rf"(?:SECTION\s+\d+\s+[—–-]+\s+)?{re.escape(label)}\s*[—–\-]*\n+(.*?)(?=\nSECTION|\Z)",
+            rf"(?:SECTION\s+\d+\s+[—–\-]+\s+)?{re.escape(label)}\s*[—–\-]*\n+(.*?)(?=\nSECTION|\Z)",
             re.IGNORECASE | re.DOTALL,
         )
         m = pattern.search(text)
-        return m.group(1).strip()[:max_chars] if m else ""
+        if not m:
+            return ""
+        raw = m.group(1).strip()
+        return _strip_dividers(raw)[:max_chars]
 
     exec_sum = _extract_section("EXECUTIVE SUMMARY")
     key_con  = _extract_section("KEY CONCERNS")
@@ -400,7 +412,11 @@ def _ds_section_label(title: str, color: str = None) -> str:
 def _ds_content_box(text: str, bg: str = None, border: str = None) -> str:
     bg     = bg or "#F8FAFC"
     border = border or _T["border"]
-    safe   = (text or "Not available.").replace("\n", "<br>")
+    raw    = text or "Not available."
+    # Strip decorative divider lines (─, ═, -, etc.) before rendering
+    lines  = raw.split("\n")
+    lines  = [ln for ln in lines if not re.match(r"^\s*[─═\-_~]{4,}\s*$", ln)]
+    safe   = "<br>".join(lines)
     return f"""<div class="content-box"
                     style="background:{bg};border:1px solid {border};border-radius:10px;
                            padding:18px 20px;font-size:13px;color:{_T['body']};

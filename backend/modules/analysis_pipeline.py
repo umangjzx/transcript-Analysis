@@ -232,7 +232,7 @@ def run_analysis_pipeline(
                     send_admin_report(
                         report_id=record_id, filename=filename, severity=severity,
                         risk_score=risk_score, findings=findings,
-                        llm_summary=llm_summary or "", rule_summary=rule_summary or "",
+                        llm_summary=llm_summary or "", rule_summary=summary or "",
                         stats=stats, pdf_path=pdf_path, app_url=APP_URL,
                         transcript=transcript,
                     )
