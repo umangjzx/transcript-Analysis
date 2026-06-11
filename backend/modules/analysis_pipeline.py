@@ -71,6 +71,7 @@ def run_analysis_pipeline(
     grooming_detector = GroomingDetector(
         min_confidence_threshold=0.3,
         enable_ml_classifier=enable_ml,
+        ml_max_sentences=int(os.getenv("ML_MAX_SENTENCES", "50")),
     )
     risk_scorer = WeightedRiskScorer()
 

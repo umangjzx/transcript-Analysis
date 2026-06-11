@@ -132,6 +132,7 @@ class GroomingDetector:
         enable_filters: bool = True,
         enable_grouping: bool = True,
         enable_ml_classifier: bool = True,
+        ml_max_sentences: int = 50,
     ):
         """
         Args:
@@ -144,12 +145,16 @@ class GroomingDetector:
                                       to each finding. Disabled by default on first
                                       run until the model is cached (~1.6 GB download).
                                       Set to True once the model is available locally.
+            ml_max_sentences:         Maximum number of findings to run through
+                                      the ML classifier (sorted by confidence desc).
+                                      Caps worst-case inference time for large transcripts.
         """
         self.min_confidence_threshold = min_confidence_threshold
         self.enable_context_analysis  = enable_context_analysis
         self.enable_filters           = enable_filters
         self.enable_grouping          = enable_grouping
         self.enable_ml_classifier     = enable_ml_classifier
+        self.ml_max_sentences         = ml_max_sentences
 
         self.context_analyzer    = ContextAnalyzer()
         self.confidence_calc     = ConfidenceCalculator()
@@ -411,6 +416,12 @@ class GroomingDetector:
 
         all_findings: List[Dict[str, Any]] = []
 
+        # ── Pass 1: Regex detection WITHOUT ML (fast) ─────────────────────
+        # Temporarily disable ML to collect all regex findings first.
+        # ML will be applied selectively in pass 2 to cap inference time.
+        original_ml_setting = self.enable_ml_classifier
+        self.enable_ml_classifier = False
+
         for i, sent_data in enumerate(sentences):
             sentence = sent_data["text"]
             speaker  = sent_data.get("speaker") if speaker_aware else None
@@ -426,6 +437,71 @@ class GroomingDetector:
                 timestamp=float(i),
             )
             all_findings.extend(findings)
+
+        # Restore ML setting
+        self.enable_ml_classifier = original_ml_setting
+
+        # ── Pass 2: Apply ML classifier to top-N findings only ────────────
+        # Sort by confidence (desc) and only run NLI on the most relevant
+        # findings. This caps worst-case time for large transcripts while
+        # preserving accuracy for the highest-signal detections.
+        if original_ml_setting and all_findings:
+            # Sort descending by confidence, run ML on top N
+            sorted_indices = sorted(
+                range(len(all_findings)),
+                key=lambda idx: all_findings[idx].get("confidence", 0),
+                reverse=True,
+            )
+            ml_limit = self.ml_max_sentences
+            ml_indices = set(sorted_indices[:ml_limit])
+
+            for idx in ml_indices:
+                finding = all_findings[idx]
+                sentence = finding.get("evidence", "")
+                category = finding.get("category", "")
+                final_confidence = finding.get("confidence", 0.0)
+
+                try:
+                    ml_result = ml_classify_text(
+                        sentence,
+                        regex_categories=[category],
+                    )
+                    # Dynamic ML fusion weight
+                    ml_conf = ml_result["top_confidence"]
+                    if ml_conf >= 0.80:
+                        _fusion_weight = 0.45
+                    elif ml_conf >= 0.60:
+                        _fusion_weight = 0.35
+                    else:
+                        _fusion_weight = 0.25
+
+                    fused_confidence = ml_fuse(
+                        ml_result=ml_result,
+                        regex_confidence=final_confidence,
+                        category=category,
+                        fusion_weight=_fusion_weight,
+                    )
+                    finding["confidence"] = fused_confidence
+                    finding["scoring"]["ml_fused_confidence"] = fused_confidence
+                    finding["scoring"]["ml_fusion_delta"] = round(
+                        fused_confidence - final_confidence, 4
+                    )
+                    finding["ml"] = {
+                        "top_label":         ml_result["top_label"],
+                        "top_confidence":    ml_result["top_confidence"],
+                        "matched_labels":    ml_result["matched_labels"],
+                        "ml_risk_score":     ml_result["ml_risk_score"],
+                        "is_safe":           ml_result["is_safe"],
+                        "agreement":         ml_result["agreement"],
+                        "disagreement_flag": ml_result["disagreement_flag"],
+                        "all_scores":        ml_result["all_scores"],
+                    }
+                    finding["ml_label"]      = ml_result["top_label"]
+                    finding["ml_confidence"] = ml_result["top_confidence"]
+                except Exception as ml_err:
+                    finding["ml"] = {"error": str(ml_err)}
+                    finding["ml_label"]      = "unavailable"
+                    finding["ml_confidence"] = 0.0
 
         # ── Behavioral pattern detection (cross-sentence) ─────────────────
         # Detects grooming tactics that are only visible across the full
