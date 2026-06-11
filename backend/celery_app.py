@@ -72,6 +72,31 @@ if USE_CELERY:
         ]
         logger.info("Celery configured (broker=%s)", CELERY_BROKER_URL)
 
+        # ── Warm up ML models when each worker process starts ──────────────
+        # This prevents cold-start delays on the first task.
+        from celery.signals import worker_process_init
+
+        @worker_process_init.connect
+        def _warmup_models(**kwargs):
+            """Pre-load ML models in each forked worker process."""
+            import sys
+            if "/app" not in sys.path:
+                sys.path.insert(0, "/app")
+            try:
+                logger.info("[Worker] Warming up ML classifier...")
+                from modules.ml_classifier import _get_pipeline
+                _get_pipeline()
+            except Exception as e:
+                logger.warning(f"[Worker] ML classifier warm-up failed: {e}")
+            try:
+                logger.info("[Worker] Warming up SentenceTransformer...")
+                from modules.chatbot import _get_embedding_model, _get_collection
+                _get_embedding_model()
+                _get_collection()
+            except Exception as e:
+                logger.warning(f"[Worker] SentenceTransformer warm-up failed: {e}")
+            logger.info("[Worker] Model warm-up complete.")
+
     except ImportError:
         logger.warning("Celery not installed \u2014 falling back to threading mode")
         USE_CELERY = False
