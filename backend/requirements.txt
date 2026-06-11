@@ -11,7 +11,7 @@ celery[redis]==5.4.0
 
 # ── Authentication ────────────────────────────────────────────────────────────
 bcrypt==4.2.1
-python-jose[cryptography]==3.3.0
+PyJWT==2.9.0
 
 # ── Credential encryption at rest ─────────────────────────────────────────────
 cryptography==44.0.0

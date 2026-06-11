@@ -27,7 +27,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -88,7 +89,7 @@ def decode_access_token(token: str) -> dict:
                 detail="Invalid token payload.",
             )
         return payload
-    except JWTError as exc:
+    except PyJWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Token invalid or expired: {exc}",
