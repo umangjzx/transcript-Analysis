@@ -27,14 +27,21 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ── Application stage ─────────────────────────────────────────────────────────
 FROM deps AS app
 
+# Create a non-root user for security
+RUN adduser --disabled-password --gecos '' --uid 1001 appuser
+
 # Copy application code
 COPY . .
 
-# Create required directories
-RUN mkdir -p uploads logs reports static
+# Create required directories and set ownership
+RUN mkdir -p uploads logs reports static && \
+    chown -R appuser:appuser /app
 
 # Fix model path for Linux (backslash in .env won't work)
 ENV FINETUNED_MODEL_PATH=models/grooming-nli-finetuned
+
+# Switch to non-root user
+USER appuser
 
 # Expose the API port
 EXPOSE 8000
