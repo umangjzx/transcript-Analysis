@@ -40,4 +40,4 @@ ENV FINETUNED_MODEL_PATH=models/grooming-nli-finetuned
 EXPOSE 8000
 
 # Default command: run the FastAPI server (no --reload in production)
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
