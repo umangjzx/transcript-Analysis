@@ -270,12 +270,7 @@ export const sendSummaryEmail = async (reportId, recipients = []) => {
 // ── Delete report ─────────────────────────────────────────────────────────────
 
 export const deleteReport = async (id) => {
-  try {
-    await api.delete(`/report/${id}`);
-  } catch (err) {
-    console.error(`[deleteReport] Failed:`, err?.response?.status, err?.response?.data, err?.message);
-    throw err;
-  }
+  await api.delete(`/report/${id}`);
 };
 
 export const bulkDeleteReports = async (ids) => {
