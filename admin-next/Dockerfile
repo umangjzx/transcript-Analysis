@@ -10,6 +10,8 @@ COPY . .
 
 # Build the Next.js app
 ENV NEXT_TELEMETRY_DISABLED=1
+ARG BACKEND_URL=http://backend:8000
+ENV BACKEND_URL=${BACKEND_URL}
 RUN npm run build
 
 # ── Production stage ──────────────────────────────────────────────────────────
@@ -35,5 +37,6 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV BACKEND_URL=http://backend:8000
 
 CMD ["node", "server.js"]
