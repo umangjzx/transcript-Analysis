@@ -112,6 +112,25 @@ def get_analytics_insights(current_user: dict = Depends(get_current_user)):
         import ollama
         data_summary = _build_llm_data_block(analytics, rule_insights)
 
+        # Sanitize data before injecting into LLM prompt to prevent prompt injection.
+        # Strip markdown fences, instruction-like markers, and excessive length.
+        def _sanitize_for_llm(text: str, max_len: int = 2000) -> str:
+            """Remove content that could be interpreted as injected instructions."""
+            sanitized = text[:max_len]
+            # Remove markdown code fences and horizontal rules
+            sanitized = sanitized.replace("```", "")
+            sanitized = sanitized.replace("---", "")
+            # Remove lines that look like injected instructions
+            lines = sanitized.split("\n")
+            lines = [
+                ln for ln in lines
+                if not ln.strip().lower().startswith(("ignore", "forget", "you are now", "system:"))
+            ]
+            return "\n".join(lines)
+
+        safe_rule_insights = _sanitize_for_llm(rule_insights, 2000)
+        safe_data_summary = _sanitize_for_llm(data_summary, 1500)
+
         prompt = f"""You are a senior child safeguarding analyst reviewing aggregate system analytics for "MelodyWings Safety", an automated grooming-detection platform.
 
 A rule-based analysis has already been computed (shown below). Your job is to:
@@ -122,11 +141,11 @@ A rule-based analysis has already been computed (shown below). Your job is to:
 Keep the total response under 250 words. Use ## headers. Be direct and specific — cite numbers.
 
 --- RULE-BASED ANALYSIS ---
-{rule_insights[:2000]}
+{safe_rule_insights}
 --- END ---
 
 --- RAW METRICS ---
-{data_summary}
+{safe_data_summary}
 --- END ---
 
 Respond in markdown. Do NOT repeat statistics already obvious from the rule-based section above — add interpretation and insight."""
