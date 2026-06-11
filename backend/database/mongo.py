@@ -470,14 +470,16 @@ def audit_log(
     meeting_id: Optional[int] = None,
     user_action: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
 ) -> bool:
     """
     Collection: audit_logs
-    Fields: event, meeting_id, user_action, details, timestamp
+    Fields: event, meeting_id, user_id, user_action, details, timestamp
     """
     doc = {
         "event":       event,
         "meeting_id":  meeting_id,
+        "user_id":     user_id,
         "user_action": user_action,
         "details":     details or {},
         "timestamp":   _now(),
