@@ -658,7 +658,111 @@ export default function ReportPage() {
                 </div>
               </div>
 
-              {/* Top Category Bar Chart */}
+              {/* ── Score Calculation Breakdown ──────────────────────────── */}
+              {findings.length > 0 && (
+                <div className="glass-panel" style={{ padding: 'var(--spacing-xl)' }}>
+                  <div className="panel-heading-row">
+                    <Zap size={18} style={{ color: 'var(--accent-primary)' }} />
+                    <h3 className="panel-heading">Score Calculation</h3>
+                    <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)' }}>
+                      Weighted Risk Scoring Algorithm
+                    </span>
+                  </div>
+
+                  {/* Formula explanation */}
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 'var(--spacing-lg)', lineHeight: 1.7, background: 'var(--surface-subtle)', padding: '0.875rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>Formula:</strong> Each finding contributes{' '}
+                    <code style={{ background: 'var(--bg-tertiary)', padding: '0.1rem 0.4rem', borderRadius: 4, fontSize: '0.78rem' }}>Category Weight × Confidence × Diminishing Factor</code>
+                    {' '}to the total score. Repeated findings in the same category have diminishing returns (×0.5, ×0.25, ×0.125...). Final score is capped at 100.
+                  </div>
+
+                  {/* Per-category breakdown table */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {/* Header */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.7fr 0.7fr 0.7fr 1fr', gap: '0.5rem', padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--border-color)' }}>
+                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Category</span>
+                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center' }}>Weight</span>
+                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center' }}>Findings</span>
+                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center' }}>Avg Conf</span>
+                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Points</span>
+                    </div>
+
+                    {/* Rows */}
+                    {(() => {
+                      // Reconstruct scoring from findings
+                      const WEIGHTS = {
+                        meeting: 20, address: 20, secrecy: 15, parent_monitoring: 15,
+                        school: 10, routine: 10, video_call: 10, manipulation: 10,
+                        trust_building: 5, relationship_building: 5, explicit_content: 25,
+                        bad_language: 8, personal_information: 18, gift_bribery: 12,
+                        isolation: 16, desensitization: 14, emotional_exploitation: 18,
+                        threats_coercion: 22, gaming_luring: 10, age_deception: 14,
+                      };
+                      const DR = [1.0, 0.5, 0.25, 0.125, 0.0625];
+
+                      // Group findings by category
+                      const byCat = {};
+                      findings.forEach(f => {
+                        const cats = f.categories || (f.category ? [f.category] : []);
+                        cats.forEach(cat => {
+                          if (!byCat[cat]) byCat[cat] = [];
+                          const conf = f.confidence || f.max_confidence || 0.5;
+                          byCat[cat].push(conf);
+                        });
+                      });
+
+                      // Calculate score per category
+                      const rows = Object.entries(byCat).map(([cat, confs]) => {
+                        const weight = WEIGHTS[cat] || 5;
+                        confs.sort((a, b) => b - a); // desc
+                        let total = 0;
+                        confs.forEach((conf, i) => {
+                          const dr = i < DR.length ? DR[i] : DR[DR.length - 1] / (2 ** (i - DR.length + 1));
+                          total += weight * conf * dr;
+                        });
+                        const avgConf = confs.reduce((a, b) => a + b, 0) / confs.length;
+                        return { cat, weight, count: confs.length, avgConf, total };
+                      });
+
+                      rows.sort((a, b) => b.total - a.total);
+                      const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+
+                      return (
+                        <>
+                          {rows.map(({ cat, weight, count, avgConf, total }) => (
+                            <div key={cat} style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.7fr 0.7fr 0.7fr 1fr', gap: '0.5rem', padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', background: total > 10 ? 'var(--surface-subtle)' : 'transparent' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-primary)' }}>{capitalize(cat)}</span>
+                              <span style={{ fontSize: '0.85rem', textAlign: 'center', color: 'var(--text-secondary)' }}>{weight}</span>
+                              <span style={{ fontSize: '0.85rem', textAlign: 'center', color: 'var(--text-secondary)' }}>{count}</span>
+                              <span style={{ fontSize: '0.85rem', textAlign: 'center', color: 'var(--text-secondary)' }}>{(avgConf * 100).toFixed(0)}%</span>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                <div style={{ flex: 1, maxWidth: 80, height: 6, background: 'var(--bg-tertiary)', borderRadius: 99, overflow: 'hidden' }}>
+                                  <div style={{ width: `${Math.min(100, (total / Math.max(grandTotal, 1)) * 100)}%`, height: '100%', borderRadius: 99, background: total > 15 ? 'var(--status-high)' : total > 8 ? 'var(--status-moderate)' : 'var(--accent-primary)' }} />
+                                </div>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', minWidth: 40, textAlign: 'right' }}>{total.toFixed(1)}</span>
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* Total row */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.7fr 0.7fr 0.7fr 1fr', gap: '0.5rem', padding: '0.75rem 0.75rem 0.5rem', borderTop: '2px solid var(--border-color)', marginTop: '0.25rem' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>Total (capped at 100)</span>
+                            <span />
+                            <span style={{ fontSize: '0.85rem', textAlign: 'center', fontWeight: 600, color: 'var(--text-primary)' }}>{findings.length}</span>
+                            <span />
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                              <span style={{ fontSize: '1.1rem', fontWeight: 700, color: scoreColor }}>{Math.min(100, grandTotal).toFixed(1)}</span>
+                              {grandTotal > 100 && (
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginLeft: '0.5rem' }}>(raw: {grandTotal.toFixed(1)})</span>
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
               {categoryData.length > 0 && (
                 <div className="glass-panel chart-panel hover-lift-3d">
                   <div className="panel-heading-row">
