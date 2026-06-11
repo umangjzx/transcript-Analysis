@@ -226,7 +226,7 @@ export const NotificationBell = () => {
                       setOpen(false);
                     }
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(15,23,42,0.03)'}
                   onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                 >
                   {n.type === 'success' && <CheckCircle size={15} style={{ color: 'var(--status-safe)', flexShrink: 0, marginTop: 2 }} />}

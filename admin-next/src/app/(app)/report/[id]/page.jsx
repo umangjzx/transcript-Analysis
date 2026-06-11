@@ -47,7 +47,7 @@ const SkeletonBlock = ({ height = 80, style = {} }) => (
     style={{
       height,
       borderRadius: 'var(--radius-md)',
-      background: 'linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%)',
+      background: 'linear-gradient(90deg, rgba(15,23,42,0.04) 25%, rgba(15,23,42,0.08) 50%, rgba(15,23,42,0.04) 75%)',
       backgroundSize: '200% 100%',
       animation: 'shimmer 1.4s infinite',
       ...style,
@@ -671,7 +671,7 @@ export default function ReportPage() {
                         <XAxis type="number" stroke="var(--text-tertiary)" fontSize={12} />
                         <YAxis dataKey="name" type="category" width={135} stroke="var(--text-secondary)" fontSize={12} tick={{ fill: 'var(--text-secondary)' }} />
                         <Tooltip
-                          cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                          cursor={{ fill: 'rgba(15,23,42,0.04)' }}
                           contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }}
                         />
                         <Bar dataKey="points" radius={[0, 6, 6, 0]}>
@@ -701,7 +701,7 @@ export default function ReportPage() {
                   <select
                     value={findingCategoryFilter}
                     onChange={e => setFindingCategoryFilter(e.target.value)}
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer', textTransform: 'capitalize' }}
+                    style={{ background: 'rgba(15,23,42,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer', textTransform: 'capitalize' }}
                   >
                     <option value="all" style={{ background: 'var(--bg-primary)' }}>All Categories</option>
                     {uniqueCategories.map(c => (
@@ -712,7 +712,7 @@ export default function ReportPage() {
                   <select
                     value={findingFlagFilter}
                     onChange={e => setFindingFlagFilter(e.target.value)}
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}
+                    style={{ background: 'rgba(15,23,42,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}
                   >
                     <option value="all" style={{ background: 'var(--bg-primary)' }}>All Flags</option>
                     <option value="high_conf" style={{ background: 'var(--bg-primary)' }}>High Confidence (≥75%)</option>
@@ -914,7 +914,7 @@ export default function ReportPage() {
                         <BarChart data={ctxDistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                           <XAxis dataKey="name" stroke="var(--text-tertiary)" fontSize={11} />
                           <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                           <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
                             {ctxDistData.map((entry, i) => (
                               <Cell key={i} fill={CTX_PIE_COLORS[i % CTX_PIE_COLORS.length]} />
@@ -938,7 +938,7 @@ export default function ReportPage() {
                         <BarChart data={confHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                           <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
                           <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                           <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
                             {confHistData.map((entry, i) => (
                               <Cell key={i} fill={CONF_COLORS[i % CONF_COLORS.length]} />
@@ -1095,7 +1095,7 @@ export default function ReportPage() {
               Are you sure you want to permanently delete this report?
             </p>
             <div style={{
-              background: 'rgba(255,255,255,0.04)',
+              background: 'rgba(15,23,42,0.04)',
               border: '1px solid var(--border-color)',
               borderRadius: 'var(--radius-md)',
               padding: '0.75rem 1rem',

@@ -478,7 +478,7 @@ export default function AnalyticsPage() {
                 <BarChart data={statusStackData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                   <XAxis dataKey="severity" stroke="var(--text-tertiary)" fontSize={11} />
                   <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                   <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
                   <Bar dataKey="Completed" stackId="a" fill="var(--status-safe)" />
                   <Bar dataKey="Processing" stackId="a" fill="var(--status-moderate)" />
@@ -501,7 +501,7 @@ export default function AnalyticsPage() {
                 <BarChart data={riskHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                   <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
                   <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                   <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Reports">
                     {riskHistData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                   </Bar>
@@ -523,7 +523,7 @@ export default function AnalyticsPage() {
                 <BarChart data={topCatData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
                   <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
                   <YAxis dataKey="name" type="category" width={95} stroke="var(--text-secondary)" fontSize={11} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                   <Bar dataKey="count" radius={[0, 4, 4, 0]} name="Occurrences">
                     {topCatData.map((_, i) => <Cell key={i} fill={i < 2 ? 'var(--status-critical)' : i < 4 ? 'var(--status-high)' : 'var(--status-moderate)'} />)}
                   </Bar>
@@ -573,7 +573,7 @@ export default function AnalyticsPage() {
                 <BarChart data={confHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                   <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
                   <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                   <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Reports">
                     {confHistData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                   </Bar>

@@ -89,7 +89,7 @@ const ErrorBox = ({ message }) => (
   <div
     style={{
       background: 'var(--status-high-bg)',
-      color: '#fca5a5',
+      color: 'var(--status-critical)',
       padding: '0.9rem 1.1rem',
       borderRadius: 'var(--radius-md)',
       marginBottom: '1.25rem',
@@ -113,7 +113,7 @@ const ProgressBar = ({ progress, statusMsg }) => (
     <div
       style={{
         width: '100%', height: '8px',
-        background: 'rgba(255,255,255,0.1)',
+        background: 'rgba(15,23,42,0.1)',
         borderRadius: '4px', overflow: 'hidden', marginBottom: '1.5rem',
       }}
     >
@@ -164,9 +164,9 @@ const FileRow = ({ file, onImport, importing }) => {
             fontSize: '0.78rem',
             padding: '0.2rem 0.55rem',
             borderRadius: 'var(--radius-full)',
-            background: 'rgba(255,255,255,0.07)',
+            background: 'rgba(15,23,42,0.07)',
             color: 'var(--text-secondary)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            border: '1px solid rgba(15,23,42,0.1)',
           }}
         >
           {getMimeLabel(file.mime_type)}
@@ -577,7 +577,7 @@ export default function GoogleDrivePage() {
               <div
                 style={{
                   display: 'flex', alignItems: 'center', gap: '0.5rem',
-                  background: 'rgba(255,255,255,0.05)',
+                  background: 'rgba(15,23,42,0.05)',
                   padding: '0.45rem 1rem',
                   borderRadius: 'var(--radius-full)',
                   border: '1px solid var(--border-color)',

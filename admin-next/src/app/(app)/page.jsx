@@ -48,7 +48,7 @@ const getRiskColor = (score) => {
 
 const MiniRiskBar = memo(({ score }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-    <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 99 }}>
+    <div style={{ flex: 1, height: 6, background: 'rgba(15,23,42,0.08)', borderRadius: 99 }}>
       <div style={{
         width: `${Math.min(100, score ?? 0)}%`, height: '100%', borderRadius: 99,
         background: getRiskColor(score), transition: 'width 0.4s ease',
@@ -378,7 +378,7 @@ export default function DashboardPage() {
             {/* Filters */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <select value={datePreset} onChange={e => setDatePreset(e.target.value)}
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}>
+                style={{ background: 'rgba(15,23,42,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}>
                 <option value="all">All Time</option>
                 <option value="today">Today</option>
                 <option value="yesterday">Yesterday</option>
@@ -386,16 +386,16 @@ export default function DashboardPage() {
               </select>
               {datePreset === 'custom' && (
                 <>
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem' }} />
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={{ background: 'rgba(15,23,42,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem' }} />
                   <span style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>to</span>
-                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem' }} />
+                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={{ background: 'rgba(15,23,42,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem' }} />
                 </>
               )}
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)}
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}>
+                style={{ background: 'rgba(15,23,42,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}>
                 <option value="all">All Severities</option>
                 <option value="safe">Safe</option>
                 <option value="low">Low</option>
@@ -404,7 +404,7 @@ export default function DashboardPage() {
                 <option value="critical">Critical</option>
               </select>
               <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}>
+                style={{ background: 'rgba(15,23,42,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', padding: '0.4rem 0.8rem', borderRadius: 'var(--radius-md)', outline: 'none', fontFamily: 'inherit', fontSize: '0.85rem', cursor: 'pointer' }}>
                 <option value="all">All Statuses</option>
                 <option value="completed">Completed</option>
                 <option value="processing">Processing</option>
@@ -412,7 +412,7 @@ export default function DashboardPage() {
               </select>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-color)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(15,23,42,0.05)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-color)' }}>
               <Search size={15} style={{ color: 'var(--text-tertiary)' }} />
               <input
                 type="text"

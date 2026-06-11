@@ -88,7 +88,7 @@ const ProgressBar = ({ progress, statusMsg }) => (
 const ErrorBox = ({ message }) => (
   <div
     style={{
-      background: 'var(--status-high-bg)', color: '#fca5a5',
+      background: 'var(--status-high-bg)', color: 'var(--status-critical)',
       padding: '1rem', borderRadius: 'var(--radius-md)',
       marginBottom: '2rem', display: 'flex',
       alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
@@ -401,7 +401,7 @@ export default function UploadPage() {
                 }}
                 onClick={() => txtInputRef.current?.click()}
                 style={{
-                  border: '2px dashed rgba(255,255,255,0.18)',
+                  border: '2px dashed rgba(15,23,42,0.18)',
                   borderRadius: 'var(--radius-md)',
                   padding: '1rem 1.25rem',
                   marginBottom: '1.25rem',
@@ -409,7 +409,7 @@ export default function UploadPage() {
                   alignItems: 'center',
                   gap: '0.75rem',
                   cursor: 'pointer',
-                  background: transcriptFile ? 'rgba(99,255,180,0.06)' : 'rgba(255,255,255,0.03)',
+                  background: transcriptFile ? 'var(--status-safe-bg)' : 'rgba(15,23,42,0.03)',
                   transition: 'background 0.2s',
                 }}
               >
@@ -480,7 +480,7 @@ export default function UploadPage() {
                 htmlFor="transcript-text"
                 style={{ display: 'block', marginBottom: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}
               >
-                Transcript <span style={{ color: '#fca5a5' }}>*</span>
+                Transcript <span style={{ color: 'var(--status-critical)' }}>*</span>
                 <span style={{ marginLeft: '0.5rem', fontWeight: 400, color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>
                   (paste text or drop a .txt file above)
                 </span>
