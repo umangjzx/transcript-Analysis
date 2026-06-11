@@ -316,6 +316,12 @@ async def startup_event():
         else:
             logger.info("Google Drive auto-watcher already running")
 
+    # WebSocket progress queue — process events from background threads
+    import asyncio
+    init_progress_queue(asyncio.get_event_loop())
+    asyncio.create_task(process_progress_queue())
+    logger.info("WebSocket progress queue initialized")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -408,13 +414,6 @@ async def websocket_progress(websocket: WebSocket, report_id: int = None):
         await ws_manager.disconnect(websocket)
     except Exception:
         await ws_manager.disconnect(websocket)
-
-@app.on_event("startup")
-async def _start_ws_queue():
-    """Start the WebSocket progress queue processor."""
-    import asyncio
-    init_progress_queue(asyncio.get_event_loop())
-    asyncio.create_task(process_progress_queue())
 
 if _enable_ml:
     logger.info("ML classifier ENABLED (distilbert-mnli)")
