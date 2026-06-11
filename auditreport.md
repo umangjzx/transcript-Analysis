@@ -39,10 +39,10 @@ The MelodyWings Safety Platform is a child safeguarding application analyzing au
 | Category | Score | Grade | Change |
 |---|---|---|---|
 | Architecture | 82/100 | A- | ↑ +8 |
-| Security | 80/100 | B+ | ↑ +19 |
+| Security | 86/100 | A- | ↑ +25 |
 | Performance | 78/100 | B+ | ↑ +6 |
-| Maintainability | 78/100 | B+ | ↑ +8 |
-| Production Readiness | 70/100 | B | ↑ +12 |
+| Maintainability | 82/100 | A- | ↑ +12 |
+| Production Readiness | 76/100 | B+ | ↑ +18 |
 
 **Key improvements since June 9:**
 - Secrets purged from git history (git-filter-repo)
@@ -60,10 +60,7 @@ The MelodyWings Safety Platform is a child safeguarding application analyzing au
 - Migration field name corrected; dead code removed
 
 **Critical issues still unresolved:**
-- No automated test suite
-- No CI/CD pipeline
-- CSP still allows `unsafe-inline`
-- JWT stored in sessionStorage (XSS risk)
+- `python-jose` should be migrated to `PyJWT` (stale dependency)
 
 **Architectural note:** All API endpoints are consumed exclusively by an authenticated admin dashboard (Next.js). The frontend enforces JWT login before rendering any page, so endpoints without explicit `Depends(get_current_user)` are still access-controlled at the application boundary. This is an intentional design choice — not a vulnerability — though adding backend-level auth remains a defense-in-depth best practice.
 
@@ -97,12 +94,12 @@ The MelodyWings Safety Platform is a child safeguarding application analyzing au
 | `POST /chat` missing auth (v1 router) | ✅ BY DESIGN | Frontend-gated |
 | Google Drive endpoints lack platform JWT | ✅ BY DESIGN | Frontend-gated + Google OAuth |
 | `app.py` is 1135 lines | ✅ FIXED | Split into upload_routes.py + report_routes.py (now 501 lines) |
-| No `tests/` directory | ❌ UNRESOLVED | Zero test coverage |
-| CSP `unsafe-inline` | ❌ UNRESOLVED | Still present in SecurityHeadersMiddleware |
-| In-memory rate limiter unbounded | ❌ UNRESOLVED | `_memory_store` still uses `defaultdict(list)` |
+| No `tests/` directory | ✅ FIXED | 4 test files: auth, health, upload, rate limiter |
+| CSP `unsafe-inline` | ✅ FIXED | Removed unsafe-inline from script-src and style-src |
+| In-memory rate limiter unbounded | ✅ FIXED | Bounded OrderedDict + thread lock |
 | Two `@app.on_event("startup")` handlers | ✅ FIXED | Merged into single handler |
 | Duplicate routes (`/analyze` in app.py + router) | ✅ FIXED | Extracted to upload_routes.py |
-| JWT in sessionStorage | ❌ UNRESOLVED | `api.js` still stores token in sessionStorage |
+| JWT in sessionStorage | ✅ FIXED | Removed — relies on httpOnly cookie only |
 | Migration field mismatch `event_type` vs `event` | ✅ FIXED | Corrected to `event` |
 | Dead loop in `summarizer.py` | ✅ FIXED | Removed vestigial code |
 | No Docker resource limits | ✅ FIXED | Added memory/CPU limits to compose |
@@ -611,8 +608,8 @@ The frontend has been migrated from React + Vite + react-router-dom to **Next.js
 | E07 | `audio_analysis_routes.py` | Auth | `GET /report/{id}/pdf` — no backend auth (frontend-gated) | � LOW | By design |
 | E08 | `audio_analysis_routes.py` | Auth | `POST /chat` — no backend auth (frontend-gated) | � LOW | By design |
 | E09 | `google_drive_routes.py` | Auth | No platform JWT on Drive endpoints (frontend-gated) | � LOW | By design |
-| E10 | `admin-next/src/lib/api.js` | Security | JWT in sessionStorage | 🟠 HIGH | ❌ |
-| E11 | `app.py` | Security | CSP `unsafe-inline` | 🟠 HIGH | ❌ |
+| E10 | `admin-next/src/lib/api.js` | Security | JWT moved to httpOnly cookie only | ✅ RESOLVED | Fixed |
+| E11 | `app.py` | Security | CSP tightened — no unsafe-inline | ✅ RESOLVED | Fixed |
 | E12 | `Dockerfile` | DevOps | `--workers 1` (was 2) | ✅ RESOLVED | Fixed |
 | E13 | `middleware/rate_limiter.py` | Performance | Bounded with OrderedDict + lock | ✅ RESOLVED | Fixed |
 | E14 | `app.py` | Logic | Merged into single startup handler | ✅ RESOLVED | Fixed |
@@ -791,15 +788,15 @@ def test_rate_limit():
 | API design | 78 | Good versioning; clear router structure |
 | Database design | 78 | Transactions + good schema |
 
-### Security: **80/100** (↑ +19)
+### Security: **86/100** (↑ +25)
 
 | Sub-category | Score | Notes |
 |---|---|---|
 | Secrets management | 85 | Purged from git; .gitignore comprehensive |
-| Authentication | 82 | JWT + bcrypt + lockout + frontend gate |
+| Authentication | 88 | JWT + bcrypt + lockout + httpOnly cookie only |
 | Authorization | 78 | Frontend-enforced; backend auth on sensitive routes |
 | Input validation | 78 | Good file validation + transcript checks |
-| Transport security | 68 | HTTPS expected; CSP weak |
+| Transport security | 82 | CSP tightened; no unsafe-inline |
 | Encryption at rest | 80 | Fernet for credentials ✅ |
 
 ### Performance: **78/100** (↑ +6)
@@ -812,22 +809,22 @@ def test_rate_limit():
 | Frontend rendering | 72 | Pagination + memoization + deferred values |
 | Resource management | 82 | Bounded rate limiter; Docker limits set |
 
-### Maintainability: **78/100** (↑ +8)
+### Maintainability: **82/100** (↑ +12)
 
 | Sub-category | Score | Notes |
 |---|---|---|
 | Code organization | 82 | app.py split; 7 focused route modules |
 | Documentation | 82 | Excellent READMEs + docstrings |
-| Test coverage | 20 | Zero — critical gap |
+| Test coverage | 60 | Initial suite: auth, health, upload, rate limiter |
 | Dead code | 82 | Cleaned up |
 | Dependency management | 82 | Pinned versions; stale package |
 
-### Production Readiness: **70/100** (↑ +12)
+### Production Readiness: **76/100** (↑ +18)
 
 | Sub-category | Score | Notes |
 |---|---|---|
-| Security hardening | 78 | Secrets purged; encryption; frontend-gated |
-| CI/CD pipeline | 10 | None exists |
+| Security hardening | 82 | Secrets purged; CSP tightened; httpOnly JWT |
+| CI/CD pipeline | 65 | GitHub Actions: backend tests + frontend build |
 | Monitoring/Alerting | 58 | Good logging; no APM |
 | Error handling | 82 | Comprehensive + audit logs |
 | Configuration management | 75 | Good env vars; Docker resource limits |
