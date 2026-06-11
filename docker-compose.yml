@@ -75,7 +75,7 @@ services:
     restart: unless-stopped
     <<: *dns
     # Fix: use module:attribute syntax so Celery finds the app object correctly
-    command: celery -A celery_app:celery_app worker --loglevel=info --concurrency=2
+    command: celery -A celery_app:celery_app worker --loglevel=info --pool=threads --concurrency=4
     env_file:
       - ./backend/.env
     environment:

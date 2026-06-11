@@ -43,7 +43,7 @@ from .context_analyzer import ContextAnalyzer, ContextType
 from .confidence import ConfidenceCalculator
 from .filters import CombinedFilter
 from .evidence_grouping import EvidenceGroupingEngine
-from .ml_classifier import classify_text as ml_classify_text, fuse_with_regex as ml_fuse
+from .ml_classifier import classify_text as ml_classify_text, fuse_with_regex as ml_fuse, classify_batch as ml_classify_batch
 from .leetspeak_normalizer import normalize_leetspeak, is_likely_obfuscated
 
 
@@ -453,19 +453,20 @@ class GroomingDetector:
                 reverse=True,
             )
             ml_limit = self.ml_max_sentences
-            ml_indices = set(sorted_indices[:ml_limit])
+            ml_indices = sorted_indices[:ml_limit]
 
-            for idx in ml_indices:
-                finding = all_findings[idx]
-                sentence = finding.get("evidence", "")
-                category = finding.get("category", "")
-                final_confidence = finding.get("confidence", 0.0)
+            # Batch inference — process all selected findings in one call
+            batch_texts = [all_findings[idx].get("evidence", "") for idx in ml_indices]
+            batch_categories = [[all_findings[idx].get("category", "")] for idx in ml_indices]
 
-                try:
-                    ml_result = ml_classify_text(
-                        sentence,
-                        regex_categories=[category],
-                    )
+            try:
+                batch_results = ml_classify_batch(batch_texts, batch_categories)
+
+                for batch_i, idx in enumerate(ml_indices):
+                    finding = all_findings[idx]
+                    final_confidence = finding.get("confidence", 0.0)
+                    ml_result = batch_results[batch_i]
+
                     # Dynamic ML fusion weight
                     ml_conf = ml_result["top_confidence"]
                     if ml_conf >= 0.80:
@@ -475,6 +476,7 @@ class GroomingDetector:
                     else:
                         _fusion_weight = 0.25
 
+                    category = finding.get("category", "")
                     fused_confidence = ml_fuse(
                         ml_result=ml_result,
                         regex_confidence=final_confidence,
@@ -498,10 +500,12 @@ class GroomingDetector:
                     }
                     finding["ml_label"]      = ml_result["top_label"]
                     finding["ml_confidence"] = ml_result["top_confidence"]
-                except Exception as ml_err:
-                    finding["ml"] = {"error": str(ml_err)}
-                    finding["ml_label"]      = "unavailable"
-                    finding["ml_confidence"] = 0.0
+            except Exception as ml_err:
+                logger.warning(f"Batch ML classification failed: {ml_err}")
+                for idx in ml_indices:
+                    all_findings[idx]["ml"] = {"error": str(ml_err)}
+                    all_findings[idx]["ml_label"] = "unavailable"
+                    all_findings[idx]["ml_confidence"] = 0.0
 
         # ── Behavioral pattern detection (cross-sentence) ─────────────────
         # Detects grooming tactics that are only visible across the full
