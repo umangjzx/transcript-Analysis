@@ -422,7 +422,7 @@ Versioned, tracked MongoDB schema changes run automatically on startup:
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Full health — MongoDB, S3, Redis, Ollama, Whisper, ChromaDB, disk |
+| `GET` | `/health` | Health check — basic public, full topology with JWT auth |
 | `POST` | `/analyze` | Upload audio — background pipeline via Celery |
 | `POST` | `/analyze/video` | Upload video — audio extracted, then analyzed |
 | `POST` | `/analyze/transcript` | Submit transcript (JSON or multipart .txt) |
@@ -433,6 +433,7 @@ Versioned, tracked MongoDB schema changes run automatically on startup:
 | `GET` | `/report/{id}/stats` | Statistics |
 | `GET` | `/report/{id}/pdf` | Download PDF |
 | `DELETE` | `/report/{id}` | Delete from MongoDB + S3 + local + ChromaDB |
+| `POST` | `/reports/bulk-delete` | Bulk delete multiple reports `{ids: [...]}` |
 | `POST` | `/chat` | RAG chatbot |
 | `GET` | `/analytics/summary` | Cross-report aggregation |
 | `WS` | `/ws/progress` | Real-time progress updates |
@@ -478,15 +479,20 @@ Versioned, tracked MongoDB schema changes run automatically on startup:
 - **JWT authentication** — bcrypt-hashed passwords, HS256 signing, httpOnly cookies
 - **Account lockout** — configurable max attempts and lockout duration
 - **Rate limiting** — per-IP middleware with configurable thresholds
+- **Trusted proxy validation** — X-Forwarded-For only trusted from `TRUSTED_PROXY_IPS`
 - **Security headers** — CSP, X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Permissions-Policy
 - **CORS** — locked to configured origins only
 - **Virus scanning** — ClamAV integration (configurable fail-open/fail-closed)
 - **Credential encryption** — Google OAuth tokens encrypted at rest with Fernet (AES-128-CBC)
+- **LLM prompt sanitization** — data stripped of injection markers before Ollama calls
 - **Disk space pre-check** — rejects uploads when disk is below threshold
 - **Circuit breaker** — prevents cascading failures from Ollama/S3
 - **Request correlation IDs** — X-Request-ID header for tracing
-- **Audit logging** — all actions tracked in MongoDB with TTL expiry
+- **Audit logging** — all actions tracked in MongoDB with user_id and TTL expiry
 - **Secure file handling** — UUID disk names, streaming uploads (1 MB chunks), size limits
+- **Non-root Docker container** — runs as appuser (UID 1001)
+- **Secrets scanning** — Gitleaks CI job prevents accidental commits
+- **Health endpoint gating** — full topology only exposed to authenticated requests
 - **Stuck-job recovery** — PROCESSING jobs older than 30 min marked FAILED on startup
 - **Graceful shutdown** — closes MongoDB pool, Redis connections, resets circuit breakers
 - **Structured logging** — JSON format in production with configurable log rotation
@@ -532,7 +538,7 @@ Or on Windows: `start.bat`
 docker compose up backend
 ```
 
-The Dockerfile uses a multi-stage build with Python 3.11-slim, installs ffmpeg and system deps, then PyTorch CPU-only + requirements.txt. Runs with 2 Uvicorn workers.
+The Dockerfile uses a multi-stage build with Python 3.11-slim, installs ffmpeg and system deps, then PyTorch CPU-only + requirements.txt. Runs as non-root user (appuser, UID 1001) with 1 Uvicorn worker.
 
 ### Supported input formats
 

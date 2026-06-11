@@ -43,7 +43,12 @@ All data is persisted to MongoDB (7 core collections, plus `users` and `counters
 - **Security headers** — CSP, X-Frame-Options, HSTS-ready
 - **JWT authentication** — bcrypt-hashed passwords, httpOnly cookies, configurable expiry
 - **Account lockout** — Configurable max failed attempts and lockout duration
+- **Non-root Docker** — Container runs as unprivileged user (UID 1001)
+- **Trusted proxy validation** — X-Forwarded-For only trusted from configured proxy IPs
+- **LLM prompt sanitization** — Analytics data sanitized before LLM injection
+- **Secrets scanning** — Gitleaks integrated in CI pipeline
 - **Batch upload** — Analyze multiple files in a single request
+- **Bulk delete** — Delete multiple reports in a single request (server-side)
 - **RAG chatbot** — ChromaDB + Ollama for per-report Q&A
 - **Email alerts** — Auto-triggered on High/Critical severity with PDF attachment
 - **PDF reports** — Downloadable analysis reports via ReportLab
@@ -524,7 +529,7 @@ total_score     = Σ effective_scores, capped at 100
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Full health check — MongoDB, S3, Redis, Ollama, Whisper, ChromaDB, disk |
+| `GET` | `/health` | Health check — basic status (full topology requires auth) |
 | `POST` | `/analyze` | Upload audio — background pipeline via Celery |
 | `POST` | `/analyze/video` | Upload video — audio extracted, then analyzed |
 | `POST` | `/analyze/transcript` | Submit plain-text transcript (JSON or multipart) |
@@ -532,6 +537,7 @@ total_score     = Σ effective_scores, capped at 100
 | `GET` | `/history` | Paginated history with TTL cache |
 | `GET` | `/report/{id}` | Full report |
 | `DELETE` | `/report/{id}` | Delete from MongoDB + S3 + local + ChromaDB |
+| `POST` | `/reports/bulk-delete` | Bulk delete multiple reports in one request |
 | `POST` | `/chat` | RAG chatbot |
 | `WS` | `/ws/progress` | Real-time analysis progress updates |
 
@@ -587,6 +593,7 @@ curl -X POST http://localhost:8000/chat \
 - **JWT authentication** with bcrypt-hashed passwords and httpOnly cookies
 - **Account lockout** — configurable max attempts and lockout duration
 - **Rate limiting** middleware (per-IP, configurable thresholds)
+- **Trusted proxy validation** — X-Forwarded-For only honored from configured IPs
 - **Security headers** — CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
 - **CORS** locked to configured origins
 - **Virus scanning** via ClamAV (configurable fail-open/fail-closed)
@@ -594,10 +601,14 @@ curl -X POST http://localhost:8000/chat \
 - **Disk space pre-check** before accepting uploads
 - **Circuit breaker** prevents cascading failures from external services
 - **Request correlation IDs** (X-Request-ID header) for tracing
-- **Audit logging** — all actions tracked in MongoDB with TTL expiry
+- **Audit logging** — all actions tracked in MongoDB with user_id and TTL expiry
 - **Secure file handling** — UUID disk names, streaming uploads, size limits
+- **LLM prompt sanitization** — data sanitized before injection into Ollama prompts
+- **Non-root Docker container** — runs as unprivileged appuser (UID 1001)
+- **Secrets scanning** — Gitleaks CI job prevents accidental secret commits
 - **Database migrations** — versioned schema changes with JSON Schema validation
 - **Structured logging** — JSON format in production with log rotation
+- **WCAG 1.4.1 compliance** — severity badges use shape + text (not color alone)
 
 ---
 
