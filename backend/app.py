@@ -408,20 +408,59 @@ def home():
 
 
 @app.get("/health")
-def health():
+def health(request: Request):
+    """
+    Health check endpoint.
+
+    Returns basic status for unauthenticated requests (load balancer probes).
+    Returns full service topology only for authenticated admin requests.
+    """
     import shutil
-    from modules.s3_storage import ping as s3_ping
     from database.mongo import ping as mongo_ping
+
+    # Basic health — always public (needed for Docker/LB health checks)
+    mongo_ok = mongo_ping()
+    try:
+        disk = shutil.disk_usage(UPLOAD_FOLDER)
+        disk_ok = disk.free > 1 * 1024**3
+    except Exception:
+        disk_ok = True
+
+    all_healthy = mongo_ok and disk_ok
+    basic_response = {
+        "status": "healthy" if all_healthy else "degraded",
+        "service": "Audio Safety Analyzer",
+        "version": "2.1.0",
+    }
+
+    # Check if request is authenticated — only then expose detailed topology
+    token = None
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    if not token:
+        token = request.cookies.get("access_token")
+
+    if not token or not JWT_SECRET:
+        return basic_response
+
+    # Validate token before returning sensitive info
+    try:
+        from auth import decode_access_token
+        decode_access_token(token)
+    except Exception:
+        return basic_response
+
+    # Authenticated — return full topology details
+    from modules.s3_storage import ping as s3_ping
 
     try:
         disk = shutil.disk_usage(UPLOAD_FOLDER)
         disk_free_gb = round(disk.free / (1024**3), 2)
         disk_total_gb = round(disk.total / (1024**3), 2)
-        disk_ok = disk.free > 1 * 1024**3
     except Exception:
         disk_free_gb = None
         disk_total_gb = None
-        disk_ok = True
 
     whisper_status = {"available": False, "model": None}
     try:
@@ -466,13 +505,11 @@ def health():
     except Exception as e:
         redis_status = {"available": False, "error": str(e)}
 
-    all_healthy = mongo_ping() and disk_ok
     return {
-        "status": "healthy" if all_healthy else "degraded",
-        "service": "Audio Safety Analyzer",
+        **basic_response,
         "ml_classifier": {"enabled": _enable_ml},
         "s3": s3_ping(),
-        "mongodb": {"connected": mongo_ping()},
+        "mongodb": {"connected": mongo_ok},
         "whisper": whisper_status,
         "chromadb": chromadb_status,
         "ollama": ollama_status,
