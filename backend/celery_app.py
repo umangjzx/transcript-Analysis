@@ -64,8 +64,12 @@ if USE_CELERY:
             result_expires=86400,
         )
 
-        # Auto-discover tasks from the tasks module
-        celery_app.autodiscover_tasks(["tasks"])
+        # Explicitly include task modules (autodiscover looks for <pkg>.tasks
+        # which doesn't match our layout of tasks/analysis_tasks.py etc.)
+        celery_app.conf.include = [
+            "tasks.analysis_tasks",
+            "tasks.maintenance_tasks",
+        ]
         logger.info("Celery configured (broker=%s)", CELERY_BROKER_URL)
 
     except ImportError:
