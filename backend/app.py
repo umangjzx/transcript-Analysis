@@ -20,31 +20,17 @@ Fixes applied:
 """
 
 import os
-import json
 import uuid
 import logging
 import time
-from typing import Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, BackgroundTasks, Request, Depends
+from fastapi import FastAPI, HTTPException, status, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel
 
 from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, ALLOWED_VIDEO_EXTENSIONS, APP_URL
-from modules.grooming_detector import GroomingDetector
-from modules.risk_scorer import WeightedRiskScorer
-from auth import get_current_user
-from modules.summarizer import generate_summary
-from modules.stats import generate_stats
-from modules.llm_summarizer import generate_llm_summary
-from modules.report_generator import generate_pdf_report
-from modules.chatbot import store_transcript, answer_question, delete_transcript
-from modules.email_notifier import send_alert_email, send_summary_email, send_admin_report, should_auto_alert, should_parent_alert
-from modules.s3_storage import upload_audio as s3_upload_audio, upload_pdf_report as s3_upload_pdf, delete_file as s3_delete_file
-from modules.virus_scanner import scan_file as virus_scan_file
 from auth import get_current_user
 
 # -- Logging -------------------------------------------------------------------
@@ -193,14 +179,9 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-# -- Pipeline components -------------------------------------------------------
+# -- Pipeline config (used by startup warm-up only) ----------------------------
 
 _enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
-grooming_detector = GroomingDetector(
-    min_confidence_threshold=0.3,
-    enable_ml_classifier=_enable_ml,
-)
-risk_scorer = WeightedRiskScorer()
 
 # -- Startup / shutdown --------------------------------------------------------
 
@@ -228,7 +209,11 @@ async def startup_event():
 
     # Stuck-job recovery — mark PROCESSING jobs older than 30 min as FAILED
     try:
-        from database.mongo import get_mongo_db as _get_db
+        from database.mongo import (
+            get_mongo_db as _get_db,
+            save_processing_status,
+            update_meeting_status,
+        )
         _mdb = _get_db()
         if _mdb is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
@@ -253,7 +238,9 @@ async def startup_event():
         def _warmup():
             try:
                 logger.info("ML classifier warm-up: loading model...")
-                grooming_detector.analyze_transcript("warm-up ping", speaker_aware=False)
+                from modules.grooming_detector import GroomingDetector
+                _detector = GroomingDetector(min_confidence_threshold=0.3, enable_ml_classifier=True)
+                _detector.analyze_transcript("warm-up ping", speaker_aware=False)
                 logger.info("ML classifier warm-up complete")
             except Exception as _e:
                 logger.warning(f"ML warm-up failed (non-fatal): {_e}")
