@@ -115,9 +115,7 @@ if (isBrowser) {
 
 api.interceptors.request.use((config) => {
   // JWT is in httpOnly cookie — sent automatically via withCredentials: true.
-  // Only attach API key if configured.
-  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
-  if (apiKey) config.headers['X-API-Key'] = apiKey;
+  // API key auth is handled server-side only (not exposed to browser).
   return config;
 });
 
@@ -270,16 +268,8 @@ export const deleteReport = async (id) => {
 };
 
 export const bulkDeleteReports = async (ids) => {
-  const results = { deleted: [], failed: [] };
-  for (const id of ids) {
-    try {
-      await api.delete(`/report/${id}`);
-      results.deleted.push(id);
-    } catch {
-      results.failed.push(id);
-    }
-  }
-  return results;
+  const response = await api.post('/reports/bulk-delete', { ids });
+  return response.data;
 };
 
 export const exportReportsCSV = (reports) => {

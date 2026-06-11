@@ -16,10 +16,11 @@ Endpoints:
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, field_validator
 
 from auth import get_current_user
 from database.mongo import (
@@ -223,3 +224,79 @@ def _bg_delete_report(
         logger.warning(f"[#{report_id}] MongoDB cleanup failed: {_e}")
 
     logger.info(f"[#{report_id}] Background cleanup complete")
+
+
+# ── POST /reports/bulk-delete ─────────────────────────────────────────────────
+
+class BulkDeleteRequest(BaseModel):
+    ids: List[int]
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, v):
+        if not v:
+            raise ValueError("ids list cannot be empty")
+        if len(v) > 100:
+            raise ValueError("Maximum 100 IDs per bulk delete request")
+        return v
+
+
+class BulkDeleteResponse(BaseModel):
+    deleted: List[int]
+    not_found: List[int]
+    total_requested: int
+
+
+@router.post(
+    "/reports/bulk-delete",
+    response_model=BulkDeleteResponse,
+    summary="Bulk Delete Reports",
+    description=(
+        "Delete multiple reports in a single request. "
+        "Returns which IDs were successfully queued for deletion and which were not found. "
+        "Cleanup (S3, PDF, ChromaDB, MongoDB) runs in the background."
+    ),
+)
+def bulk_delete_reports(
+    body: BulkDeleteRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete multiple reports at once — avoids N sequential HTTP requests."""
+    deleted: List[int] = []
+    not_found: List[int] = []
+
+    for report_id in body.ids:
+        meta = get_meeting(report_id)
+        if meta is None:
+            not_found.append(report_id)
+            continue
+
+        pdf_path = meta.get("pdf_path")
+        s3_audio_url = meta.get("s3_recording_url")
+        s3_pdf_url = meta.get("s3_pdf_url")
+
+        try:
+            audit_log("report_deleted", meeting_id=report_id,
+                      details={"report_id": report_id, "bulk": True},
+                      user_id=current_user.get("username"))
+        except Exception:
+            pass  # audit is best-effort
+
+        background_tasks.add_task(_bg_delete_report, report_id, pdf_path, s3_audio_url, s3_pdf_url)
+        deleted.append(report_id)
+
+    # Invalidate caches once after processing all deletions
+    if deleted:
+        _cache.invalidate()
+        history_cache.invalidate()
+        report_cache.invalidate()
+        evidence_cache.invalidate()
+
+    logger.info(f"Bulk delete: {len(deleted)} queued, {len(not_found)} not found")
+
+    return BulkDeleteResponse(
+        deleted=deleted,
+        not_found=not_found,
+        total_requested=len(body.ids),
+    )

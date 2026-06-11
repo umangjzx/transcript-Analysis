@@ -34,6 +34,16 @@ const getBadgeClass = (severity) => {
   return 'badge-safe';
 };
 
+/** WCAG 1.4.1 — non-color indicator alongside colored badge */
+const getSeverityIcon = (severity) => {
+  const s = (severity || '').toLowerCase();
+  if (s === 'critical') return '⬤';
+  if (s === 'high') return '▲';
+  if (s === 'moderate' || s === 'medium') return '◆';
+  if (s === 'low') return '●';
+  return '○';
+};
+
 const DiffIndicator = ({ a, b, label, format = 'number' }) => {
   const diff = (b || 0) - (a || 0);
   const color = diff > 0 ? 'var(--status-high)' : diff < 0 ? 'var(--status-safe)' : 'var(--text-tertiary)';
@@ -175,8 +185,8 @@ export default function ComparePage() {
                   {(report.risk_score || 0).toFixed(0)}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>Risk Score</div>
-                <span className={`badge ${getBadgeClass(report.severity)}`} style={{ marginTop: '0.75rem' }}>
-                  {report.severity}
+                <span className={`badge ${getBadgeClass(report.severity)}`} style={{ marginTop: '0.75rem' }} aria-label={`Severity: ${report.severity}`}>
+                  {getSeverityIcon(report.severity)} {report.severity}
                 </span>
               </div>
             ))}
