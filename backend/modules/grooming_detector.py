@@ -213,6 +213,15 @@ class GroomingDetector:
         if not pattern_matches:
             return []
 
+        # Step 1b — Safe-phrase allowlist (suppress known false positives)
+        from modules.safe_phrases import is_safe_phrase
+        pattern_matches = {
+            cat: info for cat, info in pattern_matches.items()
+            if not is_safe_phrase(sentence, cat)
+        }
+        if not pattern_matches:
+            return []
+
         # Step 2 — Context classification (content-based, no roles)
         ctx_result = None
         if self.enable_context_analysis:
@@ -324,12 +333,20 @@ class GroomingDetector:
                         sentence,
                         regex_categories=[category],
                     )
-                    # Fuse ML score into confidence (advisory, 25% weight)
+                    # Dynamic ML fusion weight — trust ML more when it's confident
+                    ml_conf = ml_result["top_confidence"]
+                    if ml_conf >= 0.80:
+                        _fusion_weight = 0.45  # ML is very confident
+                    elif ml_conf >= 0.60:
+                        _fusion_weight = 0.35  # ML is moderately confident
+                    else:
+                        _fusion_weight = 0.25  # Low confidence — minimal influence
+
                     fused_confidence = ml_fuse(
                         ml_result=ml_result,
                         regex_confidence=final_confidence,
                         category=category,
-                        fusion_weight=0.25,
+                        fusion_weight=_fusion_weight,
                     )
                     finding["confidence"] = fused_confidence
                     finding["scoring"]["ml_fused_confidence"] = fused_confidence
@@ -415,6 +432,12 @@ class GroomingDetector:
         # conversation — subtle patterns that individual sentences miss.
         behavioral_findings = self._detect_behavioral_patterns(sentences, all_findings)
         all_findings.extend(behavioral_findings)
+
+        # ── Educational context penalty ───────────────────────────────────
+        # If the transcript is primarily educational/professional, reduce
+        # confidence on all findings to suppress false positives.
+        from modules.educational_context import apply_educational_penalty
+        all_findings = apply_educational_penalty(all_findings, transcript)
 
         grouped = all_findings
         if self.enable_grouping and all_findings:
