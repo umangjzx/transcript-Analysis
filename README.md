@@ -53,8 +53,9 @@ All data is persisted to MongoDB (7 core collections, plus `users` and `counters
 - **Email alerts** — Auto-triggered on High/Critical severity with PDF attachment
 - **PDF reports** — Downloadable analysis reports via ReportLab
 - **Google Drive watcher** — Auto-import new files on a configurable polling interval
-- **Cross-report analytics** — Aggregated statistics across all analyses
+- **Cross-report analytics** — Aggregated statistics across all analyses (11 chart types)
 - **Report comparison** — Side-by-side comparison of multiple reports
+- **Score calculation breakdown** — Per-category weighted scoring displayed in report overview
 - **Command palette** — Keyboard-driven navigation and report search (Ctrl+K)
 - **Real-time notifications** — In-app notification bell with WebSocket updates
 - **Keyboard shortcuts** — Quick navigation (Ctrl+K search, Ctrl+N new analysis)
@@ -156,10 +157,10 @@ flowchart TD
         subgraph PAGES["Pages"]
             P1[Dashboard - History Search Sort Stats]
             P2[Upload - Drag-drop Progress Polling]
-            P3[Report - 6 tabs Risk ring Chatbot]
+            P3[Report - 6 tabs Score breakdown Chatbot]
             P4[Google Drive - OAuth Browser Watcher]
             P5[Login - JWT Protected routes]
-            P6[Analytics - Cross-report charts]
+            P6[Analytics - 11 chart types AI insights]
             P7[Compare - Side-by-side comparison]
         end
         subgraph LIBS["Libraries"]
@@ -279,7 +280,7 @@ Melody Wings Safety/
 │   │   │   ├── upload/page.jsx     # Audio/video/transcript upload
 │   │   │   ├── report/[id]/page.jsx  # 6-tab report + Chatbot sidebar
 │   │   │   ├── google-drive/page.jsx # Google Drive OAuth2 + file browser + watcher
-│   │   │   ├── analytics/page.jsx  # Cross-report analytics (12 chart types)
+│   │   │   ├── analytics/page.jsx  # Cross-report analytics (11 chart types)
 │   │   │   ├── compare/page.jsx    # Side-by-side report comparison
 │   │   │   └── layout.jsx          # Nav, auth guard, notifications, command palette
 │   │   ├── login/page.jsx          # JWT login page

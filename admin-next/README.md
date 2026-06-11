@@ -40,7 +40,7 @@ Open **http://localhost:5173** — the backend must be running on port 8000 for 
 | UI | React 19 |
 | State | Zustand 5 |
 | Data Fetching | TanStack Query 5 + Axios |
-| Charts | Recharts 3 |
+| Charts | Recharts 3 (11 chart types + per-report analytics) |
 | Icons | Lucide React |
 | Notifications | react-hot-toast |
 | Real-time | Custom WebSocket hook |
@@ -67,7 +67,7 @@ admin-next/
 │   │       ├── upload/page.jsx    # Audio/video/transcript upload
 │   │       ├── report/[id]/page.jsx  # Full report viewer (6 tabs)
 │   │       ├── google-drive/page.jsx # Google Drive OAuth + file browser
-│   │       ├── analytics/page.jsx # 12 chart types + AI insights
+│   │       ├── analytics/page.jsx # 11 chart types + AI insights
 │   │       └── compare/page.jsx   # Side-by-side report comparison
 │   ├── components/
 │   │   ├── Chatbot.jsx            # RAG chatbot (per report)
@@ -99,9 +99,9 @@ admin-next/
 | `/login` | JWT authentication form |
 | `/` | Dashboard — analysis history table with search, sort, filters, bulk delete, CSV export |
 | `/upload` | Upload audio/video files or paste/upload transcript text |
-| `/report/:id` | Full report — 6 tabs (Overview, Findings Debugger, Evidence, Timeline, Analytics, Raw JSON) + AI chatbot |
+| `/report/:id` | Full report — 6 tabs (Overview with score calculation breakdown, Findings Debugger, Evidence, Timeline, Analytics with temporal phase chart, Raw JSON) + AI chatbot |
 | `/google-drive` | Google Drive OAuth2, file browser, import for analysis, auto-watcher |
-| `/analytics` | 12 chart types (severity, risk distribution, categories, scatter, confidence, trend, ML agreement, radar, volume, avg/day, status, severity trend) + AI insights |
+| `/analytics` | 11 chart types (severity, risk distribution, categories, confidence, trend, ML agreement, ML calibration, volume, avg/day, risk by weekday, severity trend) + AI insights |
 | `/compare` | Side-by-side comparison of 2 reports (scores, findings, categories) |
 
 ---
@@ -120,7 +120,20 @@ admin-next/
 - **Notification bell** — real-time notification dropdown with history
 - **AI chatbot** — per-report RAG Q&A (Ollama + ChromaDB)
 - **AI insights** — LLM-generated analytics explanation
+- **Score calculation breakdown** — visible in the report page overview tab
 - **Chart toggle** — show/hide individual charts (persisted in localStorage)
+
+---
+
+## Design System
+
+The UI uses a professional light theme with:
+- Single indigo accent family (`#4f46e5` / `#6366f1`)
+- Soft gray canvas (`#f5f7fa`) with white card surfaces
+- Subtle neutral shadows (no glows or animated blobs)
+- Calm motion (standard ease curves, small hover lifts)
+- Tighter border radii (6/10/14px)
+- Inter + Outfit font pairing
 
 ---
 
