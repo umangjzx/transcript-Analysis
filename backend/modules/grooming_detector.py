@@ -213,6 +213,15 @@ class GroomingDetector:
         if not pattern_matches:
             return []
 
+        # Step 1b — Safe-phrase allowlist (suppress known false positives)
+        from modules.safe_phrases import is_safe_phrase
+        pattern_matches = {
+            cat: info for cat, info in pattern_matches.items()
+            if not is_safe_phrase(sentence, cat)
+        }
+        if not pattern_matches:
+            return []
+
         # Step 2 — Context classification (content-based, no roles)
         ctx_result = None
         if self.enable_context_analysis:
