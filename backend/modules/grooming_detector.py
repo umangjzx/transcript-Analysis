@@ -433,6 +433,12 @@ class GroomingDetector:
         behavioral_findings = self._detect_behavioral_patterns(sentences, all_findings)
         all_findings.extend(behavioral_findings)
 
+        # ── Educational context penalty ───────────────────────────────────
+        # If the transcript is primarily educational/professional, reduce
+        # confidence on all findings to suppress false positives.
+        from modules.educational_context import apply_educational_penalty
+        all_findings = apply_educational_penalty(all_findings, transcript)
+
         grouped = all_findings
         if self.enable_grouping and all_findings:
             grouped = self.grouping_engine.group_findings(all_findings)
