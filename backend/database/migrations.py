@@ -162,7 +162,7 @@ def _001_initial_indexes(db):
 
     safe_create_index("audit_logs", [("meeting_id", ASCENDING)])
     safe_create_index("audit_logs", [("timestamp", DESCENDING)])
-    db["audit_logs"].create_index([("event_type", ASCENDING)])
+    db["audit_logs"].create_index([("event", ASCENDING)])
 
     db["users"].create_index([("username", ASCENDING)], unique=True)
 
