@@ -781,6 +781,8 @@ EXPLICIT_CONTENT_PATTERNS = compile_patterns([
     r'\b(?:do\s+you\s+(?:like|enjoy)\s+(?:sex|being\s+touched|kissing))\b',
     r'\b(?:have\s+you\s+(?:kissed|been\s+kissed|made\s+out)\s+(?:with\s+anyone|before))\b',
     r'\b(?:i\s+want\s+to\s+(?:kiss|touch|feel|lick|suck)\s+(?:you|your))\b',
+    r'\b(?:i\s+want\s+to\s+see\s+(?:you|u)\s+(?:naked|nude|undressed|without\s+clothes))\b',
+    r'\b(?:see|watch)\s+(?:you|u)\s+(?:naked|nude|undressed|strip|undress)\b',
     r'\b(?:you\s+(?:turn\s+me\s+on|make\s+me\s+(?:horny|hard|wet)))\b',
     r'\b(?:i\'?m\s+(?:horny|turned\s+on|aroused)\s+(?:by\s+you|thinking\s+about\s+you))\b',
 
@@ -860,6 +862,8 @@ GIFT_BRIBERY_PATTERNS = compile_patterns([
     r'\bI\'?(?:ll|will)\s+pay\s+(?:you|u|for\s+it|for\s+that)\b',
     r'\b(?:here\'?s|take)\s+(?:some\s+)?(?:money|cash)\b',
     r'\bI\'?(?:ll|will|can)\s+(?:send|transfer)\s+(?:you|u)\s+(?:money|cash|funds)\b',
+    r'\b(?:send|give)\s+(?:you|u)\s+(?:money|cash|funds).{0,30}(?:give|send)\s+(?:me|us)\b',
+    r'\b(?:I\s+can|I\'?ll)\s+(?:send|give|pay)\s+(?:you|u)\s+.{0,20}(?:just|if\s+you)\s+(?:give|send|share|tell)\b',
 
     # ----------------------------------------------------------------
     # Gift cards / vouchers
@@ -951,6 +955,8 @@ DESENSITIZATION_PATTERNS = compile_patterns([
     r'\bthis\s+is\s+(?:totally|completely|perfectly|absolutely|quite)?\s*(?:normal|natural|okay|ok|fine|common|acceptable|harmless)\b',
     r'\b(?:nothing|not)\s+(?:wrong|bad|weird|strange|unusual|inappropriate)\s+(?:with|about)\s+(?:this|it|that|doing\s+this)\b',
     r'\bthere\'?s\s+nothing\s+(?:wrong|bad|weird|strange|unusual)\s+(?:with|about)\s+(?:this|it|that)\b',
+    r'\bthere\'?s\s+nothing\s+(?:wrong|bad|weird|strange|unusual)\s+(?:with|about)\s+(?:what\s+we\'?re\s+doing|us|our)\b',
+    r'\b(?:nothing|not)\s+(?:wrong|bad|weird|strange|unusual)\s+(?:with|about)\s+(?:what\s+we\'?re\s+doing|what\s+we\s+do)\b',
 
     # ----------------------------------------------------------------
     # "Everyone does it"
@@ -1044,6 +1050,8 @@ THREATS_COERCION_PATTERNS = compile_patterns([
     r'\bI\'?(?:ll|will)\s+(?:tell|show|inform)\s+(?:everyone|your\s+(?:parents?|friends?|school|teacher))\s+(?:about|what)\b',
     r'\bI\s+(?:have|got|saved)\s+(?:your\s+)?(?:photos?|pictures?|pics?|videos?|screenshots?|messages?)\s+and\s+I\'?(?:ll|will)\b',
     r'\bif\s+you\s+(?:don\'?t|do\s+not|refuse|stop)\s+.{0,40}\s+I\'?(?:ll|will)\s+(?:share|post|tell|show|expose|leak)\b',
+    r'\bif\s+you\s+(?:tell|say|mention|talk|speak|report)\s+.{0,30}\s+I\'?(?:ll|will)\s+(?:make|ruin|destroy|hurt|punish)\b',
+    r'\bif\s+you\s+(?:tell|say)\s+(?:anyone|anybody|someone|a\s+soul)\b.{0,40}\b(?:make\s+(?:your|you)|ruin|destroy|hurt|regret|suffer|pay)\b',
 
     # ----------------------------------------------------------------
     # Direct threats
@@ -1086,7 +1094,9 @@ GAMING_LURING_PATTERNS = compile_patterns([
     # "Let's play together on Roblox" — bare form (play + platform)
     r'\b(?:let\'?s|can\s+we|want\s+to|wanna)\s+play\s+(?:together\s+)?(?:on\s+)?(?:roblox|fortnite|minecraft|among\s+us|valorant|apex|cod|gta|pubg|overwatch|a\s+game)\b',
     r'\b(?:join|come\s+to)\s+(?:my|our)\s+(?:server|game|lobby|world|realm|party|squad|team)\b',
+    r'\b(?:join|come\s+(?:to|join))\s+(?:my|our)\s+(?:private\s+)?(?:discord|telegram|whatsapp|kik)?\s*(?:server|group|channel|chat|room)\b',
     r'\b(?:private|secret)\s+(?:server|game|lobby|world|realm|channel)\b',
+    r'\b(?:private|secret)\s+(?:discord|telegram|whatsapp)\s+(?:server|group|channel|chat)\b',
 
     # ----------------------------------------------------------------
     # Moving to private / unmonitored channels
