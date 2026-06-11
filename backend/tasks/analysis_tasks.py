@@ -11,8 +11,17 @@ Dead Letter Queue:
 """
 
 import logging
+import sys
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
+
+# Ensure the backend root (/app in Docker) is on sys.path so that
+# deferred imports like "from modules.analysis_pipeline import ..."
+# resolve correctly in Celery forked worker processes.
+_APP_ROOT = str(Path(__file__).resolve().parent.parent)
+if _APP_ROOT not in sys.path:
+    sys.path.insert(0, _APP_ROOT)
 
 logger = logging.getLogger(__name__)
 

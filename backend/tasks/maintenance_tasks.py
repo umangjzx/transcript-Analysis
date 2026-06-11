@@ -6,9 +6,17 @@ Schedule these with Celery Beat or call them periodically.
 """
 
 import os
+import sys
 import time
 import logging
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+# Ensure the backend root (/app in Docker) is on sys.path so that
+# deferred imports resolve correctly in Celery forked worker processes.
+_APP_ROOT = str(Path(__file__).resolve().parent.parent)
+if _APP_ROOT not in sys.path:
+    sys.path.insert(0, _APP_ROOT)
 
 from celery_app import celery_app
 
