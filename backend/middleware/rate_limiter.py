@@ -81,12 +81,34 @@ def _get_category(path: str, method: str) -> str | None:
     return None
 
 
+# Trusted proxy IPs — only trust X-Forwarded-For from these sources.
+# Set TRUSTED_PROXY_IPS in .env as a comma-separated list (e.g. "10.0.0.1,172.17.0.1").
+# If empty, X-Forwarded-For is never trusted (uses direct connection IP).
+_TRUSTED_PROXIES: set = set(
+    ip.strip()
+    for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",")
+    if ip.strip()
+)
+
+
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP, respecting X-Forwarded-For behind a proxy."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """
+    Extract client IP with trusted proxy validation.
+
+    Only trusts X-Forwarded-For when the direct connection comes from a
+    known proxy IP. This prevents attackers from spoofing their IP by
+    injecting a fake X-Forwarded-For header.
+    """
+    client_host = request.client.host if request.client else "unknown"
+
+    # Only trust XFF if the immediate connection is from a trusted proxy
+    if _TRUSTED_PROXIES and client_host in _TRUSTED_PROXIES:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            # The leftmost IP is the original client
+            return forwarded.split(",")[0].strip()
+
+    return client_host
 
 
 # ── Redis-backed rate limiter ─────────────────────────────────────────────────
