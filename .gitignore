@@ -28,8 +28,7 @@ htmlcov/
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 node_modules/
-frontend/dist/
-frontend/dist-ssr/
+admin-next/.next/
 *.local
 
 # ── App-generated files ───────────────────────────────────────────────────────

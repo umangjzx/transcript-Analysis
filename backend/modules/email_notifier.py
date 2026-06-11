@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 load_dotenv(override=True)
 
 # ── Logo — CID inline attachment ──────────────────────────────────────────────
-# Stored in backend/static/logo.png — copied from frontend/public/unnamed.png
+# Stored in backend/static/logo.png — copied from admin-next/public/unnamed.png
 _LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "static", "logo.png")
 _LOGO_CID  = "melodywings_logo"   # referenced as cid:melodywings_logo in HTML

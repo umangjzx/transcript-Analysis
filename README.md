@@ -6,7 +6,7 @@
 ![Risk Score](https://img.shields.io/badge/Risk%20Score-0--100-red)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.136-009688)
-![React](https://img.shields.io/badge/React-19-61DAFB)
+![Next.js](https://img.shields.io/badge/Next.js-15-000000)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248)
 ![AWS S3](https://img.shields.io/badge/AWS-S3-FF9900)
 ![Celery](https://img.shields.io/badge/Celery-5.4-37814A)
@@ -19,7 +19,7 @@
 
 Melody Wings Safety accepts audio files, video files, plain-text transcripts, or Google Drive documents, and runs them through a layered detection pipeline that identifies **20 categories** of harmful behaviour — from grooming tactics and manipulation to explicit content, threats, gift-bribery, isolation, emotional exploitation, and age deception.
 
-Every finding is scored, grouped, and surfaced in a React dashboard with confidence breakdowns, ML analysis, temporal weighting, a timeline view, cross-report analytics, side-by-side comparison, and a downloadable PDF report. High-severity results trigger automatic email alerts. Real-time WebSocket progress updates keep the frontend informed during analysis.
+Every finding is scored, grouped, and surfaced in a Next.js dashboard with confidence breakdowns, ML analysis, temporal weighting, a timeline view, cross-report analytics, side-by-side comparison, and a downloadable PDF report. High-severity results trigger automatic email alerts. Real-time WebSocket progress updates keep the dashboard informed during analysis.
 
 All data is persisted to MongoDB (7 core collections, plus `users` and `counters` for auth and IDs) and AWS S3. Background processing is handled by Celery + Redis with a threading fallback for local dev.
 
@@ -146,7 +146,7 @@ flowchart TD
         WS[WebSocket ws/progress - Real-time updates]
     end
 
-    subgraph FRONTEND["FRONTEND - React 19 + Vite port 5173"]
+    subgraph FRONTEND["FRONTEND - Next.js 15 port 5173"]
         direction TB
         subgraph PAGES["Pages"]
             P1[Dashboard - History Search Sort Stats]
@@ -159,7 +159,7 @@ flowchart TD
         end
         subgraph LIBS["Libraries"]
             L1[Recharts + Lucide + react-hot-toast]
-            L2[Axios + React Router 7]
+            L2[Axios + Zustand + TanStack Query]
         end
     end
 
@@ -265,27 +265,30 @@ Melody Wings Safety/
 │   └── models/
 │       └── grooming-nli-finetuned/ # Fine-tuned DistilBERT model checkpoints
 │
-├── frontend/                       # React 19 + Vite 8 dashboard
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx       # History table — search, sort, stat cards, delete
-│   │   │   ├── Report.jsx          # 6-tab report + Chatbot sidebar
-│   │   │   ├── Upload.jsx          # Drag-and-drop upload (audio + video + transcript)
-│   │   │   ├── Login.jsx           # JWT login page
-│   │   │   ├── GoogleDrive.jsx     # Google Drive OAuth2 + file browser + watcher
-│   │   │   ├── Analytics.jsx       # Cross-report analytics dashboard
-│   │   │   └── Compare.jsx         # Side-by-side report comparison
-│   │   ├── components/
-│   │   │   ├── Chatbot.jsx         # AI chatbot sidebar (RAG)
-│   │   │   ├── CommandPalette.jsx  # Keyboard-driven search + navigation (Ctrl+K)
-│   │   │   ├── NotificationProvider.jsx  # Real-time notification system
-│   │   │   └── ErrorBoundary.jsx   # React error boundary
-│   │   ├── hooks/
-│   │   │   ├── useKeyboardShortcuts.js  # Global keyboard shortcut handler
-│   │   │   └── useWebSocket.js     # WebSocket connection hook
-│   │   ├── api.js                  # Axios client — all API calls + JWT token helpers
-│   │   └── App.jsx                 # Router + navigation + auth guard
-│   └── vite.config.js              # Dev proxy /api/v1/* → :8000
+├── admin-next/                     # Next.js 15 dashboard (App Router)
+│   ├── src/app/
+│   │   ├── (app)/                  # Protected route group
+│   │   │   ├── page.jsx            # Dashboard — history table, stats, filters
+│   │   │   ├── upload/page.jsx     # Audio/video/transcript upload
+│   │   │   ├── report/[id]/page.jsx  # 6-tab report + Chatbot sidebar
+│   │   │   ├── google-drive/page.jsx # Google Drive OAuth2 + file browser + watcher
+│   │   │   ├── analytics/page.jsx  # Cross-report analytics (12 chart types)
+│   │   │   ├── compare/page.jsx    # Side-by-side report comparison
+│   │   │   └── layout.jsx          # Nav, auth guard, notifications, command palette
+│   │   ├── login/page.jsx          # JWT login page
+│   │   └── layout.jsx              # Root layout (providers, toaster)
+│   ├── src/components/
+│   │   ├── Chatbot.jsx             # AI chatbot sidebar (RAG)
+│   │   ├── CommandPalette.jsx      # Keyboard-driven search + navigation (Ctrl+K)
+│   │   ├── NotificationProvider.jsx  # Real-time notification system
+│   │   ├── ErrorBoundary.jsx       # Error boundary
+│   │   └── Providers.jsx           # TanStack Query + Toaster
+│   ├── src/hooks/
+│   │   ├── useKeyboardShortcuts.js # Global keyboard shortcut handler
+│   │   └── useWebSocket.js         # WebSocket connection hook
+│   ├── src/lib/api.js              # Axios client — all API calls + SSR-safe auth helpers
+│   ├── src/store/dataStore.js      # Zustand global state (history + analytics)
+│   └── next.config.js              # API rewrites /api/v1/* → :8000
 │
 └── docker-compose.yml              # Full stack: Redis, Backend, Celery, Frontend, ClamAV, Ollama
 ```
@@ -357,7 +360,7 @@ If Redis is not available, set `USE_CELERY=false` in `.env` — tasks will run s
 ### 4. Frontend
 
 ```bash
-cd frontend
+cd admin-next
 npm install
 npm run dev
 ```
@@ -393,7 +396,7 @@ Services:
 | `rmsi-backend` | 8000 | FastAPI application |
 | `rmsi-celery-worker` | — | Background task processing |
 | `rmsi-celery-beat` | — | Periodic task scheduler |
-| `rmsi-frontend` | 80 | React app (Nginx) |
+| `rmsi-frontend` | 3000 | Next.js app |
 | `rmsi-clamav` | 3310 | Virus scanning (profile: full) |
 | `rmsi-ollama` | 11434 | LLM summaries (profile: full) |
 
@@ -504,7 +507,8 @@ total_score     = Σ effective_scores, capped at 100
 | Google Drive | Google Drive API + Docs API (OAuth2, encrypted credentials) |
 | Real-time | WebSocket (/ws/progress) |
 | Authentication | JWT (HS256) + bcrypt + httpOnly cookies |
-| Frontend | React 19 + Vite 8 |
+| Frontend | Next.js 15 (App Router) |
+| State Management | Zustand 5 + TanStack Query 5 |
 | Charts | Recharts 3 |
 | Icons | Lucide React |
 | Notifications | react-hot-toast + WebSocket notifications |

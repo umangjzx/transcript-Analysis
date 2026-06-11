@@ -9,9 +9,9 @@
 .DS_Store
 Thumbs.db
 
-# Node modules (frontend rebuilds in container)
-frontend/node_modules/
-frontend/dist/
+# Node modules (admin-next rebuilds in container)
+admin-next/node_modules/
+admin-next/.next/
 
 # Python venv
 backend/venv/

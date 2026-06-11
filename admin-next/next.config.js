@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 
 // Backend origin — where FastAPI is running.
-// In the standalone app this proxies the same paths the Vite dev server did.
+// In the standalone app this proxies the same paths the original dev server did.
 // When integrating into the live platform, point this at your FastAPI gateway.
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
 
