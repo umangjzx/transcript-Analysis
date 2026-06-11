@@ -306,6 +306,7 @@ async def startup_event():
 
     # WebSocket progress queue — process events from background threads
     import asyncio
+    from modules.websocket_manager import init_progress_queue, process_progress_queue
     init_progress_queue(asyncio.get_event_loop())
     asyncio.create_task(process_progress_queue())
     logger.info("WebSocket progress queue initialized")
