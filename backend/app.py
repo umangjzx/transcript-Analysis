@@ -34,21 +34,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
 from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS, ALLOWED_VIDEO_EXTENSIONS, APP_URL
-from database.mongo import (
-    save_full_analysis, save_processing_status,
-    update_meeting_status, audit_log, log_alert,
-    delete_meeting_data,
-    # Read helpers — used by all GET routes (SQLite-free)
-    list_meetings, get_full_report, get_analytics_summary as mongo_analytics,
-    get_meeting, get_evidence as mongo_get_evidence,
-    update_s3_urls, update_pdf_path,
-    next_meeting_id,
-)
-from modules.transcriber import transcribe_audio
 from modules.grooming_detector import GroomingDetector
-from modules.evidence_extractor import extract_evidence
 from modules.risk_scorer import WeightedRiskScorer
-from modules.severity_classifier import classify_severity
+from auth import get_current_user
 from modules.summarizer import generate_summary
 from modules.stats import generate_stats
 from modules.llm_summarizer import generate_llm_summary
@@ -379,16 +367,21 @@ from api.google_drive_routes import router as gdrive_router  # noqa: E402
 from api.auth_routes import router as auth_router  # noqa: E402
 from api.notification_routes import router as notify_router  # noqa: E402
 from api.analytics_routes import router as analytics_router  # noqa: E402
+from api.upload_routes import router as upload_router  # noqa: E402
+from api.report_routes import router as report_router  # noqa: E402
+
 app.include_router(v1_router)
 app.include_router(gdrive_router)
 app.include_router(auth_router)
 app.include_router(notify_router)
 app.include_router(analytics_router)
+app.include_router(upload_router)
+app.include_router(report_router)
 
 # -- WebSocket endpoint for real-time progress ---------------------------------
 
 from fastapi import WebSocket, WebSocketDisconnect as _WSD  # noqa: E402
-from modules.websocket_manager import manager as ws_manager, process_progress_queue, init_progress_queue  # noqa: E402
+from modules.websocket_manager import manager as ws_manager  # noqa: E402
 
 @app.websocket("/ws/progress")
 async def websocket_progress(websocket: WebSocket, report_id: int = None):
@@ -396,9 +389,7 @@ async def websocket_progress(websocket: WebSocket, report_id: int = None):
     await ws_manager.connect(websocket, report_id)
     try:
         while True:
-            # Keep connection alive, handle client messages
             data = await websocket.receive_text()
-            # Client can send {"subscribe": report_id} to subscribe to specific reports
             try:
                 import json as _json
                 msg = _json.loads(data)
@@ -420,38 +411,8 @@ if _enable_ml:
 else:
     logger.info("ML classifier DISABLED — set ENABLE_ML_CLASSIFIER=true in .env to enable")
 
-# -- Request models ------------------------------------------------------------
 
-class ChatRequest(BaseModel):
-    report_id: int
-    question: str
-
-
-class NotifyRequest(BaseModel):
-    recipients: Optional[list] = None
-
-
-# -- Background pipeline (Celery tasks) ----------------------------------------
-
-def process_audio_background(record_id: int, filepath: str, filename: str):
-    """Dispatch audio analysis to Celery worker."""
-    from tasks.analysis_tasks import run_audio_analysis
-    run_audio_analysis.delay(record_id, filepath, filename)
-
-
-def process_video_background(record_id: int, audio_filepath: str, filename: str):
-    """Dispatch video analysis to Celery worker."""
-    from tasks.analysis_tasks import run_video_analysis
-    run_video_analysis.delay(record_id, audio_filepath, filename)
-
-
-def process_transcript_background(record_id: int, transcript: str, filename: str):
-    """Dispatch transcript analysis to Celery worker."""
-    from tasks.analysis_tasks import run_transcript_analysis
-    run_transcript_analysis.delay(record_id, transcript, filename)
-
-
-# -- Routes --------------------------------------------------------------------
+# -- Minimal root routes (kept in app.py) --------------------------------------
 
 @app.get("/")
 def home():
@@ -464,25 +425,22 @@ def health():
     from modules.s3_storage import ping as s3_ping
     from database.mongo import ping as mongo_ping
 
-    # Disk space check
     try:
         disk = shutil.disk_usage(UPLOAD_FOLDER)
         disk_free_gb = round(disk.free / (1024**3), 2)
         disk_total_gb = round(disk.total / (1024**3), 2)
-        disk_ok = disk.free > 1 * 1024**3  # At least 1 GB free
+        disk_ok = disk.free > 1 * 1024**3
     except Exception:
         disk_free_gb = None
         disk_total_gb = None
-        disk_ok = True  # Can't check, assume OK
+        disk_ok = True
 
-    # Whisper model check
     whisper_status = {"available": False, "model": None}
     try:
         from modules.transcriber import get_whisper_model_info
         whisper_info = get_whisper_model_info()
         whisper_status = {"available": True, **whisper_info}
     except ImportError:
-        # Function doesn't exist yet — check if whisper is importable
         try:
             import whisper
             whisper_status = {"available": True, "model": "base"}
@@ -491,7 +449,6 @@ def health():
     except Exception as e:
         whisper_status = {"available": False, "error": str(e)}
 
-    # ChromaDB check
     chromadb_status = {"available": False}
     try:
         from modules.chatbot import _get_collection
@@ -500,7 +457,6 @@ def health():
     except Exception as e:
         chromadb_status = {"available": False, "error": str(e)}
 
-    # Ollama LLM check
     ollama_status = {"available": False}
     try:
         import requests as _req
@@ -514,7 +470,6 @@ def health():
     except Exception as e:
         ollama_status = {"available": False, "error": str(e)}
 
-    # Redis check
     redis_status = {"available": False}
     try:
         from modules.cache import _get_redis
@@ -534,600 +489,13 @@ def health():
         "chromadb": chromadb_status,
         "ollama": ollama_status,
         "redis": redis_status,
-        "disk": {
-            "ok": disk_ok,
-            "free_gb": disk_free_gb,
-            "total_gb": disk_total_gb,
-        },
+        "disk": {"ok": disk_ok, "free_gb": disk_free_gb, "total_gb": disk_total_gb},
     }
 
 
 @app.post("/collect")
 @app.options("/collect")
 def collect_telemetry():
-    """
-    Vite analytics endpoint — silently accept and discard telemetry.
-    Prevents 400 errors in logs when frontend tries to send analytics data.
-    """
+    """Silently accept and discard Vite analytics telemetry."""
     return {"status": "ok"}
 
-
-_AUDIO_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks — stream to disk, never hold full file in memory
-
-
-@app.post("/analyze")
-async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    # Disk space pre-check before accepting upload
-    from modules.disk_space_checker import check_disk_space
-    disk_check = check_disk_space()
-    if not disk_check["ok"]:
-        raise HTTPException(
-            status_code=507,
-            detail=f"Insufficient disk space: {disk_check['free_mb']:.0f} MB available, "
-                   f"need {disk_check['required_mb']} MB.",
-        )
-
-    extension = os.path.splitext(file.filename or "")[1].lower()
-    if extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported audio format '{extension}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
-        )
-
-    # Stream upload to disk in chunks — prevents OOM on concurrent large uploads
-    safe_disk_name = f"{uuid.uuid4().hex}{extension}"
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
-    file_size = 0
-    try:
-        with open(filepath, "wb") as buffer:
-            while True:
-                chunk = await file.read(size=_AUDIO_CHUNK_SIZE)
-                if not chunk:
-                    break
-                file_size += len(chunk)
-                if file_size > MAX_UPLOAD_BYTES:
-                    buffer.close()
-                    try:
-                        os.remove(filepath)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
-                    )
-                buffer.write(chunk)
-    except HTTPException:
-        raise
-    except Exception as e:
-        try:
-            os.remove(filepath)
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
-
-    # Virus scan
-    scan_result = virus_scan_file(filepath)
-    if not scan_result["safe"]:
-        os.remove(filepath)
-        raise HTTPException(
-            status_code=422,
-            detail=f"File rejected: virus detected ({scan_result['threat']})",
-        )
-
-    original_filename = file.filename or safe_disk_name
-
-    # Allocate a new meeting ID from MongoDB counter and create the initial record
-    from database.mongo import save_meeting_metadata as _save_meta
-    record_id = next_meeting_id()
-    _save_meta(
-        meeting_id=record_id,
-        filename=original_filename,
-        file_size_bytes=file_size,
-        status="PROCESSING",
-    )
-
-    background_tasks.add_task(process_audio_background, record_id, filepath, original_filename)
-    audit_log("file_uploaded", meeting_id=record_id, user_action="upload",
-              details={"filename": original_filename, "size_bytes": file_size})
-    logger.info(f"[#{record_id}] Upload accepted: {original_filename} ({file_size//1024} KB)")
-
-    return {"id": record_id, "filename": original_filename,
-            "status": "PROCESSING", "message": "Analysis started in background"}
-
-
-MAX_VIDEO_UPLOAD_BYTES = int(os.getenv("MAX_VIDEO_UPLOAD_MB", "500")) * 1024 * 1024
-_VIDEO_CHUNK_SIZE = 1024 * 1024  # 1 MB chunks — never loads full file into memory
-
-
-@app.post("/analyze/video")
-async def analyze_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """
-    Upload a video file, extract its audio track, then run the full analysis pipeline.
-    Supported formats: .mp4, .mkv, .avi, .mov, .webm, .flv, .wmv
-
-    The video is streamed to disk in 1 MB chunks — the full file is never held
-    in memory. The video file is deleted immediately after audio extraction.
-    Only the transcript text and analysis results are stored.
-    """
-    # Disk space pre-check
-    from modules.disk_space_checker import check_disk_space
-    disk_check = check_disk_space()
-    if not disk_check["ok"]:
-        raise HTTPException(
-            status_code=507,
-            detail=f"Insufficient disk space: {disk_check['free_mb']:.0f} MB available, "
-                   f"need {disk_check['required_mb']} MB.",
-        )
-
-    extension = os.path.splitext(file.filename or "")[1].lower()
-    if extension not in ALLOWED_VIDEO_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported video format '{extension}'. Allowed: {', '.join(ALLOWED_VIDEO_EXTENSIONS)}",
-        )
-
-    safe_disk_name = f"{uuid.uuid4().hex}{extension}"
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    video_filepath = os.path.join(UPLOAD_FOLDER, safe_disk_name)
-    original_filename = file.filename or safe_disk_name
-
-    # Stream to disk in chunks — avoids loading 500 MB into memory
-    file_size = 0
-    try:
-        with open(video_filepath, "wb") as buffer:
-            while True:
-                chunk = await file.read(size=_VIDEO_CHUNK_SIZE)
-                if not chunk:
-                    break
-                file_size += len(chunk)
-                if file_size > MAX_VIDEO_UPLOAD_BYTES:
-                    # Exceeded limit — clean up and reject
-                    buffer.close()
-                    try:
-                        os.remove(video_filepath)
-                    except Exception:
-                        pass
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File too large. Maximum allowed size for video is {MAX_VIDEO_UPLOAD_BYTES // (1024*1024)} MB.",
-                    )
-                buffer.write(chunk)
-    except HTTPException:
-        raise
-    except Exception as e:
-        try:
-            os.remove(video_filepath)
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail=f"Failed to save video file: {str(e)}")
-
-    # Extract audio from video to a WAV file
-    audio_disk_name = f"{uuid.uuid4().hex}.wav"
-    audio_filepath = os.path.join(UPLOAD_FOLDER, audio_disk_name)
-
-    # Virus scan the video file before processing
-    scan_result = virus_scan_file(video_filepath)
-    if not scan_result["safe"]:
-        try:
-            os.remove(video_filepath)
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=422,
-            detail=f"File rejected: virus detected ({scan_result['threat']})",
-        )
-
-    try:
-        from modules.transcriber import extract_audio_from_video
-        extract_audio_from_video(video_filepath, audio_filepath)
-    except Exception as e:
-        try:
-            os.remove(video_filepath)
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=422,
-            detail=f"Could not extract audio from video: {str(e)}",
-        )
-
-    # Remove the original video file immediately — never stored
-    try:
-        os.remove(video_filepath)
-        logger.info(f"Video file deleted after extraction: {video_filepath}")
-    except Exception as _e:
-        logger.warning(f"Could not delete video file: {_e}")
-
-    from database.mongo import save_meeting_metadata as _save_meta
-    record_id = next_meeting_id()
-    _save_meta(
-        meeting_id=record_id,
-        filename=original_filename,
-        file_size_bytes=file_size,
-        status="PROCESSING",
-    )
-
-    background_tasks.add_task(process_video_background, record_id, audio_filepath, original_filename)
-    audit_log("video_uploaded", meeting_id=record_id, user_action="upload",
-              details={"filename": original_filename, "size_bytes": file_size})
-    logger.info(f"[#{record_id}] Video upload accepted, audio extracted: {original_filename} ({file_size // 1024} KB)")
-
-    return {"id": record_id, "filename": original_filename,
-            "status": "PROCESSING", "message": "Video audio extracted, analysis started in background"}
-
-
-@app.post("/analyze/transcript")
-async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Request):
-    """
-    Submit a plain-text transcript and run the analysis pipeline,
-    skipping the transcription step.
-
-    Accepts either:
-      - JSON body:  { "transcript": "...", "filename": "optional-name.txt" }
-      - File upload: multipart/form-data with a .txt file field named "file"
-    """
-    content_type = request.headers.get("content-type", "")
-
-    # -- Multipart file upload (.txt) ------------------------------------------
-    if "multipart/form-data" in content_type:
-        from fastapi import Form
-        form = await request.form()
-        uploaded_file = form.get("file")
-        if uploaded_file is None:
-            raise HTTPException(status_code=400, detail="No file field found in form data.")
-
-        original_filename = uploaded_file.filename or "transcript_input.txt"
-        ext = os.path.splitext(original_filename)[1].lower()
-        if ext not in (".txt",):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type '{ext}'. Only .txt files are accepted for transcript upload.",
-            )
-
-        raw_bytes = await uploaded_file.read()
-        if len(raw_bytes) > 10 * 1024 * 1024:  # 10 MB limit for text files
-            raise HTTPException(status_code=413, detail="Text file too large. Maximum 10 MB.")
-
-        try:
-            transcript_text = raw_bytes.decode("utf-8").strip()
-        except UnicodeDecodeError:
-            try:
-                transcript_text = raw_bytes.decode("latin-1").strip()
-            except Exception:
-                raise HTTPException(status_code=422, detail="Could not decode file as text. Ensure it is UTF-8 encoded.")
-
-        if not transcript_text:
-            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-
-    # -- JSON body -------------------------------------------------------------
-    else:
-        try:
-            body = await request.json()
-        except Exception:
-            raise HTTPException(status_code=400, detail="Request body must be valid JSON.")
-
-        transcript_text = body.get("transcript", "").strip()
-        if not transcript_text:
-            raise HTTPException(status_code=400, detail="'transcript' field is required and must not be empty.")
-        original_filename = body.get("filename", "transcript_input.txt").strip() or "transcript_input.txt"
-
-    if len(transcript_text) > 500_000:
-        raise HTTPException(status_code=413, detail="Transcript too large. Maximum 500,000 characters.")
-
-    # ── Transcript input validation ───────────────────────────────────────────
-    # Reject binary content (high ratio of non-printable characters)
-    _non_printable = sum(
-        1 for ch in transcript_text[:10000]
-        if ord(ch) < 32 and ch not in ('\n', '\r', '\t')
-    )
-    if _non_printable > len(transcript_text[:10000]) * 0.05:
-        raise HTTPException(
-            status_code=422,
-            detail="Input appears to be binary data, not a text transcript. "
-                   "Please submit plain text (UTF-8).",
-        )
-
-    # Reject lines exceeding max length (likely binary or minified data)
-    _MAX_LINE_LENGTH = 10_000
-    for i, line in enumerate(transcript_text.split('\n')[:100], 1):
-        if len(line) > _MAX_LINE_LENGTH:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Line {i} exceeds maximum length of {_MAX_LINE_LENGTH} characters. "
-                       f"Transcripts should contain natural-language text with line breaks.",
-            )
-    # ──────────────────────────────────────────────────────────────────────────
-
-    from database.mongo import save_meeting_metadata as _save_meta
-    record_id = next_meeting_id()
-    _save_meta(
-        meeting_id=record_id,
-        filename=original_filename,
-        file_size_bytes=len(transcript_text.encode("utf-8")),
-        status="PROCESSING",
-    )
-
-    background_tasks.add_task(
-        process_transcript_background, record_id, transcript_text, original_filename
-    )
-    audit_log("transcript_submitted", meeting_id=record_id, user_action="upload",
-              details={"filename": original_filename, "char_count": len(transcript_text)})
-    logger.info(f"[#{record_id}] Transcript submitted: {original_filename} ({len(transcript_text)} chars)")
-
-    return {"id": record_id, "filename": original_filename,
-            "status": "PROCESSING", "message": "Transcript received, analysis started in background"}
-
-
-@app.get("/report/{report_id}/status")
-def get_report_status(report_id: int):
-    from database.mongo import get_processing_status
-    ps = get_processing_status(report_id)
-    meta = get_meeting(report_id)
-    if ps is None and meta is None:
-        raise HTTPException(status_code=404, detail="Report not found")
-    status_val = (ps or {}).get("status") or (meta or {}).get("status", "UNKNOWN")
-    error_msg  = (ps or {}).get("error")
-    return {"id": report_id, "status": status_val, "error_message": error_msg}
-
-
-@app.get("/history")
-def get_history(
-    skip: int = 0,
-    limit: int = 100,
-    current_user: dict = Depends(get_current_user),
-):
-    """Paginated history with TTL cache — reads from MongoDB."""
-    if limit > 500:
-        limit = 500
-    cache_key = f"history:{skip}:{limit}"
-    cached = _cache.get(cache_key)
-    if cached is not None:
-        return cached
-
-    result = list_meetings(skip=skip, limit=limit)
-    result["skip"]  = skip
-    result["limit"] = limit
-    _cache.set(cache_key, result)
-    return result
-
-
-@app.get("/report/{report_id}")
-def get_report(
-    report_id: int,
-    current_user: dict = Depends(get_current_user),
-):
-    report = get_full_report(report_id)
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return report
-
-
-@app.get("/report/{report_id}/evidence")
-def get_evidence(
-    report_id: int,
-    current_user: dict = Depends(get_current_user),
-):
-    meta = get_meeting(report_id)
-    if meta is None:
-        raise HTTPException(status_code=404, detail="Report not found")
-    from database.mongo import get_analysis
-    analysis = get_analysis(report_id) or {}
-    ev = mongo_get_evidence(report_id)
-    return {
-        "report_id":  report_id,
-        "severity":   analysis.get("severity", ""),
-        "risk_score": analysis.get("risk_score", 0),
-        "evidence":   ev,
-    }
-
-
-@app.get("/report/{report_id}/stats")
-def get_report_stats(
-    report_id: int,
-    current_user: dict = Depends(get_current_user),
-):
-    meta = get_meeting(report_id)
-    if meta is None:
-        raise HTTPException(status_code=404, detail="Report not found")
-    from database.mongo import get_analysis
-    analysis = get_analysis(report_id) or {}
-    return {
-        "categories":                analysis.get("category_breakdown", {}),
-        "confidence_stats":          analysis.get("confidence_stats", {}),
-        "severity_distribution":     analysis.get("severity_distribution", {}),
-        "context_type_distribution": analysis.get("context_type_distribution", {}),
-        "ml_stats":                  analysis.get("ml_stats", {}),
-        "word_count":                analysis.get("word_count"),
-        "finding_count":             analysis.get("finding_count", 0),
-        "unique_categories":         analysis.get("unique_categories", 0),
-    }
-
-
-@app.get("/report/{report_id}/pdf")
-def download_pdf(
-    report_id: int,
-    current_user: dict = Depends(get_current_user),
-):
-    meta = get_meeting(report_id)
-    if meta is None:
-        raise HTTPException(status_code=404, detail="Report not found")
-    pdf_path = meta.get("pdf_path") or f"reports/report_{report_id}.pdf"
-    if not os.path.exists(pdf_path):
-        raise HTTPException(status_code=404, detail="PDF report not found")
-    return FileResponse(path=pdf_path, media_type="application/pdf",
-                        filename=f"report_{report_id}.pdf")
-
-
-@app.delete("/report/{report_id}", status_code=204, response_class=Response)
-def delete_report(
-    report_id: int,
-    background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Delete a report — returns 204 instantly, all slow cleanup runs in background.
-
-    Flow:
-      1. Verify the report exists (fast MongoDB lookup) → 404 if not found
-      2. Invalidate caches so the item disappears from /history immediately
-      3. Return 204 to the frontend RIGHT NOW
-      4. Background: delete local PDF, S3 files, ChromaDB vectors, MongoDB docs
-    """
-    meta = get_meeting(report_id)
-    if meta is None:
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    # Snapshot before we hand off to background
-    pdf_path     = meta.get("pdf_path")
-    s3_audio_url = meta.get("s3_recording_url")
-    s3_pdf_url   = meta.get("s3_pdf_url")
-
-    # Invalidate caches immediately so the row vanishes from /history right away
-    _cache.invalidate()
-    from modules.cache import history_cache as _h_cache, report_cache as _r_cache, evidence_cache as _e_cache
-    _h_cache.invalidate()
-    _r_cache.invalidate()
-    _e_cache.invalidate()
-
-    # Audit log (fast, non-blocking)
-    try:
-        audit_log("report_deleted", meeting_id=report_id, details={"report_id": report_id})
-    except Exception as _e:
-        logger.warning(f"[#{report_id}] Audit log failed (non-fatal): {_e}")
-
-    # Schedule all slow I/O as background tasks — response returns before these run
-    background_tasks.add_task(_bg_delete_report, report_id, pdf_path, s3_audio_url, s3_pdf_url)
-
-    return Response(status_code=204)
-
-
-def _bg_delete_report(
-    report_id: int,
-    pdf_path: str | None,
-    s3_audio_url: str | None,
-    s3_pdf_url: str | None,
-) -> None:
-    """Background cleanup — runs after 204 is already sent to the client."""
-    # 1. Local PDF
-    if pdf_path and os.path.exists(pdf_path):
-        try:
-            os.remove(pdf_path)
-            logger.info(f"[#{report_id}] Local PDF deleted")
-        except Exception as _e:
-            logger.warning(f"[#{report_id}] Could not delete local PDF: {_e}")
-
-    # 2. S3 audio
-    if s3_audio_url:
-        try:
-            s3_delete_file(s3_audio_url)
-            logger.info(f"[#{report_id}] S3 audio deleted")
-        except Exception as _e:
-            logger.warning(f"[#{report_id}] S3 audio delete failed (non-fatal): {_e}")
-
-    # 3. S3 PDF
-    if s3_pdf_url:
-        try:
-            s3_delete_file(s3_pdf_url)
-            logger.info(f"[#{report_id}] S3 PDF deleted")
-        except Exception as _e:
-            logger.warning(f"[#{report_id}] S3 PDF delete failed (non-fatal): {_e}")
-
-    # 4. ChromaDB vectors
-    try:
-        delete_transcript(report_id)
-    except Exception as _e:
-        logger.warning(f"[#{report_id}] ChromaDB cleanup failed (non-fatal): {_e}")
-
-    # 5. MongoDB (all collections)
-    try:
-        delete_meeting_data(report_id)
-        logger.info(f"[#{report_id}] MongoDB records deleted")
-    except Exception as _e:
-        logger.warning(f"[#{report_id}] MongoDB cleanup failed (non-fatal): {_e}")
-
-    logger.info(f"[#{report_id}] Background cleanup complete")
-
-# -- Notifications -------------------------------------------------------------
-
-def _load_report_for_notify(report_id: int) -> Dict[str, Any]:
-    report = get_full_report(report_id)
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return report
-
-
-def _parse_json_field(val, default):
-    if val is None: return default
-    if isinstance(val, (list, dict)): return val
-    try: return json.loads(val)
-    except Exception: return default
-
-
-@app.post("/notify/alert/{report_id}")
-def notify_alert(report_id: int, body: NotifyRequest = NotifyRequest()):
-    report   = _load_report_for_notify(report_id)
-    findings = _parse_json_field(report.get("findings"), [])
-    stats    = _parse_json_field(report.get("stats"), {})
-    result = send_alert_email(
-        report_id=report_id, filename=report.get("filename", ""),
-        severity=report.get("severity") or "Unknown", risk_score=report.get("risk_score") or 0,
-        findings=findings, summary=report.get("llm_summary") or report.get("summary") or "",
-        stats=stats, pdf_path=report.get("pdf_path"),
-        recipients=body.recipients or None, app_url=APP_URL,
-    )
-    if not result["success"]:
-        raise HTTPException(status_code=500, detail=result["message"])
-    log_alert(report_id, report.get("filename", ""), report.get("severity") or "",
-              report.get("risk_score") or 0, result["recipients"], email_type="alert")
-    audit_log("alert_email_manual", meeting_id=report_id, user_action="send_alert",
-              details={"recipients": result["recipients"]})
-    return result
-
-
-@app.post("/notify/summary/{report_id}")
-def notify_summary(report_id: int, body: NotifyRequest = NotifyRequest()):
-    report   = _load_report_for_notify(report_id)
-    findings = _parse_json_field(report.get("findings"), [])
-    stats    = _parse_json_field(report.get("stats"), {})
-    result = send_summary_email(
-        report_id=report_id, filename=report.get("filename", ""),
-        severity=report.get("severity") or "Unknown", risk_score=report.get("risk_score") or 0,
-        findings=findings, llm_summary=report.get("llm_summary") or "",
-        rule_summary=report.get("summary") or "", stats=stats,
-        pdf_path=report.get("pdf_path"),
-        recipients=body.recipients or None, app_url=APP_URL,
-    )
-    if not result["success"]:
-        raise HTTPException(status_code=500, detail=result["message"])
-    log_alert(report_id, report.get("filename", ""), report.get("severity") or "",
-              report.get("risk_score") or 0, result["recipients"], email_type="summary")
-    audit_log("summary_email_sent", meeting_id=report_id, user_action="send_summary",
-              details={"recipients": result["recipients"]})
-    return result
-
-
-# -- Analytics -----------------------------------------------------------------
-
-@app.get("/analytics/summary")
-def get_analytics_summary():
-    """Aggregate analytics with TTL cache — reads from MongoDB."""
-    cached = _cache.get("analytics")
-    if cached is not None:
-        return cached
-
-    result = mongo_analytics()
-    _cache.set("analytics", result)
-    return result
-
-
-# -- Chatbot -------------------------------------------------------------------
-
-@app.post("/chat")
-def chat_legacy(request: ChatRequest):
-    """Legacy /chat endpoint — kept for backward compatibility.
-    Prefer /api/v1/chat (served by the versioned router).
-    """
-    try:
-        return answer_question(request.report_id, request.question)
-    except Exception as _e:
-        raise HTTPException(status_code=500, detail=str(_e))
