@@ -441,7 +441,7 @@ def health(request: Request):
     if not token:
         token = request.cookies.get("access_token")
 
-    if not token or not JWT_SECRET:
+    if not token or not os.getenv("JWT_SECRET", ""):
         return basic_response
 
     # Validate token before returning sensitive info

@@ -24,6 +24,10 @@ class TestAudioUploadValidation:
         )
         assert response.status_code == 400
 
+    @pytest.mark.skipif(
+        not __import__("os").getenv("MONGO_URI"),
+        reason="Requires MongoDB for pipeline execution",
+    )
     def test_accept_mp3_extension(self, client):
         """MP3 should be accepted (though analysis will fail without real audio)."""
         file = io.BytesIO(b"fake mp3 data" * 100)
@@ -78,6 +82,10 @@ class TestTranscriptValidation:
         )
         assert response.status_code == 413
 
+    @pytest.mark.skipif(
+        not __import__("os").getenv("MONGO_URI"),
+        reason="Requires MongoDB for pipeline execution",
+    )
     def test_accept_valid_transcript(self, client):
         response = client.post(
             "/analyze/transcript",
@@ -89,6 +97,10 @@ class TestTranscriptValidation:
         # Should get past validation (may fail in pipeline without Celery)
         assert response.status_code in (200, 201, 500)
 
+    @pytest.mark.skipif(
+        not __import__("os").getenv("MONGO_URI"),
+        reason="Requires MongoDB for pipeline execution",
+    )
     def test_txt_file_upload(self, client):
         content = b"Speaker A: This is a test transcript."
         response = client.post(
