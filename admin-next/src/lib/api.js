@@ -270,16 +270,8 @@ export const deleteReport = async (id) => {
 };
 
 export const bulkDeleteReports = async (ids) => {
-  const results = { deleted: [], failed: [] };
-  for (const id of ids) {
-    try {
-      await api.delete(`/report/${id}`);
-      results.deleted.push(id);
-    } catch {
-      results.failed.push(id);
-    }
-  }
-  return results;
+  const response = await api.post('/reports/bulk-delete', { ids });
+  return response.data;
 };
 
 export const exportReportsCSV = (reports) => {
