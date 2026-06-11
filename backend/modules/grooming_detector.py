@@ -333,12 +333,20 @@ class GroomingDetector:
                         sentence,
                         regex_categories=[category],
                     )
-                    # Fuse ML score into confidence (advisory, 25% weight)
+                    # Dynamic ML fusion weight — trust ML more when it's confident
+                    ml_conf = ml_result["top_confidence"]
+                    if ml_conf >= 0.80:
+                        _fusion_weight = 0.45  # ML is very confident
+                    elif ml_conf >= 0.60:
+                        _fusion_weight = 0.35  # ML is moderately confident
+                    else:
+                        _fusion_weight = 0.25  # Low confidence — minimal influence
+
                     fused_confidence = ml_fuse(
                         ml_result=ml_result,
                         regex_confidence=final_confidence,
                         category=category,
-                        fusion_weight=0.25,
+                        fusion_weight=_fusion_weight,
                     )
                     finding["confidence"] = fused_confidence
                     finding["scoring"]["ml_fused_confidence"] = fused_confidence
