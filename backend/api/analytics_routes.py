@@ -225,7 +225,10 @@ def _build_rule_insights(a: dict) -> str:
     low_n      = sev.get("Low", 0)
     safe_n     = sev.get("Safe", 0)
     danger_n   = critical_n + high_n
-    pct = lambda n: f"{(n/total*100):.0f}%" if total else "0%"
+
+    def pct(n: int) -> str:
+        """Format n as a percentage of total reports."""
+        return f"{(n/total*100):.0f}%" if total else "0%"
 
     lines += [
         "**Severity Breakdown:**",
