@@ -28,6 +28,16 @@ const getBadgeClass = (severity) => {
   return 'badge-safe';
 };
 
+/** WCAG 1.4.1 — non-color indicator alongside colored badge */
+const getSeverityIcon = (severity) => {
+  const s = (severity || '').toLowerCase();
+  if (s === 'critical') return '⬤';
+  if (s === 'high') return '▲';
+  if (s === 'moderate' || s === 'medium') return '◆';
+  if (s === 'low') return '●';
+  return '○';
+};
+
 const getRiskColor = (score) => {
   if (score >= 80) return 'var(--status-critical)';
   if (score >= 61) return 'var(--status-high)';
@@ -483,7 +493,7 @@ export default function DashboardPage() {
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>{item.filename}</div>
                   </td>
                   <td><MiniRiskBar score={item.risk_score} /></td>
-                  <td><span className={`badge ${getBadgeClass(item.severity)}`}>{item.severity || 'Unknown'}</span></td>
+                  <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)} {item.severity || 'Unknown'}</span></td>
                   <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                     {item.created_at ? new Date(item.created_at).toLocaleString() : '—'}
                   </td>
