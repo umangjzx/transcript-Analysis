@@ -2,24 +2,24 @@
 
 /**
  * Analytics — Dedicated page for all charts and visualizations.
- * Ported from React Router version to Next.js App Router.
+ * Charts audit: removed low-value scatter/radar/status-donut,
+ * fixed severity distribution, added ML calibration + risk heatmap.
  */
 
-import React, { useCallback, useEffect, useMemo, useState, memo } from 'react';
+import React, { useCallback, useMemo, useState, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
-  PieChart, Pie, Legend, LineChart, Line, CartesianGrid,
-  ScatterChart, Scatter, ZAxis, ReferenceLine,
-  AreaChart, Area, RadarChart, PolarGrid, PolarAngleAxis, Radar,
+  PieChart, Pie, Legend, LineChart, Line, CartesianGrid, ReferenceLine,
+  AreaChart, Area,
 } from 'recharts';
 import {
-  ShieldAlert, Activity, FileAudio, TrendingUp,
-  CheckCircle, BarChart2, Brain, RefreshCw, ArrowLeft,
-  Eye, EyeOff, Sparkles, Loader2, ChevronDown, ChevronUp,
+  ShieldAlert, FileAudio, TrendingUp,
+  BarChart2, Brain, RefreshCw, ArrowLeft,
+  Eye, EyeOff, Sparkles, Loader2, ChevronDown, ChevronUp, Calendar,
 } from 'lucide-react';
 import { getAnalyticsInsights } from '@/lib/api';
-import { useDataStore, useDataStoreStats } from '@/store/dataStore';
+import { useDataStore } from '@/store/dataStore';
 import toast from 'react-hot-toast';
 
 const getRiskColor = (score) => {
@@ -40,17 +40,20 @@ const CONF_COLORS = [
   'var(--text-tertiary)', 'var(--status-low)',
   'var(--status-moderate)', 'var(--status-high)',
 ];
-const CTX_COLORS = [
-  'var(--status-critical)', 'var(--accent-primary)',
-  'var(--status-safe)', 'var(--text-tertiary)', 'var(--status-moderate)',
-];
 
-const SEV_ORDER = ['Critical', 'High', 'Moderate', 'Low', 'Safe', 'Unknown'];
+const SEV_ORDER = ['Critical', 'High', 'Moderate', 'Low', 'Safe'];
+const SEV_COLORS = {
+  Critical: 'var(--status-critical)',
+  High: 'var(--status-high)',
+  Moderate: 'var(--status-moderate)',
+  Low: 'var(--status-low)',
+  Safe: 'var(--status-safe)',
+};
 
 const ChartTooltip = memo(({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)' }}>
       <div style={{ fontWeight: 600, marginBottom: 2 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.fill || p.color }}>{p.name || 'Count'}: <strong>{p.value}</strong></div>
@@ -62,8 +65,6 @@ ChartTooltip.displayName = 'ChartTooltip';
 
 export default function AnalyticsPage() {
   const router = useRouter();
-
-  // Use global DataStore — no independent fetching needed
   const { history, analytics, loading, refreshing, refresh } = useDataStore();
 
   // LLM Insights state
@@ -101,23 +102,16 @@ export default function AnalyticsPage() {
 
   // ── Derived chart data ─────────────────────────────────────────────────────
 
-  const statusStackData = useMemo(() => {
-    if (!analytics) return [];
-    const sevDist = analytics.severity_distribution || {};
-    const statusDist = analytics.status_distribution || {};
-    const grandTotal = Object.values(statusDist).reduce((a, b) => a + b, 0) || 1;
+  // FIXED: Severity Distribution — simple count per severity (no synthetic status split)
+  const severityBarData = useMemo(() => {
+    if (!analytics?.severity_distribution) return [];
     return SEV_ORDER
-      .filter(sev => (sevDist?.[sev] || 0) > 0)
-      .map(sev => {
-        const total = sevDist?.[sev] || 0;
-        return {
-          severity: sev,
-          Completed: Math.round(total * ((statusDist.COMPLETED || 0) / grandTotal)),
-          Processing: Math.round(total * ((statusDist.PROCESSING || 0) / grandTotal)),
-          Failed: Math.round(total * ((statusDist.FAILED || 0) / grandTotal)),
-          _total: total,
-        };
-      });
+      .filter(sev => (analytics.severity_distribution[sev] || 0) > 0)
+      .map(sev => ({
+        severity: sev,
+        count: analytics.severity_distribution[sev] || 0,
+        fill: SEV_COLORS[sev],
+      }));
   }, [analytics]);
 
   const riskHistData = useMemo(() => (
@@ -139,18 +133,6 @@ export default function AnalyticsPage() {
       }))
       : []
   ), [analytics]);
-
-  const timelineScatterData = useMemo(() => (
-    [...history]
-      .filter(h => h.created_at && h.risk_score != null)
-      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-      .slice(-20)
-      .map((h, i) => ({
-        x: i + 1, y: Math.round(h.risk_score), z: 1,
-        label: h.filename ? h.filename.slice(0, 14) + (h.filename.length > 14 ? '…' : '') : `#${h.id}`,
-        severity: (h.severity || 'safe').toLowerCase(),
-      }))
-  ), [history]);
 
   const trendData = useMemo(() => (
     [...history]
@@ -176,14 +158,6 @@ export default function AnalyticsPage() {
     ].filter(d => d.value > 0);
   }, [analytics]);
 
-  const contextRadarData = useMemo(() => {
-    if (!analytics?.context_type_totals) return [];
-    return Object.entries(analytics.context_type_totals)
-      .map(([name, value]) => ({ subject: capitalize(name).split(' ')[0], count: value }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-  }, [analytics]);
-
   const volumeData = useMemo(() => {
     const byDate = {};
     history.filter(h => h.created_at).forEach(h => {
@@ -203,13 +177,6 @@ export default function AnalyticsPage() {
     });
     return Object.entries(byDate).slice(-14).map(([date, { sum, count }]) => ({ date, avg: Math.round(sum / count) }));
   }, [history]);
-
-  const statusDonutData = useMemo(() => {
-    if (!analytics?.status_distribution) return [];
-    return Object.entries(analytics.status_distribution)
-      .map(([name, value]) => ({ name: capitalize(name), value }))
-      .filter(d => d.value > 0);
-  }, [analytics]);
 
   const severityTrendData = useMemo(() => {
     const sorted = [...history]
@@ -231,6 +198,35 @@ export default function AnalyticsPage() {
     return chunks;
   }, [history]);
 
+  // NEW: Risk Heatmap by Day of Week
+  const riskByDayOfWeek = useMemo(() => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const buckets = days.map(d => ({ day: d, count: 0, totalRisk: 0 }));
+    history.filter(h => h.created_at && h.risk_score != null).forEach(h => {
+      const dow = new Date(h.created_at).getDay();
+      buckets[dow].count += 1;
+      buckets[dow].totalRisk += h.risk_score;
+    });
+    return buckets.map(b => ({
+      day: b.day,
+      analyses: b.count,
+      avgRisk: b.count > 0 ? Math.round(b.totalRisk / b.count) : 0,
+    })).filter(b => b.analyses > 0);
+  }, [history]);
+
+  // NEW: ML Calibration — risk score distribution by ML agreement
+  const mlCalibrationData = useMemo(() => {
+    if (!analytics?.ml_agreement_totals) return [];
+    const { agreed, disagreed, total, rate } = analytics.ml_agreement_totals;
+    if (!total) return [];
+    // Show agreement as a bar comparison
+    return [
+      { label: 'ML Agrees with Rules', value: agreed, fill: 'var(--status-safe)' },
+      { label: 'ML Disagrees', value: disagreed, fill: 'var(--status-high)' },
+      { label: 'No ML Signal', value: Math.max(0, total - agreed - disagreed), fill: 'var(--text-tertiary)' },
+    ].filter(d => d.value > 0);
+  }, [analytics]);
+
   // ── Stat summaries ─────────────────────────────────────────────────────────
   const { highRisk, safeCount, avgScore } = useMemo(() => {
     let high = 0, safe = 0, sum = 0;
@@ -247,14 +243,13 @@ export default function AnalyticsPage() {
     { id: 'severity', label: 'Severity' },
     { id: 'risk-hist', label: 'Risk Distribution' },
     { id: 'top-cats', label: 'Top Categories' },
-    { id: 'scatter', label: 'Risk Scatter' },
     { id: 'confidence', label: 'Confidence' },
     { id: 'trend', label: 'Risk Trend' },
     { id: 'ml-agreement', label: 'ML Agreement' },
-    { id: 'context-radar', label: 'Context Radar' },
+    { id: 'ml-calibration', label: 'ML Calibration' },
     { id: 'volume', label: 'Volume' },
     { id: 'avg-risk-day', label: 'Avg Risk/Day' },
-    { id: 'status-donut', label: 'Status' },
+    { id: 'risk-heatmap', label: 'Risk by Weekday' },
     { id: 'severity-trend', label: 'Severity Trend' },
   ];
 
@@ -294,7 +289,7 @@ export default function AnalyticsPage() {
       <div className="stats-grid" style={{ marginBottom: 'var(--spacing-xl)' }}>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">Total Analyzed</span>
-          <span className="stat-value text-gradient">{history.length}</span>
+          <span className="stat-value">{history.length}</span>
         </div>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">High / Critical</span>
@@ -324,7 +319,6 @@ export default function AnalyticsPage() {
 
       {/* ── AI Insights Panel ─────────────────────────────────────────────── */}
       <div className="glass-panel" style={{ marginBottom: 'var(--spacing-lg)', overflow: 'hidden' }}>
-        {/* Header */}
         <div
           style={{
             padding: '0.875rem 1.25rem',
@@ -337,7 +331,7 @@ export default function AnalyticsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <div style={{
               width: 32, height: 32, borderRadius: '50%',
-              background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
+              background: 'var(--accent-primary)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
             }}>
               <Sparkles size={16} color="white" />
@@ -345,7 +339,7 @@ export default function AnalyticsPage() {
             <div>
               <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>AI Analytics Insights</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                LLM-powered explanation of your data • Powered by Mistral
+                LLM-powered explanation of your data
               </div>
             </div>
           </div>
@@ -373,7 +367,6 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        {/* Body */}
         {insightsExpanded && (
           <div style={{ padding: '1.25rem' }}>
             {insightsLoading && (
@@ -381,7 +374,7 @@ export default function AnalyticsPage() {
                 <Loader2 size={28} style={{ color: 'var(--accent-primary)', animation: 'spin 1.5s linear infinite' }} />
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.3rem' }}>Generating insights...</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Analyzing your data with Mistral LLM — this may take 10-30 seconds</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>Analyzing your data — this may take 10-30 seconds</div>
                 </div>
               </div>
             )}
@@ -390,12 +383,11 @@ export default function AnalyticsPage() {
               <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-tertiary)' }}>
                 <Sparkles size={32} style={{ margin: '0 auto 0.75rem', opacity: 0.5 }} />
                 <p style={{ fontSize: '0.9rem' }}>Click &quot;Generate Insights&quot; to get an AI-powered explanation of your analytics data.</p>
-                <p style={{ fontSize: '0.78rem', marginTop: '0.5rem' }}>The LLM will analyze all charts and metrics to provide actionable summaries.</p>
               </div>
             )}
 
             {!insightsLoading && insights && (
-              <div className="insights-content" style={{ fontSize: '0.9rem', lineHeight: 1.75, color: 'var(--text-secondary)' }}>
+              <div style={{ fontSize: '0.9rem', lineHeight: 1.75, color: 'var(--text-secondary)' }}>
                 {insights.split('\n').map((line, i) => {
                   if (line.startsWith('## ')) {
                     return <h3 key={i} style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: i > 0 ? '1.25rem' : 0, marginBottom: '0.5rem' }}>{line.slice(3)}</h3>;
@@ -418,9 +410,6 @@ export default function AnalyticsPage() {
                         </span>
                       </div>
                     );
-                  }
-                  if (line.startsWith('*') && line.endsWith('*') && !line.startsWith('**')) {
-                    return <p key={i} style={{ fontStyle: 'italic', color: 'var(--text-tertiary)', fontSize: '0.82rem', marginTop: '0.5rem' }}>{line.slice(1, -1)}</p>;
                   }
                   if (line.trim() === '') return <div key={i} style={{ height: '0.5rem' }} />;
                   const parts = line.split(/(\*\*[^*]+\*\*)/);
@@ -450,8 +439,8 @@ export default function AnalyticsPage() {
             style={{
               display: 'flex', alignItems: 'center', gap: '0.25rem',
               padding: '0.2rem 0.55rem', fontSize: '0.72rem', fontWeight: 500,
-              background: isVisible(id) ? 'rgba(56,189,248,0.08)' : 'rgba(0,0,0,0.02)',
-              border: `1px solid ${isVisible(id) ? 'rgba(56,189,248,0.2)' : 'var(--border-color)'}`,
+              background: isVisible(id) ? 'var(--accent-soft)' : 'rgba(0,0,0,0.02)',
+              border: `1px solid ${isVisible(id) ? 'var(--accent-soft-border)' : 'var(--border-color)'}`,
               borderRadius: 'var(--radius-full)',
               color: isVisible(id) ? 'var(--accent-primary)' : 'var(--text-tertiary)',
               cursor: 'pointer', transition: 'all 0.2s',
@@ -466,8 +455,8 @@ export default function AnalyticsPage() {
       {/* Charts Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 'var(--spacing-lg)' }}>
 
-        {/* Severity Distribution */}
-        {statusStackData.length > 0 && isVisible('severity') && (
+        {/* Severity Distribution (FIXED — actual counts) */}
+        {severityBarData.length > 0 && isVisible('severity') && (
           <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
               <ShieldAlert size={16} style={{ color: 'var(--status-high)' }} />
@@ -475,14 +464,13 @@ export default function AnalyticsPage() {
             </div>
             <div style={{ height: 260 }}>
               <ResponsiveContainer>
-                <BarChart data={statusStackData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                <BarChart data={severityBarData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                   <XAxis dataKey="severity" stroke="var(--text-tertiary)" fontSize={11} />
                   <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
                   <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
-                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
-                  <Bar dataKey="Completed" stackId="a" fill="var(--status-safe)" />
-                  <Bar dataKey="Processing" stackId="a" fill="var(--status-moderate)" />
-                  <Bar dataKey="Failed" stackId="a" fill="var(--status-high)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Reports">
+                    {severityBarData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -533,34 +521,6 @@ export default function AnalyticsPage() {
           </div>
         )}
 
-        {/* Risk Score Scatter */}
-        {timelineScatterData.length > 1 && isVisible('scatter') && (
-          <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-              <Activity size={16} style={{ color: 'var(--accent-primary)' }} />
-              <h3 className="heading-3" style={{ margin: 0 }}>Risk Score Scatter</h3>
-            </div>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer>
-                <ScatterChart margin={{ top: 8, right: 16, left: -10, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                  <XAxis dataKey="x" type="number" stroke="var(--text-tertiary)" fontSize={11} domain={[1, timelineScatterData.length]} label={{ value: 'Analysis #', position: 'insideBottom', offset: -2, fill: 'var(--text-tertiary)', fontSize: 10 }} />
-                  <YAxis dataKey="y" type="number" stroke="var(--text-tertiary)" fontSize={11} domain={[0, 100]} />
-                  <ZAxis dataKey="z" range={[60, 60]} />
-                  <ReferenceLine y={80} stroke="var(--status-critical)" strokeDasharray="4 3" strokeOpacity={0.5} />
-                  <ReferenceLine y={41} stroke="var(--status-moderate)" strokeDasharray="4 3" strokeOpacity={0.35} />
-                  <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null;
-                    const d = payload[0].payload;
-                    return (<div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}><div style={{ fontWeight: 600 }}>{d.label}</div><div style={{ color: getRiskColor(d.y) }}>Score: <strong>{d.y}</strong></div></div>);
-                  }} />
-                  <Scatter data={timelineScatterData} shape={(props) => { const { cx, cy, payload } = props; return <circle cx={cx} cy={cy} r={7} fill={getRiskColor(payload.y)} stroke="#fff" strokeWidth={1.5} fillOpacity={0.85} />; }} />
-                </ScatterChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-
         {/* Detection Confidence */}
         {confHistData.some(d => d.count > 0) && isVisible('confidence') && (
           <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
@@ -599,16 +559,18 @@ export default function AnalyticsPage() {
                   <Tooltip content={({ active, payload, label }) => {
                     if (!active || !payload?.length) return null;
                     const score = payload[0].value;
-                    return (<div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}><div style={{ fontWeight: 600 }}>{label}</div><div style={{ color: getRiskColor(score) }}>Score: <strong>{score}</strong></div></div>);
+                    return (<div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)' }}><div style={{ fontWeight: 600 }}>{label}</div><div style={{ color: getRiskColor(score) }}>Score: <strong>{score}</strong></div></div>);
                   }} />
-                  <Line type="monotone" dataKey="score" stroke="var(--accent-primary)" strokeWidth={2.5} dot={(props) => <circle key={props.key} cx={props.cx} cy={props.cy} r={5} fill={getRiskColor(props.payload.score)} stroke="#fff" strokeWidth={1.5} />} activeDot={{ r: 7 }} />
+                  <ReferenceLine y={80} stroke="var(--status-critical)" strokeDasharray="4 3" strokeOpacity={0.4} />
+                  <ReferenceLine y={40} stroke="var(--status-moderate)" strokeDasharray="4 3" strokeOpacity={0.3} />
+                  <Line type="monotone" dataKey="score" stroke="var(--accent-primary)" strokeWidth={2.5} dot={(props) => <circle key={props.key} cx={props.cx} cy={props.cy} r={5} fill={getRiskColor(props.payload.score)} stroke="var(--bg-secondary)" strokeWidth={1.5} />} activeDot={{ r: 7 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
         )}
 
-        {/* ML Agreement */}
+        {/* ML Agreement (Donut) */}
         {mlAgreementData.length > 0 && isVisible('ml-agreement') && (
           <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
@@ -623,34 +585,37 @@ export default function AnalyticsPage() {
                     <Cell fill="var(--status-high)" />
                     {mlAgreementData.length > 2 && <Cell fill="var(--text-tertiary)" />}
                   </Pie>
-                  <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8 }} />
+                  <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8 }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
             {analytics?.ml_agreement_totals?.rate != null && (
-              <div style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
+              <div style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-tertiary)', marginTop: '0.5rem' }}>
                 Agreement rate: <strong style={{ color: 'var(--status-safe)' }}>{(analytics.ml_agreement_totals.rate * 100).toFixed(1)}%</strong>
               </div>
             )}
           </div>
         )}
 
-        {/* Context Type Radar */}
-        {contextRadarData.length > 2 && isVisible('context-radar') && (
+        {/* NEW: ML Calibration Bar Chart */}
+        {mlCalibrationData.length > 0 && isVisible('ml-calibration') && (
           <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-              <Activity size={16} style={{ color: 'var(--accent-secondary)' }} />
-              <h3 className="heading-3" style={{ margin: 0 }}>Context Type Radar</h3>
+              <Brain size={16} style={{ color: 'var(--status-moderate)' }} />
+              <h3 className="heading-3" style={{ margin: 0 }}>ML Calibration</h3>
+              <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Findings with ML signal</span>
             </div>
-            <div style={{ height: 280 }}>
+            <div style={{ height: 260 }}>
               <ResponsiveContainer>
-                <RadarChart data={contextRadarData}>
-                  <PolarGrid stroke="var(--border-color)" />
-                  <PolarAngleAxis dataKey="subject" tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
-                  <Radar name="Findings" dataKey="count" stroke="var(--accent-primary)" fill="var(--accent-primary)" fillOpacity={0.25} strokeWidth={2} />
-                  <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8 }} />
-                </RadarChart>
+                <BarChart data={mlCalibrationData} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
+                  <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
+                  <YAxis dataKey="label" type="category" width={115} stroke="var(--text-secondary)" fontSize={11} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} name="Findings">
+                    {mlCalibrationData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -669,7 +634,7 @@ export default function AnalyticsPage() {
                 <AreaChart data={volumeData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                   <defs>
                     <linearGradient id="volGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--accent-primary)" stopOpacity={0.3} />
+                      <stop offset="5%" stopColor="var(--accent-primary)" stopOpacity={0.2} />
                       <stop offset="95%" stopColor="var(--accent-primary)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
@@ -703,34 +668,37 @@ export default function AnalyticsPage() {
                   <Tooltip content={({ active, payload, label }) => {
                     if (!active || !payload?.length) return null;
                     const val = payload[0].value;
-                    return (<div style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)' }}><div style={{ fontWeight: 600 }}>{label}</div><div style={{ color: getRiskColor(val) }}>Avg: <strong>{val}</strong></div></div>);
+                    return (<div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)' }}><div style={{ fontWeight: 600 }}>{label}</div><div style={{ color: getRiskColor(val) }}>Avg: <strong>{val}</strong></div></div>);
                   }} />
-                  <Line type="monotone" dataKey="avg" stroke="var(--status-moderate)" strokeWidth={2.5} dot={{ r: 4, fill: 'var(--status-moderate)', stroke: '#fff', strokeWidth: 1.5 }} />
+                  <Line type="monotone" dataKey="avg" stroke="var(--status-moderate)" strokeWidth={2.5} dot={{ r: 4, fill: 'var(--status-moderate)', stroke: 'var(--bg-secondary)', strokeWidth: 1.5 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
         )}
 
-        {/* Status Donut */}
-        {statusDonutData.length > 0 && isVisible('status-donut') && (
+        {/* NEW: Risk by Day of Week */}
+        {riskByDayOfWeek.length > 0 && isVisible('risk-heatmap') && (
           <div className="glass-panel" style={{ padding: 'var(--spacing-lg)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 'var(--spacing-md)' }}>
-              <CheckCircle size={16} style={{ color: 'var(--status-safe)' }} />
-              <h3 className="heading-3" style={{ margin: 0 }}>Processing Status</h3>
+              <Calendar size={16} style={{ color: 'var(--accent-primary)' }} />
+              <h3 className="heading-3" style={{ margin: 0 }}>Risk by Weekday</h3>
+              <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Avg risk per day of week</span>
             </div>
-            <div style={{ height: 260 }}>
+            <div style={{ height: 240 }}>
               <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={statusDonutData} cx="50%" cy="50%" innerRadius={55} outerRadius={95} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
-                    {statusDonutData.map((entry, i) => {
-                      const colors = { Completed: 'var(--status-safe)', Processing: 'var(--status-moderate)', Failed: 'var(--status-high)' };
-                      return <Cell key={i} fill={colors[entry.name] || CTX_COLORS[i % CTX_COLORS.length]} />;
-                    })}
-                  </Pie>
-                  <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8 }} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                </PieChart>
+                <BarChart data={riskByDayOfWeek} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                  <XAxis dataKey="day" stroke="var(--text-tertiary)" fontSize={11} />
+                  <YAxis stroke="var(--text-tertiary)" fontSize={11} domain={[0, 100]} />
+                  <Tooltip content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    const d = payload[0].payload;
+                    return (<div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '0.5rem 0.9rem', fontSize: '0.82rem', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)' }}><div style={{ fontWeight: 600 }}>{label}</div><div style={{ color: getRiskColor(d.avgRisk) }}>Avg Risk: <strong>{d.avgRisk}</strong></div><div style={{ color: 'var(--text-secondary)' }}>Analyses: {d.analyses}</div></div>);
+                  }} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
+                  <Bar dataKey="avgRisk" radius={[4, 4, 0, 0]} name="Avg Risk">
+                    {riskByDayOfWeek.map((entry, i) => <Cell key={i} fill={getRiskColor(entry.avgRisk)} />)}
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -750,7 +718,7 @@ export default function AnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
                   <XAxis dataKey="label" stroke="var(--text-tertiary)" fontSize={10} />
                   <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                  <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8 }} />
+                  <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8 }} />
                   <Area type="monotone" dataKey="Critical" stackId="1" stroke="var(--status-critical)" fill="var(--status-critical)" fillOpacity={0.6} />
                   <Area type="monotone" dataKey="High" stackId="1" stroke="var(--status-high)" fill="var(--status-high)" fillOpacity={0.5} />
                   <Area type="monotone" dataKey="Moderate" stackId="1" stroke="var(--status-moderate)" fill="var(--status-moderate)" fillOpacity={0.4} />

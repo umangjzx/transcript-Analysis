@@ -672,7 +672,7 @@ export default function ReportPage() {
                         <YAxis dataKey="name" type="category" width={135} stroke="var(--text-secondary)" fontSize={12} tick={{ fill: 'var(--text-secondary)' }} />
                         <Tooltip
                           cursor={{ fill: 'rgba(15,23,42,0.04)' }}
-                          contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }}
+                          contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }}
                         />
                         <Bar dataKey="points" radius={[0, 6, 6, 0]}>
                           {categoryData.map((entry, i) => (
@@ -894,7 +894,7 @@ export default function ReportPage() {
                               <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                             ))}
                           </Pie>
-                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }} />
                           <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -902,27 +902,48 @@ export default function ReportPage() {
                   </div>
                 )}
 
-                {/* Context Type Distribution */}
-                {ctxDistData.length > 0 && (
+                {/* Temporal Phase Distribution — where in the conversation findings cluster */}
+                {findings.length > 0 && (
                   <div className="glass-panel chart-panel">
                     <div className="panel-heading-row">
-                      <Eye size={16} style={{ color: 'var(--accent-primary)' }} />
-                      <h3 className="panel-heading">Context Type Distribution</h3>
+                      <Clock size={16} style={{ color: 'var(--accent-primary)' }} />
+                      <h3 className="panel-heading">Findings by Conversation Phase</h3>
                     </div>
                     <div style={{ height: 300 }}>
                       <ResponsiveContainer>
-                        <BarChart data={ctxDistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                          <XAxis dataKey="name" stroke="var(--text-tertiary)" fontSize={11} />
+                        <BarChart
+                          data={(() => {
+                            const phases = { Early: 0, Middle: 0, Late: 0 };
+                            findings.forEach(f => {
+                              const phase = f.temporal?.phase || (
+                                (f.timestamp || 0) / Math.max(1, stats.word_count || findings.length) <= 0.25 ? 'early'
+                                : (f.timestamp || 0) / Math.max(1, stats.word_count || findings.length) <= 0.75 ? 'middle'
+                                : 'late'
+                              );
+                              if (phase === 'early') phases.Early++;
+                              else if (phase === 'late') phases.Late++;
+                              else phases.Middle++;
+                            });
+                            return [
+                              { phase: 'Early (0-25%)', count: phases.Early, fill: 'var(--status-safe)' },
+                              { phase: 'Middle (25-75%)', count: phases.Middle, fill: 'var(--status-moderate)' },
+                              { phase: 'Late (75-100%)', count: phases.Late, fill: 'var(--status-high)' },
+                            ];
+                          })()}
+                          margin={{ top: 5, right: 10, left: -10, bottom: 5 }}
+                        >
+                          <XAxis dataKey="phase" stroke="var(--text-tertiary)" fontSize={11} />
                           <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                           <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
-                            {ctxDistData.map((entry, i) => (
-                              <Cell key={i} fill={CTX_PIE_COLORS[i % CTX_PIE_COLORS.length]} />
-                            ))}
+                            {[0, 1, 2].map(i => <Cell key={i} fill={['var(--status-safe)', 'var(--status-moderate)', 'var(--status-high)'][i]} />)}
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '0.5rem' }}>
+                      Late-phase findings after trust-building indicate escalation
+                    </p>
                   </div>
                 )}
 
@@ -938,7 +959,7 @@ export default function ReportPage() {
                         <BarChart data={confHistData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                           <XAxis dataKey="range" stroke="var(--text-tertiary)" fontSize={11} />
                           <YAxis stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)' }} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                           <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Findings">
                             {confHistData.map((entry, i) => (
                               <Cell key={i} fill={CONF_COLORS[i % CONF_COLORS.length]} />
@@ -965,7 +986,7 @@ export default function ReportPage() {
                             <Cell fill="var(--status-high)" />
                             <Cell fill="var(--text-tertiary)" />
                           </Pie>
-                          <Tooltip contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }} />
+                          <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }} />
                           <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -995,7 +1016,7 @@ export default function ReportPage() {
                         <ZAxis range={[40, 40]} />
                         <Tooltip
                           cursor={{ strokeDasharray: '3 3' }}
-                          contentStyle={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)', fontSize: '0.82rem' }}
+                          contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)', fontSize: '0.82rem' }}
                           formatter={(value, name) => [name === 'Confidence' ? `${(value * 100).toFixed(1)}%` : value, name]}
                         />
                         <Scatter data={timelineScatter} fill="var(--accent-primary)" fillOpacity={0.7} />
