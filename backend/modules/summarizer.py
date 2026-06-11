@@ -474,10 +474,6 @@ def generate_summary(
         "",
     ]
     rec_text = _RECOMMENDATION.get(sev_lower, _RECOMMENDATION["safe"])
-    for step in rec_text.split(". ("):
-        if step:
-            # Re-add the delimiter except for first item
-            pass
     lines.append(_wrap_text(rec_text, 72, "  "))
     lines.append("")
 
