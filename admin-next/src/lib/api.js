@@ -69,12 +69,10 @@ const _isTokenValid = (token) => {
 
 export const getToken = () => {
   if (!isBrowser) return null;
-  const token = sessionStorage.getItem('access_token') || null;
-  if (token && !_isTokenValid(token)) {
-    clearAuth();
-    return null;
-  }
-  return token;
+  // Token lives in httpOnly cookie (not accessible via JS).
+  // We check if a user session exists in localStorage as a proxy for "logged in".
+  // The actual auth is enforced by the cookie sent automatically with withCredentials.
+  return getStoredUser() ? '__httponly__' : null;
 };
 
 export const getStoredUser = () => {
@@ -85,13 +83,13 @@ export const getStoredUser = () => {
 
 export const saveAuth = (token, user) => {
   if (!isBrowser) return;
-  if (token) sessionStorage.setItem('access_token', token);
+  // Token is stored in httpOnly cookie by the server — don't store it in JS.
+  // Only persist non-sensitive user info for UI display.
   localStorage.setItem('auth_user', JSON.stringify(user));
 };
 
 export const clearAuth = () => {
   if (!isBrowser) return;
-  sessionStorage.removeItem('access_token');
   localStorage.removeItem('auth_user');
   localStorage.removeItem('auth_token');
   localStorage.removeItem('isAuthenticated');
@@ -116,10 +114,8 @@ if (isBrowser) {
 // ── Attach credentials to every request ───────────────────────────────────────
 
 api.interceptors.request.use((config) => {
-  const token = getToken();
-  if (token) {
-    config.headers['Authorization'] = `Bearer ${token}`;
-  }
+  // JWT is in httpOnly cookie — sent automatically via withCredentials: true.
+  // Only attach API key if configured.
   const apiKey = process.env.NEXT_PUBLIC_API_KEY;
   if (apiKey) config.headers['X-API-Key'] = apiKey;
   return config;
