@@ -132,7 +132,7 @@ python create_admin.py
 
 ```
 backend/
-├── app.py                          # FastAPI application — routes, middleware, startup/shutdown
+├── app.py                          # FastAPI application — middleware, startup/shutdown, health
 ├── config.py                       # Paths, SMTP, S3, MongoDB, Google Drive config
 ├── auth.py                         # JWT + bcrypt authentication helpers
 ├── celery_app.py                   # Celery configuration — Redis broker, threading fallback
@@ -146,6 +146,8 @@ backend/
 │
 ├── api/                            # Route modules
 │   ├── audio_analysis_routes.py    # /api/v1/* — analyze, batch, history, report, chat
+│   ├── upload_routes.py            # / — audio, video, transcript upload (unversioned)
+│   ├── report_routes.py            # / — history, report, evidence, stats, pdf, delete
 │   ├── google_drive_routes.py      # /api/v1/google-drive/* — OAuth, files, import, watcher
 │   ├── auth_routes.py              # /auth/* — login, logout, me
 │   ├── notification_routes.py      # /api/v1/notify/* — alert + summary emails
