@@ -14,7 +14,6 @@ Falls back to in-memory sliding window if Redis is unavailable.
 import os
 import time
 import logging
-from collections import defaultdict
 from typing import Dict, Tuple
 
 from fastapi import Request, HTTPException, status
@@ -141,19 +140,34 @@ def _check_rate_limit_redis(key: str, max_requests: int, window: int) -> Tuple[b
 
 # ── In-memory fallback ────────────────────────────────────────────────────────
 
-_memory_store: Dict[str, list] = defaultdict(list)
+import threading
+from collections import OrderedDict
+
+_MAX_MEMORY_KEYS = 10_000  # Bound memory usage — evict oldest when full
+_memory_store: OrderedDict = OrderedDict()
+_memory_lock = threading.Lock()
 
 
 def _check_rate_limit_memory(key: str, max_requests: int, window: int) -> Tuple[bool, int]:
-    """In-memory sliding window rate limiter (fallback)."""
+    """In-memory sliding window rate limiter (fallback). Thread-safe and bounded."""
     now = time.time()
-    # Clean old entries
-    _memory_store[key] = [t for t in _memory_store[key] if now - t < window]
-    if len(_memory_store[key]) >= max_requests:
-        return False, 0
-    _memory_store[key].append(now)
-    remaining = max_requests - len(_memory_store[key])
-    return True, remaining
+    with _memory_lock:
+        # Evict oldest entries if at capacity
+        while len(_memory_store) >= _MAX_MEMORY_KEYS:
+            _memory_store.popitem(last=False)
+
+        # Clean old timestamps for this key
+        timestamps = _memory_store.get(key, [])
+        timestamps = [t for t in timestamps if now - t < window]
+
+        if len(timestamps) >= max_requests:
+            _memory_store[key] = timestamps
+            return False, 0
+
+        timestamps.append(now)
+        _memory_store[key] = timestamps
+        remaining = max_requests - len(timestamps)
+        return True, remaining
 
 
 # ── Middleware ────────────────────────────────────────────────────────────────
