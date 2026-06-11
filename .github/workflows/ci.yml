@@ -41,7 +41,7 @@ jobs:
           ENABLE_LLM_SUMMARY: "false"
           ENABLE_VIRUS_SCAN: "false"
           USE_CELERY: "false"
-        run: pytest tests/test_auth.py tests/test_health.py tests/test_rate_limiter.py --tb=short -q
+        run: pytest tests/ --tb=short -q
 
   frontend-build:
     name: Frontend Build (Next.js)
