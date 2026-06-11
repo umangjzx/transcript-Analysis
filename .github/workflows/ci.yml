@@ -1,0 +1,66 @@
+name: CI — Lint & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    name: Backend Tests (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          ENV: test
+          JWT_SECRET: ci-test-secret
+          API_KEY: ""
+          MONGO_URI: ""
+          REDIS_URL: ""
+          ENABLE_ML_CLASSIFIER: "false"
+          ENABLE_LLM_SUMMARY: "false"
+          ENABLE_VIRUS_SCAN: "false"
+          USE_CELERY: "false"
+        run: pytest --tb=short -q
+
+  frontend-build:
+    name: Frontend Build (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-next
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: admin-next/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
