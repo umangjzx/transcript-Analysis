@@ -272,9 +272,17 @@ export default function DashboardPage() {
             <span className="stat-title">High / Critical Risk</span>
             <ShieldAlert size={20} style={{ color: 'var(--status-high)' }} />
           </div>
-          <span className="stat-value" style={{ color: 'var(--status-high)' }}>{highRisk}</span>
+          <span className="stat-value" style={{ color: 'var(--status-high)' }}>
+            {analytics?.severity_distribution
+              ? (analytics.severity_distribution.High || 0) + (analytics.severity_distribution.Critical || 0)
+              : highRisk}
+          </span>
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-            {history.length ? `${((highRisk / history.length) * 100).toFixed(0)}% of total` : '—'}
+            {totalReports ? `${((
+              (analytics?.severity_distribution
+                ? (analytics.severity_distribution.High || 0) + (analytics.severity_distribution.Critical || 0)
+                : highRisk
+              ) / totalReports) * 100).toFixed(0)}% of total` : '—'}
           </span>
         </div>
 
@@ -294,7 +302,11 @@ export default function DashboardPage() {
             <span className="stat-title">Safe / Low Risk</span>
             <CheckCircle size={20} style={{ color: 'var(--status-safe)' }} />
           </div>
-          <span className="stat-value" style={{ color: 'var(--status-safe)' }}>{safeCount}</span>
+          <span className="stat-value" style={{ color: 'var(--status-safe)' }}>
+            {analytics?.severity_distribution
+              ? (analytics.severity_distribution.Safe || 0) + (analytics.severity_distribution.Low || 0)
+              : safeCount}
+          </span>
           <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>clean recordings</span>
         </div>
 

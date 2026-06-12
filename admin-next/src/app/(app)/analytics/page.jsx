@@ -65,7 +65,7 @@ ChartTooltip.displayName = 'ChartTooltip';
 
 export default function AnalyticsPage() {
   const router = useRouter();
-  const { history, analytics, loading, refreshing, refresh } = useDataStore();
+  const { history, analytics, loading, refreshing, refresh, totalReports } = useDataStore();
 
   // LLM Insights state
   const [insights, setInsights] = useState(null);
@@ -289,11 +289,15 @@ export default function AnalyticsPage() {
       <div className="stats-grid" style={{ marginBottom: 'var(--spacing-xl)' }}>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">Total Analyzed</span>
-          <span className="stat-value">{history.length}</span>
+          <span className="stat-value">{analytics?.total_reports ?? totalReports}</span>
         </div>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">High / Critical</span>
-          <span className="stat-value" style={{ color: 'var(--status-high)' }}>{highRisk}</span>
+          <span className="stat-value" style={{ color: 'var(--status-high)' }}>
+            {analytics?.severity_distribution
+              ? (analytics.severity_distribution.High || 0) + (analytics.severity_distribution.Critical || 0)
+              : highRisk}
+          </span>
         </div>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">Avg Risk Score</span>
@@ -301,7 +305,11 @@ export default function AnalyticsPage() {
         </div>
         <div className="stat-card glass-panel hover-lift">
           <span className="stat-title">Safe / Low</span>
-          <span className="stat-value" style={{ color: 'var(--status-safe)' }}>{safeCount}</span>
+          <span className="stat-value" style={{ color: 'var(--status-safe)' }}>
+            {analytics?.severity_distribution
+              ? (analytics.severity_distribution.Safe || 0) + (analytics.severity_distribution.Low || 0)
+              : safeCount}
+          </span>
         </div>
         {analytics && (
           <>
@@ -506,11 +514,11 @@ export default function AnalyticsPage() {
               <TrendingUp size={16} style={{ color: 'var(--accent-secondary)' }} />
               <h3 className="heading-3" style={{ margin: 0 }}>Top Risk Categories</h3>
             </div>
-            <div style={{ height: 260 }}>
+            <div style={{ height: Math.max(260, topCatData.length * 38 + 40) }}>
               <ResponsiveContainer>
-                <BarChart data={topCatData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
+                <BarChart data={topCatData} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 5 }} barSize={22}>
                   <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                  <YAxis dataKey="name" type="category" width={95} stroke="var(--text-secondary)" fontSize={11} />
+                  <YAxis dataKey="name" type="category" width={130} stroke="var(--text-secondary)" fontSize={11} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
                   <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                   <Bar dataKey="count" radius={[0, 4, 4, 0]} name="Occurrences">
                     {topCatData.map((_, i) => <Cell key={i} fill={i < 2 ? 'var(--status-critical)' : i < 4 ? 'var(--status-high)' : 'var(--status-moderate)'} />)}
@@ -606,11 +614,11 @@ export default function AnalyticsPage() {
               <h3 className="heading-3" style={{ margin: 0 }}>ML Calibration</h3>
               <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Findings with ML signal</span>
             </div>
-            <div style={{ height: 260 }}>
+            <div style={{ height: Math.max(180, mlCalibrationData.length * 60 + 40) }}>
               <ResponsiveContainer>
-                <BarChart data={mlCalibrationData} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
+                <BarChart data={mlCalibrationData} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 10 }} barSize={28}>
                   <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} allowDecimals={false} />
-                  <YAxis dataKey="label" type="category" width={115} stroke="var(--text-secondary)" fontSize={11} />
+                  <YAxis dataKey="label" type="category" width={140} stroke="var(--text-secondary)" fontSize={11} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
                   <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,23,42,0.04)' }} />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} name="Findings">
                     {mlCalibrationData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
@@ -618,6 +626,11 @@ export default function AnalyticsPage() {
                 </BarChart>
               </ResponsiveContainer>
             </div>
+            {analytics?.ml_agreement_totals?.rate != null && (
+              <div style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-tertiary)', marginTop: '0.5rem' }}>
+                Agreement rate: <strong style={{ color: 'var(--status-safe)' }}>{(analytics.ml_agreement_totals.rate * 100).toFixed(1)}%</strong>
+              </div>
+            )}
           </div>
         )}
 
