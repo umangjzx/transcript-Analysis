@@ -4,6 +4,73 @@ The admin dashboard for Melody Wings Safety. Built with Next.js 15 (App Router),
 
 ---
 
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph BROWSER["BROWSER"]
+        direction TB
+        subgraph PAGES["Pages (App Router)"]
+            LOGIN["/login — JWT Auth"]
+            DASH["/ — Dashboard"]
+            UPLOAD["/upload — Analyze"]
+            REPORT["/report/:id — 6 Tabs"]
+            GDRIVE["/google-drive — OAuth + Import"]
+            ANALYTICS["/analytics — 11 Charts"]
+            COMPARE["/compare — Side-by-Side"]
+        end
+
+        subgraph STATE["State Layer"]
+            ZUSTAND["Zustand Store — history, analytics, polling"]
+            TQUERY["TanStack Query — server state cache"]
+            WS_HOOK["useWebSocket — auto-reconnect"]
+            KB_HOOK["useKeyboardShortcuts — Ctrl+K, N, Esc"]
+        end
+
+        subgraph COMPONENTS["Shared Components"]
+            NAV["Navigation Bar"]
+            CMD["Command Palette — Ctrl+K"]
+            NOTIF["Notification Bell — WebSocket"]
+            CHATBOT["AI Chatbot — RAG Q&A"]
+            ERRB["Error Boundary"]
+        end
+
+        subgraph UI["UI Libraries"]
+            RECHARTS["Recharts — 11 chart types"]
+            LUCIDE["Lucide Icons"]
+            TOAST["react-hot-toast"]
+        end
+    end
+
+    subgraph TRANSPORT["Transport"]
+        AXIOS["Axios Client — JWT, interceptors, retry"]
+        PROXY["Next.js Rewrites — /api/v1/* → :8000"]
+        WEBSOCKET["WebSocket — /ws/progress"]
+    end
+
+    subgraph BACKEND["Backend (FastAPI :8000)"]
+        API_REST["REST API — analyze, report, history, chat"]
+        API_WS["WebSocket — real-time progress"]
+        AUTH["Auth — login, logout, me"]
+        GDRIVE_API["Google Drive — OAuth, files, import"]
+    end
+
+    PAGES --> STATE
+    STATE --> AXIOS
+    WS_HOOK --> WEBSOCKET
+    AXIOS --> PROXY --> API_REST
+    WEBSOCKET --> API_WS
+    LOGIN --> AUTH
+    GDRIVE --> GDRIVE_API
+    CHATBOT --> API_REST
+    NOTIF --> WEBSOCKET
+
+    PAGES --> COMPONENTS
+    PAGES --> UI
+```
+
+---
+
 ## Quick Start
 
 ```bash
