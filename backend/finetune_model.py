@@ -329,14 +329,14 @@ def compute_metrics(eval_pred):
 def finetune(
     output_dir: str = None,
     dataset_path: str = None,
-    epochs: int = 6,
+    epochs: int = 3,
     batch_size: int = 16,
-    learning_rate: float = 3e-5,
+    learning_rate: float = 1e-5,
     warmup_ratio: float = 0.15,
     weight_decay: float = 0.01,
     max_length: int = 128,
     base_model: str = "typeform/distilbert-base-uncased-mnli",
-    augment: bool = True,
+    augment: bool = False,
     eval_split: float = 0.15,
 ):
     """
@@ -436,7 +436,7 @@ def finetune(
         report_to="none",
         seed=42,
         dataloader_pin_memory=False,
-        label_smoothing_factor=0.05,  # prevents overconfident predictions
+        label_smoothing_factor=0.1,  # prevents overconfident predictions
     )
 
     # Trainer with evaluation
@@ -518,8 +518,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Fine-tune DistilBERT-MNLI on grooming-specific NLI data"
     )
-    parser.add_argument("--epochs", type=int, default=6, help="Training epochs (default: 6)")
-    parser.add_argument("--lr", type=float, default=3e-5, help="Learning rate (default: 3e-5)")
+    parser.add_argument("--epochs", type=int, default=3, help="Training epochs (default: 3)")
+    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate (default: 1e-5)")
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size (default: 16)")
     parser.add_argument("--max-length", type=int, default=128, help="Max token length (default: 128)")
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory for model")

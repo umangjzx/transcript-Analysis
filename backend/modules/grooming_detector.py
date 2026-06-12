@@ -535,8 +535,9 @@ class GroomingDetector:
 
                     for (sent_idx, sent_data), ml_result in zip(standalone_batch, standalone_results):
                         # Only add if ML is confident about a risk category
+                        # Use high threshold (0.55) to avoid false positives on safe content
                         if (not ml_result.get("is_safe")
-                            and ml_result.get("top_confidence", 0) >= 0.45
+                            and ml_result.get("top_confidence", 0) >= 0.55
                             and ml_result.get("top_label") != "unknown"):
 
                             top_label = ml_result["top_label"]
@@ -544,7 +545,7 @@ class GroomingDetector:
 
                             finding = {
                                 "category":     top_label,
-                                "confidence":   round(ml_conf * 0.7, 4),  # discount since no regex backing
+                                "confidence":   round(ml_conf * 0.55, 4),  # discount since no regex backing
                                 "context_type": "ml_standalone",
                                 "evidence":     sent_data["text"],
                                 "matched_text": sent_data["text"],
@@ -558,7 +559,7 @@ class GroomingDetector:
                                     "pattern_strength":  0.0,
                                     "base_confidence":   0.0,
                                     "ml_standalone":     True,
-                                    "ml_fused_confidence": round(ml_conf * 0.7, 4),
+                                    "ml_fused_confidence": round(ml_conf * 0.55, 4),
                                 },
                                 "ml": {
                                     "top_label":         top_label,
