@@ -126,6 +126,12 @@ _KNOWN_OBFUSCATIONS: Dict[str, str] = {
     "d03s": "does",
 }
 
+# Pre-compile obfuscation patterns once at module load (avoids re.compile per call)
+_COMPILED_OBFUSCATIONS = [
+    (re.compile(re.escape(obfuscated), re.IGNORECASE), clean)
+    for obfuscated, clean in _KNOWN_OBFUSCATIONS.items()
+]
+
 
 def normalize_leetspeak(text: str) -> str:
     """
@@ -149,10 +155,8 @@ def normalize_leetspeak(text: str) -> str:
 
     normalized = text.lower()
 
-    # Step 1: Known obfuscation lookup (case-insensitive)
-    for obfuscated, clean in _KNOWN_OBFUSCATIONS.items():
-        # Use word-boundary-aware replacement
-        pattern = re.compile(re.escape(obfuscated), re.IGNORECASE)
+    # Step 1: Known obfuscation lookup (case-insensitive, pre-compiled)
+    for pattern, clean in _COMPILED_OBFUSCATIONS:
         normalized = pattern.sub(clean, normalized)
 
     # Step 2: Remove separators between single characters

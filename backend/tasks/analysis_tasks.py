@@ -147,19 +147,23 @@ try:
     if USE_CELERY and celery_app is not None:
         # Wrap as proper Celery tasks (using named functions instead of lambdas
         # to avoid Celery's head_from_fun SyntaxError with bound tasks)
-        @celery_app.task(bind=True, name="tasks.run_audio_analysis", max_retries=2)
+        @celery_app.task(bind=True, name="tasks.run_audio_analysis", max_retries=2,
+                         soft_time_limit=600, time_limit=660)
         def run_audio_analysis(self, record_id, filepath, filename):
             return _run_audio(record_id, filepath, filename)
 
-        @celery_app.task(bind=True, name="tasks.run_video_analysis", max_retries=2)
+        @celery_app.task(bind=True, name="tasks.run_video_analysis", max_retries=2,
+                         soft_time_limit=600, time_limit=660)
         def run_video_analysis(self, record_id, audio_filepath, filename):
             return _run_video(record_id, audio_filepath, filename)
 
-        @celery_app.task(bind=True, name="tasks.run_transcript_analysis", max_retries=2)
+        @celery_app.task(bind=True, name="tasks.run_transcript_analysis", max_retries=2,
+                         soft_time_limit=300, time_limit=360)
         def run_transcript_analysis(self, record_id, transcript, filename):
             return _run_transcript(record_id, transcript, filename)
 
-        @celery_app.task(bind=True, name="tasks.run_drive_import_analysis", max_retries=2)
+        @celery_app.task(bind=True, name="tasks.run_drive_import_analysis", max_retries=2,
+                         soft_time_limit=300, time_limit=360)
         def run_drive_import_analysis(self, record_id, transcript, filename):
             return _run_drive_import(record_id, transcript, filename)
 
