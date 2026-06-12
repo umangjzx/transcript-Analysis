@@ -45,7 +45,6 @@ from .filters import CombinedFilter
 from .evidence_grouping import EvidenceGroupingEngine
 from .ml_classifier import classify_text as ml_classify_text, fuse_with_regex as ml_fuse, classify_batch as ml_classify_batch
 from .leetspeak_normalizer import normalize_leetspeak, is_likely_obfuscated
-from .feedback_loop import get_calibrated_fusion_weight
 
 
 def _normalize_unicode(text: str) -> str:
@@ -340,15 +339,13 @@ class GroomingDetector:
                         regex_categories=[category],
                     )
                     # Dynamic ML fusion weight — trust ML more when it's confident
-                    # Calibrated weights from analyst feedback take priority
                     ml_conf = ml_result["top_confidence"]
-                    _base_weight = get_calibrated_fusion_weight(category, default_weight=0.25)
                     if ml_conf >= 0.80:
-                        _fusion_weight = min(0.50, _base_weight + 0.15)
+                        _fusion_weight = 0.45  # ML is very confident
                     elif ml_conf >= 0.60:
-                        _fusion_weight = min(0.40, _base_weight + 0.05)
+                        _fusion_weight = 0.35  # ML is moderately confident
                     else:
-                        _fusion_weight = _base_weight
+                        _fusion_weight = 0.25  # Low confidence — minimal influence
 
                     fused_confidence = ml_fuse(
                         ml_result=ml_result,
@@ -470,17 +467,16 @@ class GroomingDetector:
                     final_confidence = finding.get("confidence", 0.0)
                     ml_result = batch_results[batch_i]
 
-                    # Dynamic ML fusion weight (calibrated from analyst feedback)
+                    # Dynamic ML fusion weight
                     ml_conf = ml_result["top_confidence"]
-                    category = finding.get("category", "")
-                    _base_weight = get_calibrated_fusion_weight(category, default_weight=0.25)
                     if ml_conf >= 0.80:
-                        _fusion_weight = min(0.50, _base_weight + 0.15)
+                        _fusion_weight = 0.45
                     elif ml_conf >= 0.60:
-                        _fusion_weight = min(0.40, _base_weight + 0.05)
+                        _fusion_weight = 0.35
                     else:
-                        _fusion_weight = _base_weight
+                        _fusion_weight = 0.25
 
+                    category = finding.get("category", "")
                     fused_confidence = ml_fuse(
                         ml_result=ml_result,
                         regex_confidence=final_confidence,
@@ -526,9 +522,8 @@ class GroomingDetector:
                 (i, s) for i, s in enumerate(sentences)
                 if i not in detected_indices and len(s["text"].strip()) > 30
             ]
-            # Limit standalone ML checks (fewer on CPU to avoid timeout)
-            import torch
-            ml_standalone_limit = min(20 if torch.cuda.is_available() else 8, len(missed_sentences))
+            # Limit to 20 standalone ML checks
+            ml_standalone_limit = min(20, len(missed_sentences))
             if ml_standalone_limit > 0:
                 # Sort by sentence length (longer = more likely to contain nuance)
                 missed_sentences.sort(key=lambda x: len(x[1]["text"]), reverse=True)

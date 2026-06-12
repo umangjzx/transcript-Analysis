@@ -149,7 +149,6 @@ def _get_pipeline():
     if _pipeline is None:
         try:
             from transformers import pipeline as hf_pipeline
-            import torch
 
             # Check if a fine-tuned model path is configured
             finetuned_path = os.environ.get("FINETUNED_MODEL_PATH", "")
@@ -172,28 +171,13 @@ def _get_pipeline():
                         "falling back to base model."
                     )
 
-            # Select model based on available hardware
-            use_gpu = torch.cuda.is_available()
-            device = 0 if use_gpu else -1
-
-            # Use BART-large on GPU for best accuracy (66.7% category match)
-            # Fall back to DistilBERT-MNLI on CPU for speed (handles batch inference)
-            if use_gpu:
-                model_name = "facebook/bart-large-mnli"
-                logger.info(f"GPU detected — loading {model_name} (407M params, best accuracy)...")
-            else:
-                model_name = os.environ.get(
-                    "ML_MODEL_NAME", "typeform/distilbert-base-uncased-mnli"
-                )
-                logger.info(f"CPU mode — loading {model_name} (fast inference)...")
-
+            logger.info("Loading typeform/distilbert-base-uncased-mnli (zero-shot classifier)...")
             _pipeline = hf_pipeline(
                 "zero-shot-classification",
-                model=model_name,
-                device=device,
+                model="typeform/distilbert-base-uncased-mnli",
                 multi_label=False,
             )
-            logger.info(f"ML classifier loaded successfully ({model_name}).")
+            logger.info("ML classifier loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load ML classifier: {e}")
             raise
