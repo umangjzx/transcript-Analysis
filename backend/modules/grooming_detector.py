@@ -507,6 +507,77 @@ class GroomingDetector:
                     all_findings[idx]["ml_label"] = "unavailable"
                     all_findings[idx]["ml_confidence"] = 0.0
 
+        # ── Pass 3: ML standalone scan for sentences regex missed ─────────
+        # Run ML classifier on a sample of sentences that had NO regex match.
+        # This catches subtle/novel grooming patterns the regex rules miss.
+        if original_ml_setting:
+            detected_indices = set()
+            for f in all_findings:
+                ts = int(f.get("timestamp", -1))
+                if ts >= 0:
+                    detected_indices.add(ts)
+
+            # Pick sentences that regex missed, prioritizing longer/more complex ones
+            missed_sentences = [
+                (i, s) for i, s in enumerate(sentences)
+                if i not in detected_indices and len(s["text"].strip()) > 30
+            ]
+            # Limit to 20 standalone ML checks
+            ml_standalone_limit = min(20, len(missed_sentences))
+            if ml_standalone_limit > 0:
+                # Sort by sentence length (longer = more likely to contain nuance)
+                missed_sentences.sort(key=lambda x: len(x[1]["text"]), reverse=True)
+                standalone_batch = missed_sentences[:ml_standalone_limit]
+
+                try:
+                    standalone_texts = [s["text"] for _, s in standalone_batch]
+                    standalone_results = ml_classify_batch(standalone_texts)
+
+                    for (sent_idx, sent_data), ml_result in zip(standalone_batch, standalone_results):
+                        # Only add if ML is confident about a risk category
+                        if (not ml_result.get("is_safe")
+                            and ml_result.get("top_confidence", 0) >= 0.45
+                            and ml_result.get("top_label") != "unknown"):
+
+                            top_label = ml_result["top_label"]
+                            ml_conf = ml_result["top_confidence"]
+
+                            finding = {
+                                "category":     top_label,
+                                "confidence":   round(ml_conf * 0.7, 4),  # discount since no regex backing
+                                "context_type": "ml_standalone",
+                                "evidence":     sent_data["text"],
+                                "matched_text": sent_data["text"],
+                                "pattern_count": 0,
+                                "severity":     "moderate",
+                                "weight":       0.5,
+                                "timestamp":    float(sent_idx),
+                                "speaker":      sent_data.get("speaker"),
+                                "categories":   ml_result.get("matched_labels", [top_label])[:3],
+                                "scoring": {
+                                    "pattern_strength":  0.0,
+                                    "base_confidence":   0.0,
+                                    "ml_standalone":     True,
+                                    "ml_fused_confidence": round(ml_conf * 0.7, 4),
+                                },
+                                "ml": {
+                                    "top_label":         top_label,
+                                    "top_confidence":    ml_conf,
+                                    "matched_labels":    ml_result.get("matched_labels", []),
+                                    "ml_risk_score":     ml_result.get("ml_risk_score", 0),
+                                    "is_safe":           False,
+                                    "agreement":         None,
+                                    "disagreement_flag": False,
+                                    "all_scores":        ml_result.get("all_scores", {}),
+                                    "standalone":        True,
+                                },
+                                "ml_label":      top_label,
+                                "ml_confidence": ml_conf,
+                            }
+                            all_findings.append(finding)
+                except Exception as e:
+                    logger.warning(f"ML standalone scan failed: {e}")
+
         # ── Behavioral pattern detection (cross-sentence) ─────────────────
         # Detects grooming tactics that are only visible across the full
         # conversation — subtle patterns that individual sentences miss.

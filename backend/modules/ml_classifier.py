@@ -106,10 +106,10 @@ IS_SAFE_LABEL:  Dict[str, bool] = {d[0]: d[2] for d in _LABEL_DEFINITIONS}
 # ---------------------------------------------------------------------------
 
 # Labels with calibrated score >= this are included in matched_labels
-MULTI_LABEL_THRESHOLD = 0.15
+MULTI_LABEL_THRESHOLD = 0.12
 
 # Temperature for softmax calibration (T > 1 = less overconfident)
-TEMPERATURE = 1.3
+TEMPERATURE = 1.2
 
 # Risk weights per category key (mirrors risk_scorer.py, normalised 0–1)
 _RISK_WEIGHTS: Dict[str, float] = {
@@ -208,7 +208,7 @@ def _cache_key(text: str) -> str:
     return hashlib.md5(text.strip().lower().encode()).hexdigest()
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=1024)
 def _cached_inference(text_hash: str, text: str) -> tuple:
     """
     Run BART-MNLI comparative inference.
@@ -354,31 +354,54 @@ def fuse_with_regex(
     """
     Blend ML confidence with regex confidence for a specific category.
 
-    Formula:
+    Improved fusion logic (v2):
+    - If ML agrees with regex (same category), boost confidence
+    - If ML disagrees but ML confidence is low, trust regex more
+    - If ML strongly disagrees (is_safe with high confidence), apply measured penalty
+    - Multi-label agreement: check if category appears in matched_labels
+
+    Formula (agreement):
         fused = (1 - fusion_weight) * regex_confidence
               + fusion_weight       * ml_category_score
+              + agreement_bonus     (0.05 if ML confirms regex category)
 
-    The ML score is advisory — it nudges the regex confidence up or down
-    but never overrides it completely.
+    Formula (disagreement):
+        fused = regex_confidence - (fusion_weight * 0.5 * disagreement_strength)
+        floor = max(regex_confidence * 0.6, fused)
 
     Args:
         ml_result:        Output of classify_text().
         regex_confidence: Confidence from the regex + context pipeline (0–1).
         category:         Detection category key (e.g. "secrecy").
         fusion_weight:    How much weight to give the ML score (default 0.25).
-                          0.0 = ignore ML entirely
-                          1.0 = use ML score only
 
     Returns:
         Fused confidence (0–1), rounded to 4 decimal places.
     """
     ml_score = ml_result.get("all_scores", {}).get(category, 0.0)
+    ml_matched = ml_result.get("matched_labels", [])
+    is_safe = ml_result.get("is_safe", False)
+    disagreement_flag = ml_result.get("disagreement_flag", False)
+    top_confidence = ml_result.get("top_confidence", 0.0)
 
-    # If ML strongly disagrees (says safe while regex says risk), apply a
-    # small downward nudge — but never drop below 50% of regex confidence.
-    if ml_result.get("is_safe") and ml_result.get("disagreement_flag"):
-        nudge = fusion_weight * 0.5   # softer penalty for disagreement
-        fused = max(regex_confidence * 0.5, regex_confidence - nudge)
+    # Case 1: ML agrees — category appears in ML matched labels
+    if category in ml_matched:
+        # Agreement bonus: ML confirms regex detection
+        agreement_bonus = 0.05 if ml_score >= 0.20 else 0.02
+        fused = (1.0 - fusion_weight) * regex_confidence + fusion_weight * ml_score + agreement_bonus
+    # Case 2: ML says safe AND it's confident about it
+    elif is_safe and disagreement_flag and top_confidence >= 0.50:
+        # Measured penalty — stronger ML confidence = stronger penalty
+        disagreement_strength = min(1.0, top_confidence)
+        penalty = fusion_weight * 0.5 * disagreement_strength
+        fused = max(regex_confidence * 0.6, regex_confidence - penalty)
+    # Case 3: ML predicts a different risk category (not safe, not the same)
+    elif not is_safe and category not in ml_matched:
+        # Partial agreement — ML sees risk but in a different category
+        # This is common for overlapping categories (trust_building vs relationship_building)
+        # Apply a smaller blend without penalty
+        fused = (1.0 - fusion_weight * 0.5) * regex_confidence + (fusion_weight * 0.5) * ml_score
+    # Case 4: Default blend
     else:
         fused = (1.0 - fusion_weight) * regex_confidence + fusion_weight * ml_score
 

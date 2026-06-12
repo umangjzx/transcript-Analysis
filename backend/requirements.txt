@@ -28,6 +28,8 @@ tokenizers==0.20.3
 safetensors==0.4.5
 huggingface_hub==0.26.5
 sentence-transformers==3.3.1
+datasets==3.2.0
+accelerate==1.2.1
 
 # ── Vector store ──────────────────────────────────────────────────────────────
 chromadb==1.5.9
