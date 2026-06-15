@@ -60,7 +60,6 @@ const MiniRiskBar = memo(({ score }) => (
     </span>
   </div>
 ));
-));
 MiniRiskBar.displayName = 'MiniRiskBar';
 
 // ── Component ─────────────────────────────────────────────────────────────────
