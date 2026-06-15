@@ -454,72 +454,61 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Table */}
+        {/* Table — CSS Grid for guaranteed column alignment */}
         <div className="table-container" ref={tableContainerRef} style={useVirtual ? { maxHeight: '70vh', overflow: 'auto' } : undefined}>
-          <table className="data-table">
-            <colgroup>
-              <col style={{ width: 40 }} />
-              <col style={{ width: '5%' }} />
-              <col style={{ width: '30%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '11%' }} />
-              <col style={{ width: '16%' }} />
-              <col style={{ width: '10%' }} />
-              <col style={{ width: '12%' }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th style={{ padding: '0.5rem' }}>
-                  <button onClick={selectAll} style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.size === filtered.length && filtered.length > 0 ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}>
-                    {selectedIds.size === filtered.length && filtered.length > 0 ? <CheckSquare size={16} /> : <Square size={16} />}
-                  </button>
-                </th>
-                <th onClick={() => handleSort('id')} style={{ cursor: 'pointer', userSelect: 'none' }}>ID <SortIcon col="id" /></th>
-                <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none' }}>File Name <SortIcon col="filename" /></th>
-                <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none' }}>Risk Score <SortIcon col="risk_score" /></th>
-                <th onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none' }}>Severity <SortIcon col="severity" /></th>
-                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date & Time <SortIcon col="created_at" /></th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody style={useVirtual ? { height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', display: 'block' } : undefined}>
+          <div className="data-grid" role="table">
+            {/* Header */}
+            <div className="data-grid-header" role="row">
+              <div role="columnheader">
+                <button onClick={selectAll} style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.size === filtered.length && filtered.length > 0 ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}>
+                  {selectedIds.size === filtered.length && filtered.length > 0 ? <CheckSquare size={16} /> : <Square size={16} />}
+                </button>
+              </div>
+              <div role="columnheader" onClick={() => handleSort('id')} style={{ cursor: 'pointer', userSelect: 'none' }}>ID <SortIcon col="id" /></div>
+              <div role="columnheader" onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none' }}>File Name <SortIcon col="filename" /></div>
+              <div role="columnheader" onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none' }}>Risk Score <SortIcon col="risk_score" /></div>
+              <div role="columnheader" onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none' }}>Severity <SortIcon col="severity" /></div>
+              <div role="columnheader" onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date & Time <SortIcon col="created_at" /></div>
+              <div role="columnheader">Status</div>
+              <div role="columnheader"></div>
+            </div>
+
+            {/* Body */}
+            <div className="data-grid-body" style={useVirtual ? { height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' } : undefined}>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i} style={{ opacity: 1 - i * 0.12 }}>
-                    <td><div className="skeleton" style={{ height: 16, width: 16, borderRadius: 3 }} /></td>
-                    <td><div className="skeleton" style={{ height: 14, width: 40, borderRadius: 6 }} /></td>
-                    <td><div className="skeleton" style={{ height: 14, width: '85%', borderRadius: 6 }} /></td>
-                    <td><div className="skeleton" style={{ height: 6, borderRadius: 99 }} /></td>
-                    <td><div className="skeleton" style={{ height: 22, width: 64, borderRadius: 99 }} /></td>
-                    <td><div className="skeleton" style={{ height: 14, width: 90, borderRadius: 6 }} /></td>
-                    <td><div className="skeleton" style={{ height: 14, width: 70, borderRadius: 6 }} /></td>
-                    <td></td>
-                  </tr>
+                  <div key={i} className="data-grid-row" role="row" style={{ opacity: 1 - i * 0.12 }}>
+                    <div><div className="skeleton" style={{ height: 16, width: 16, borderRadius: 3 }} /></div>
+                    <div><div className="skeleton" style={{ height: 14, width: 40, borderRadius: 6 }} /></div>
+                    <div><div className="skeleton" style={{ height: 14, width: '85%', borderRadius: 6 }} /></div>
+                    <div><div className="skeleton" style={{ height: 6, borderRadius: 99, width: '100%' }} /></div>
+                    <div><div className="skeleton" style={{ height: 22, width: 64, borderRadius: 99 }} /></div>
+                    <div><div className="skeleton" style={{ height: 14, width: 90, borderRadius: 6 }} /></div>
+                    <div><div className="skeleton" style={{ height: 14, width: 70, borderRadius: 6 }} /></div>
+                    <div></div>
+                  </div>
                 ))
               ) : visibleItems.length === 0 ? (
-                <tr>
-                  <td colSpan="8" style={{ padding: 0 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', gap: '1rem', textAlign: 'center' }}>
-                      <FileAudio size={30} style={{ color: 'var(--accent-primary)' }} />
-                      <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>
-                        {search ? 'No Matches Found' : 'No Analyses Yet'}
-                      </div>
-                      <div style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)', maxWidth: 340 }}>
-                        {search ? `No files match "${search}".` : 'Upload a transcript to get started.'}
-                      </div>
-                    </div>
-                  </td>
-                </tr>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', gap: '1rem', textAlign: 'center' }}>
+                  <FileAudio size={30} style={{ color: 'var(--accent-primary)' }} />
+                  <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>
+                    {search ? 'No Matches Found' : 'No Analyses Yet'}
+                  </div>
+                  <div style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)', maxWidth: 340 }}>
+                    {search ? `No files match "${search}".` : 'Upload a transcript to get started.'}
+                  </div>
+                </div>
               ) : visibleItems.map((vi) => {
                 const item = vi.item;
                 const i = vi.index;
                 const rowStyle = useVirtual
-                  ? { position: 'absolute', top: 0, left: 0, width: '100%', height: `${vi.size}px`, transform: `translateY(${vi.start}px)`, display: 'table-row' }
+                  ? { position: 'absolute', top: 0, left: 0, width: '100%', height: `${vi.size}px`, transform: `translateY(${vi.start}px)` }
                   : {};
                 return (
-                  <tr
+                  <div
                     key={item.id}
+                    className="data-grid-row"
+                    role="row"
                     style={{
                       ...rowStyle,
                       cursor: 'pointer',
@@ -528,22 +517,20 @@ export default function DashboardPage() {
                     }}
                     onClick={() => router.push(`/report/${item.id}`)}
                   >
-                    <td style={{ padding: '0.5rem' }} onClick={e => e.stopPropagation()}>
+                    <div onClick={e => e.stopPropagation()}>
                       <button onClick={e => { e.stopPropagation(); toggleSelect(item.id); }}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.has(item.id) ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}>
                         {selectedIds.has(item.id) ? <CheckSquare size={15} /> : <Square size={15} />}
                       </button>
-                    </td>
-                    <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.8rem' }}>#{item.id}</td>
-                    <td>
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }} title={item.filename}>{item.filename}</div>
-                    </td>
-                    <td><MiniRiskBar score={item.risk_score} /></td>
-                    <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{item.severity || 'Unknown'}</span></td>
-                    <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                    </div>
+                    <div style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.8rem' }}>#{item.id}</div>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }} title={item.filename}>{item.filename}</div>
+                    <div><MiniRiskBar score={item.risk_score} /></div>
+                    <div><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{item.severity || 'Unknown'}</span></div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
                       {item.created_at ? new Date(item.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '—'}
-                    </td>
-                    <td>
+                    </div>
+                    <div>
                       <span style={{
                         fontSize: '0.78rem', fontWeight: 600,
                         color: (item.status || '').toUpperCase() === 'COMPLETED' ? 'var(--status-safe)' :
@@ -552,8 +539,8 @@ export default function DashboardPage() {
                       }}>
                         {item.status || 'Unknown'}
                       </span>
-                    </td>
-                    <td onClick={e => e.stopPropagation()}>
+                    </div>
+                    <div onClick={e => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
                         <button className="btn btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.78rem' }} onClick={() => router.push(`/report/${item.id}`)}>
                           View <ChevronRight size={12} />
@@ -567,12 +554,12 @@ export default function DashboardPage() {
                           <Trash2 size={14} />
                         </button>
                       </div>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          </div>
         </div>
 
         {/* Pagination (hidden when using virtualization) */}
