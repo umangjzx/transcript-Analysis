@@ -656,6 +656,7 @@ class GroomingDetector:
             "trust_building": 0,
             "normalization": 0,
             "parental_avoidance": 0,
+            "coded_language": 0,
         }
 
         # Behavioral indicator patterns (softer than the main regex patterns)
@@ -732,7 +733,19 @@ class GroomingDetector:
                 re.compile(r'\b(?:(?:she|he|they)\s+(?:might|would|will)\s+(?:think\s+it.?s\s+weird|not\s+understand|overreact|freak\s+out))', re.I),
                 re.compile(r'\b(?:(?:easier\s+to\s+)?ask\s+forgiveness|without\s+(?:them|your\s+parents?)\s+knowing)', re.I),
             ],
+            "coded_language": [
+                re.compile(r'\b(?:(?:our|the|my)\s+(?:special|secret|private)\s+(?:game|thing|world|place|spot))', re.I),
+                re.compile(r'\b(?:(?:the|our)\s+rules?\s+(?:say|are)|follow\s+(?:the|my|all)\s+rules?)', re.I),
+                re.compile(r'\b(?:(?:next|another|new)\s+level|level\s+up|unlock)', re.I),
+                re.compile(r'\b(?:(?:good|real)\s+(?:players?|friends?)\s+(?:always|do|would)\s+(?:do|follow|obey))', re.I),
+                re.compile(r'\b(?:(?:show|prove|demonstrate)\s+(?:me|that)\s+(?:you|you.?re)\s+(?:ready|worthy|mature|serious|loyal))', re.I),
+                re.compile(r'\b(?:(?:it.?s|this\s+is)\s+(?:just\s+)?(?:between\s+us|our\s+(?:game|thing|secret)))', re.I),
+                re.compile(r'\b(?:(?:part|one)\s+of\s+(?:the|our)\s+(?:game|deal|arrangement|agreement))', re.I),
+            ],
         }
+
+        # Track which sentences matched each signal type
+        signal_sentences: Dict[str, List[str]] = {k: [] for k in signals}
 
         # Scan all sentences for behavioral signals
         for sent_data in sentences:
@@ -744,6 +757,7 @@ class GroomingDetector:
                             signals["age_gap"] = True
                         else:
                             signals[signal_type] += 1
+                        signal_sentences[signal_type].append(text.strip())
                         break  # One match per signal type per sentence
 
         # ── Calculate behavioral risk score ───────────────────────────────
@@ -765,6 +779,7 @@ class GroomingDetector:
             "trust_building":      3.0,   # per occurrence
             "normalization":       6.0,   # per occurrence
             "parental_avoidance":  7.0,   # per occurrence
+            "coded_language":      7.0,   # per occurrence — game/metaphor tactics
         }
 
         for signal_type, count_or_flag in signals.items():
@@ -803,15 +818,31 @@ class GroomingDetector:
         # If behavioral analysis found significant patterns not caught by regex
         # Require high behavioral score AND multiple distinct HIGH-RISK signals
         # to avoid false positives on innocent conversations
-        high_risk_signals = {"isolation", "secrecy_hints", "meeting_intent", 
-                            "parental_avoidance", "normalization"}
+        # Core high-risk signals that strongly indicate grooming intent
+        # (schedule_probing and meeting_intent alone can appear in legitimate contexts)
+        high_risk_signals = {"isolation", "secrecy_hints",
+                            "parental_avoidance", "normalization", "coded_language"}
         high_risk_triggered = sum(
             1 for b in triggered_behaviors 
             if b.split("(")[0] in high_risk_signals
         )
+        # Moderate-risk signals that become significant with high-risk co-occurrence
+        moderate_risk_signals = {"meeting_intent", "schedule_probing"}
+        moderate_risk_triggered = sum(
+            1 for b in triggered_behaviors
+            if b.split("(")[0] in moderate_risk_signals
+        )
         
-        if behavioral_score >= 20 and distinct_signals >= 3 and high_risk_triggered >= 2:
-            # Create synthetic findings for behavioral patterns not already detected
+        # Fire behavioral findings if:
+        # - High behavioral score (>= 20) AND 3+ distinct signals AND 2+ high-risk
+        # OR
+        # - Very high behavioral score (>= 35) AND 4+ distinct signals AND 1+ high-risk + 1+ moderate-risk
+        should_fire_behavioral = (
+            (behavioral_score >= 20 and distinct_signals >= 3 and high_risk_triggered >= 2)
+            or (behavioral_score >= 35 and distinct_signals >= 4 and high_risk_triggered >= 1 and moderate_risk_triggered >= 1)
+        )
+        
+        if should_fire_behavioral:            # Create synthetic findings for behavioral patterns not already detected
             confidence = min(0.90, behavioral_score / 100.0 + 0.3)
 
             # Map behavioral signals to categories
@@ -827,6 +858,7 @@ class GroomingDetector:
                 "trust_building": "trust_building",
                 "flattery": "relationship_building",
                 "age_gap": "age_deception",
+                "coded_language": "manipulation",
             }
 
             for signal_type in triggered_behaviors:
@@ -846,6 +878,7 @@ class GroomingDetector:
                     "context_type": "BEHAVIORAL_PATTERN",
                     "evidence":     f"[Behavioral] Cross-conversation {base_signal.replace('_', ' ')} pattern detected ({distinct_signals} co-occurring grooming signals)",
                     "matched_text": f"behavioral:{base_signal}",
+                    "matched_sentences": signal_sentences.get(base_signal, [])[:5],  # Top 5 matching lines
                     "pattern_count": signals.get(base_signal, 1) if isinstance(signals.get(base_signal), int) else 1,
                     "severity":     metadata.severity,
                     "weight":       metadata.weight,

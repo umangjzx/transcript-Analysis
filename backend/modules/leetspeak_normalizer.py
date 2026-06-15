@@ -124,6 +124,26 @@ _KNOWN_OBFUSCATIONS: Dict[str, str] = {
     "th1nk": "think", "th1nks": "thinks",
     "3very0ne": "everyone", "every0ne": "everyone",
     "d03s": "does",
+    # Additional common leetspeak bypasses
+    "s0me0ne": "someone", "som3one": "someone",
+    "und3rstand": "understand", "und3rst4nd": "understand",
+    "0nly": "only", "0th3r": "other", "0ther": "other",
+    "b3tw33n": "between", "b3tween": "between",
+    "1mmatur3": "immature", "immatur3": "immature",
+    "n0rm4l": "normal", "n0rmal": "normal", "norm4l": "normal",
+    "sp3c1al": "special", "sp3ci4l": "special", "sp3cial": "special",
+    "sh0uld": "should", "w0nt": "wont",
+    "r3ally": "really", "r34lly": "really",
+    "s3nd m3": "send me", "s3nd": "send",
+    "wh4t": "what", "wh3n": "when", "wh3re": "where",
+    "t1me": "time",
+    "h0me": "home", "h0us3": "house",
+    "sch00l": "school", "sch0ol": "school",
+    "g00d": "good", "c00l": "cool",
+    "r3ad": "read",
+    "w4nna": "wanna", "w4nt": "want",
+    "pl4y": "play",
+    "1ts": "its",
 }
 
 # Pre-compile obfuscation patterns once at module load (avoids re.compile per call)
