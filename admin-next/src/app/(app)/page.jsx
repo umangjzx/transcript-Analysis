@@ -4,8 +4,9 @@
  * Dashboard — Analysis history table (Next.js port).
  */
 
-import React, { useCallback, useDeferredValue, useMemo, useState, memo, useRef } from 'react';
+import React, { useCallback, useDeferredValue, useMemo, useState, memo, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ShieldAlert, Activity, FileAudio, Search, TrendingUp,
   CheckCircle, AlertTriangle, Clock, ChevronRight, RefreshCw,
@@ -136,6 +137,22 @@ export default function DashboardPage() {
     () => filtered.slice(page * pageSize, (page + 1) * pageSize),
     [filtered, page, pageSize],
   );
+
+  // ── Table virtualization for large datasets (200+) ───────────────────────
+  const useVirtual = filtered.length >= 200;
+  const tableContainerRef = useRef(null);
+  const rowVirtualizer = useVirtualizer({
+    count: useVirtual ? filtered.length : 0,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 52,
+    overscan: 20,
+    enabled: useVirtual,
+  });
+
+  // Items to render: virtualized full list or paginated subset
+  const visibleItems = useVirtual
+    ? rowVirtualizer.getVirtualItems().map(vi => ({ ...vi, item: filtered[vi.index] }))
+    : paginated.map((item, i) => ({ index: i, item }));
 
   const prevFilterKey = useMemo(
     () => `${deferredSearch}|${severityFilter}|${statusFilter}|${datePreset}|${sortKey}|${sortDir}`,
@@ -438,7 +455,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Table */}
-        <div className="table-container">
+        <div className="table-container" ref={tableContainerRef} style={useVirtual ? { maxHeight: '70vh', overflow: 'auto' } : undefined}>
           <table className="data-table">
             <thead>
               <tr>
@@ -456,7 +473,7 @@ export default function DashboardPage() {
                 <th></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody style={useVirtual ? { height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', display: 'block' } : undefined}>
               {loading ? (
                 Array.from({ length: 6 }).map((_, i) => (
                   <tr key={i} style={{ opacity: 1 - i * 0.12 }}>
@@ -470,7 +487,7 @@ export default function DashboardPage() {
                     <td></td>
                   </tr>
                 ))
-              ) : paginated.length === 0 ? (
+              ) : visibleItems.length === 0 ? (
                 <tr>
                   <td colSpan="8" style={{ padding: 0 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', gap: '1rem', textAlign: 'center' }}>
@@ -484,64 +501,72 @@ export default function DashboardPage() {
                     </div>
                   </td>
                 </tr>
-              ) : paginated.map((item, i) => (
-                <tr
-                  key={item.id}
-                  style={{
-                    cursor: 'pointer',
-                    background: focusedRow === i ? 'rgba(56,189,248,0.04)' : selectedIds.has(item.id) ? 'rgba(56,189,248,0.02)' : undefined,
-                    opacity: deleting === item.id ? 0.4 : 1,
-                  }}
-                  onClick={() => router.push(`/report/${item.id}`)}
-                >
-                  <td style={{ width: 40, padding: '0.5rem' }} onClick={e => e.stopPropagation()}>
-                    <button onClick={e => { e.stopPropagation(); toggleSelect(item.id); }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.has(item.id) ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}>
-                      {selectedIds.has(item.id) ? <CheckSquare size={15} /> : <Square size={15} />}
-                    </button>
-                  </td>
-                  <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.85rem' }}>#{item.id}</td>
-                  <td style={{ fontWeight: 500, maxWidth: 350 }}>
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>{item.filename}</div>
-                  </td>
-                  <td><MiniRiskBar score={item.risk_score} /></td>
-                  <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)} {item.severity || 'Unknown'}</span></td>
-                  <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    {item.created_at ? new Date(item.created_at).toLocaleString() : '—'}
-                  </td>
-                  <td>
-                    <span style={{
-                      fontSize: '0.78rem', fontWeight: 600,
-                      color: (item.status || '').toUpperCase() === 'COMPLETED' ? 'var(--status-safe)' :
-                        (item.status || '').toUpperCase() === 'PROCESSING' ? 'var(--status-moderate)' :
-                          'var(--status-high)',
-                    }}>
-                      {item.status || 'Unknown'}
-                    </span>
-                  </td>
-                  <td onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', gap: '0.4rem' }}>
-                      <button className="btn btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.78rem' }} onClick={() => router.push(`/report/${item.id}`)}>
-                        View <ChevronRight size={12} />
+              ) : visibleItems.map((vi) => {
+                const item = vi.item;
+                const i = vi.index;
+                const rowStyle = useVirtual
+                  ? { position: 'absolute', top: 0, left: 0, width: '100%', height: `${vi.size}px`, transform: `translateY(${vi.start}px)`, display: 'table-row' }
+                  : {};
+                return (
+                  <tr
+                    key={item.id}
+                    style={{
+                      ...rowStyle,
+                      cursor: 'pointer',
+                      background: focusedRow === i ? 'rgba(56,189,248,0.04)' : selectedIds.has(item.id) ? 'rgba(56,189,248,0.02)' : undefined,
+                      opacity: deleting === item.id ? 0.4 : 1,
+                    }}
+                    onClick={() => router.push(`/report/${item.id}`)}
+                  >
+                    <td style={{ width: 40, padding: '0.5rem' }} onClick={e => e.stopPropagation()}>
+                      <button onClick={e => { e.stopPropagation(); toggleSelect(item.id); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.has(item.id) ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}>
+                        {selectedIds.has(item.id) ? <CheckSquare size={15} /> : <Square size={15} />}
                       </button>
-                      <button
-                        className="btn-icon"
-                        style={{ padding: '0.3rem', color: 'var(--text-tertiary)' }}
-                        onClick={() => setConfirmDelete(item)}
-                        title="Delete"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.85rem' }}>#{item.id}</td>
+                    <td style={{ fontWeight: 500, maxWidth: 350 }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>{item.filename}</div>
+                    </td>
+                    <td><MiniRiskBar score={item.risk_score} /></td>
+                    <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)} {item.severity || 'Unknown'}</span></td>
+                    <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      {item.created_at ? new Date(item.created_at).toLocaleString() : '—'}
+                    </td>
+                    <td>
+                      <span style={{
+                        fontSize: '0.78rem', fontWeight: 600,
+                        color: (item.status || '').toUpperCase() === 'COMPLETED' ? 'var(--status-safe)' :
+                          (item.status || '').toUpperCase() === 'PROCESSING' ? 'var(--status-moderate)' :
+                            'var(--status-high)',
+                      }}>
+                        {item.status || 'Unknown'}
+                      </span>
+                    </td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <button className="btn btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.78rem' }} onClick={() => router.push(`/report/${item.id}`)}>
+                          View <ChevronRight size={12} />
+                        </button>
+                        <button
+                          className="btn-icon"
+                          style={{ padding: '0.3rem', color: 'var(--text-tertiary)' }}
+                          onClick={() => setConfirmDelete(item)}
+                          title="Delete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
-        {filtered.length > pageSize && (
+        {/* Pagination (hidden when using virtualization) */}
+        {!useVirtual && filtered.length > pageSize && (
           <div style={{ padding: 'var(--spacing-md) var(--spacing-xl)', borderTop: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
               Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, filtered.length)} of {filtered.length}

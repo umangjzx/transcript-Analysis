@@ -46,5 +46,9 @@ USER appuser
 # Expose the API port
 EXPOSE 8000
 
+# Healthcheck — confirms the FastAPI server is responsive
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
 # Default command: run the FastAPI server (no --reload in production)
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
