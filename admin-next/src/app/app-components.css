@@ -85,7 +85,7 @@
 .data-grid-header,
 .data-grid-row {
   display: grid;
-  grid-template-columns: 44px 70px minmax(180px, 1fr) 130px 110px 140px 100px 110px;
+  grid-template-columns: 44px 70px minmax(180px, 1fr) 130px 110px 140px 100px 140px;
   align-items: center;
   gap: 0;
 }
@@ -115,6 +115,9 @@
   font-size: 0.9rem;
   min-width: 0;
   overflow: hidden;
+}
+.data-grid-row > div:last-child {
+  overflow: visible;
 }
 
 /* ── File Upload ─────────────────────────────────────────────────── */
