@@ -48,14 +48,14 @@ const getRiskColor = (score) => {
 };
 
 const MiniRiskBar = memo(({ score }) => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-    <div style={{ flex: 1, height: 6, background: 'rgba(15,23,42,0.08)', borderRadius: 99 }}>
+  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 90 }}>
+    <div style={{ flex: 1, height: 6, background: 'rgba(15,23,42,0.08)', borderRadius: 99, minWidth: 50 }}>
       <div style={{
         width: `${Math.min(100, score ?? 0)}%`, height: '100%', borderRadius: 99,
         background: getRiskColor(score), transition: 'width 0.4s ease',
       }} />
     </div>
-    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: getRiskColor(score), minWidth: 36 }}>
+    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: getRiskColor(score), minWidth: 28 }}>
       {score != null ? score.toFixed(0) : '—'}
     </span>
   </div>
@@ -464,13 +464,13 @@ export default function DashboardPage() {
                     {selectedIds.size === filtered.length && filtered.length > 0 ? <CheckSquare size={16} /> : <Square size={16} />}
                   </button>
                 </th>
-                <th onClick={() => handleSort('id')} style={{ cursor: 'pointer', userSelect: 'none', width: '5%' }}>ID <SortIcon col="id" /></th>
-                <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none', width: '28%' }}>File Name <SortIcon col="filename" /></th>
-                <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none', width: '14%' }}>Risk Score <SortIcon col="risk_score" /></th>
-                <th onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none', width: '12%' }}>Severity <SortIcon col="severity" /></th>
-                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none', width: '16%' }}>Date & Time <SortIcon col="created_at" /></th>
-                <th style={{ width: '10%' }}>Status</th>
-                <th style={{ width: '10%' }}></th>
+                <th onClick={() => handleSort('id')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 50 }}>ID <SortIcon col="id" /></th>
+                <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 200 }}>File Name <SortIcon col="filename" /></th>
+                <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 120 }}>Risk Score <SortIcon col="risk_score" /></th>
+                <th onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 100 }}>Severity <SortIcon col="severity" /></th>
+                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 140 }}>Date & Time <SortIcon col="created_at" /></th>
+                <th style={{ minWidth: 90 }}>Status</th>
+                <th style={{ minWidth: 100 }}></th>
               </tr>
             </thead>
             <tbody style={useVirtual ? { height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', display: 'block' } : undefined}>
@@ -528,8 +528,8 @@ export default function DashboardPage() {
                     <td style={{ fontWeight: 500 }}>
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>{item.filename}</div>
                     </td>
-                    <td><MiniRiskBar score={item.risk_score} /></td>
-                    <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)} {item.severity || 'Unknown'}</span></td>
+                    <td style={{ minWidth: 120, maxWidth: 150 }}><MiniRiskBar score={item.risk_score} /></td>
+                    <td style={{ minWidth: 90 }}><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)} {item.severity || 'Unknown'}</span></td>
                     <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                       {item.created_at ? new Date(item.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                     </td>

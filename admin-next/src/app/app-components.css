@@ -62,7 +62,7 @@
 
 /* ── Tables ──────────────────────────────────────────────────────── */
 .table-container { overflow-x: auto; }
-.data-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
 .data-table th {
   text-align: left; padding: var(--spacing-md) var(--spacing-lg);
   color: var(--text-tertiary); font-weight: 600; font-size: 0.75rem;
@@ -75,6 +75,10 @@
   border-bottom: 1px solid var(--border-color);
   font-size: 0.9375rem;
   vertical-align: middle;
+}
+.data-table td.cell-filename {
+  white-space: normal;
+  word-break: break-word;
 }
 .data-table tbody tr { transition: background 0.15s ease; cursor: pointer; }
 .data-table tbody tr:hover { background: var(--surface-subtle); }
