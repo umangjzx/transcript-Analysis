@@ -457,20 +457,30 @@ export default function DashboardPage() {
         {/* Table */}
         <div className="table-container" ref={tableContainerRef} style={useVirtual ? { maxHeight: '70vh', overflow: 'auto' } : undefined}>
           <table className="data-table">
+            <colgroup>
+              <col style={{ width: 40 }} />
+              <col style={{ width: '5%' }} />
+              <col style={{ width: '30%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '12%' }} />
+            </colgroup>
             <thead>
               <tr>
-                <th style={{ width: 40, padding: '0.5rem' }}>
+                <th style={{ padding: '0.5rem' }}>
                   <button onClick={selectAll} style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.size === filtered.length && filtered.length > 0 ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}>
                     {selectedIds.size === filtered.length && filtered.length > 0 ? <CheckSquare size={16} /> : <Square size={16} />}
                   </button>
                 </th>
-                <th onClick={() => handleSort('id')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 50 }}>ID <SortIcon col="id" /></th>
-                <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 200 }}>File Name <SortIcon col="filename" /></th>
-                <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 120 }}>Risk Score <SortIcon col="risk_score" /></th>
-                <th onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 100 }}>Severity <SortIcon col="severity" /></th>
-                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none', minWidth: 140 }}>Date & Time <SortIcon col="created_at" /></th>
-                <th style={{ minWidth: 90 }}>Status</th>
-                <th style={{ minWidth: 100 }}></th>
+                <th onClick={() => handleSort('id')} style={{ cursor: 'pointer', userSelect: 'none' }}>ID <SortIcon col="id" /></th>
+                <th onClick={() => handleSort('filename')} style={{ cursor: 'pointer', userSelect: 'none' }}>File Name <SortIcon col="filename" /></th>
+                <th onClick={() => handleSort('risk_score')} style={{ cursor: 'pointer', userSelect: 'none' }}>Risk Score <SortIcon col="risk_score" /></th>
+                <th onClick={() => handleSort('severity')} style={{ cursor: 'pointer', userSelect: 'none' }}>Severity <SortIcon col="severity" /></th>
+                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer', userSelect: 'none' }}>Date & Time <SortIcon col="created_at" /></th>
+                <th>Status</th>
+                <th></th>
               </tr>
             </thead>
             <tbody style={useVirtual ? { height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', display: 'block' } : undefined}>
@@ -518,19 +528,19 @@ export default function DashboardPage() {
                     }}
                     onClick={() => router.push(`/report/${item.id}`)}
                   >
-                    <td style={{ width: 40, padding: '0.5rem' }} onClick={e => e.stopPropagation()}>
+                    <td style={{ padding: '0.5rem' }} onClick={e => e.stopPropagation()}>
                       <button onClick={e => { e.stopPropagation(); toggleSelect(item.id); }}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: selectedIds.has(item.id) ? 'var(--accent-primary)' : 'var(--text-tertiary)', display: 'flex', alignItems: 'center' }}>
                         {selectedIds.has(item.id) ? <CheckSquare size={15} /> : <Square size={15} />}
                       </button>
                     </td>
                     <td style={{ color: 'var(--text-tertiary)', fontFamily: 'monospace', fontSize: '0.8rem' }}>#{item.id}</td>
-                    <td style={{ fontWeight: 500 }}>
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>{item.filename}</div>
+                    <td>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }} title={item.filename}>{item.filename}</div>
                     </td>
                     <td><MiniRiskBar score={item.risk_score} /></td>
-                    <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)}{getSeverityIcon(item.severity) ? ' ' : ''}{item.severity || 'Unknown'}</span></td>
-                    <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                    <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{item.severity || 'Unknown'}</span></td>
+                    <td style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
                       {item.created_at ? new Date(item.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                     </td>
                     <td>

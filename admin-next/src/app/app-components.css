@@ -62,23 +62,20 @@
 
 /* ── Tables ──────────────────────────────────────────────────────── */
 .table-container { overflow-x: auto; }
-.data-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.data-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 .data-table th {
-  text-align: left; padding: var(--spacing-md) var(--spacing-lg);
+  text-align: left; padding: var(--spacing-sm) var(--spacing-md);
   color: var(--text-tertiary); font-weight: 600; font-size: 0.75rem;
   text-transform: uppercase; letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border-color);
-  white-space: nowrap;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .data-table td {
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: var(--spacing-sm) var(--spacing-md);
   border-bottom: 1px solid var(--border-color);
-  font-size: 0.9375rem;
+  font-size: 0.9rem;
   vertical-align: middle;
-}
-.data-table td.cell-filename {
-  white-space: normal;
-  word-break: break-word;
+  overflow: hidden; text-overflow: ellipsis;
 }
 .data-table tbody tr { transition: background 0.15s ease; cursor: pointer; }
 .data-table tbody tr:hover { background: var(--surface-subtle); }
