@@ -1,0 +1,25 @@
+Therapist: Hi Marcus, how are you feeling today? How was your week?
+Client: It was okay. Better than last week I think.
+Therapist: That's good to hear. Last session we talked about the conflict with your friend group. Any updates there?
+Client: Yeah, I talked to Jake like you suggested. It went better than I expected.
+Therapist: That took courage. How did it feel to address it directly?
+Client: Scary at first but then kind of relieving. Like a weight off my chest.
+Therapist: That's a really mature way to handle conflict. Many adults struggle with that.
+Client: My parents were surprised I did it without them intervening.
+Therapist: Sometimes parents need to see that their children are developing their own problem-solving skills. It's healthy.
+Client: Yeah. Can I ask you something kind of personal?
+Therapist: Of course. This is a safe space. Everything we discuss stays between us unless I'm concerned about your safety.
+Client: What does confidentiality mean exactly?
+Therapist: It means I won't share what you tell me with your parents or school unless you're in danger of hurting yourself or someone else. Those are the only exceptions.
+Client: Okay. So if I tell you I've been feeling really sad sometimes, you won't tell my mom?
+Therapist: Not unless I'm worried about your safety. Can you tell me more about feeling sad?
+Client: Sometimes when my parents fight I feel like it's my fault. Like maybe if I was better they wouldn't argue.
+Therapist: That's a very common feeling for kids in your situation. I want you to know their conflict is not your responsibility.
+Client: My school counselor said the same thing.
+Therapist: She's right. How often are you feeling this way? Daily, weekly?
+Client: Maybe a few times a week. Usually at night.
+Therapist: I'd like you to try something this week. When those feelings come up, write them down in the journal we discussed. Then we'll review them together next session.
+Client: Okay I can do that.
+Therapist: And remember, if things ever feel overwhelming between sessions, you can call our office line. The after-hours service is available 24/7.
+Client: Thanks. Same time next Thursday?
+Therapist: Yes, Thursday at 4pm. Your mom can pick you up in the waiting room as usual. Take care Marcus.
