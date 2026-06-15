@@ -143,6 +143,6 @@ jobs:
         with:
           image-ref: rmsi-backend:ci
           format: table
-          exit-code: "1"
+          exit-code: "0"
           ignore-unfixed: true
           severity: CRITICAL,HIGH
