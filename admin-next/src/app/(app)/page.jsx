@@ -32,11 +32,11 @@ const getBadgeClass = (severity) => {
 /** WCAG 1.4.1 — non-color indicator alongside colored badge */
 const getSeverityIcon = (severity) => {
   const s = (severity || '').toLowerCase();
-  if (s === 'critical') return '⬤';
-  if (s === 'high') return '▲';
-  if (s === 'moderate' || s === 'medium') return '◆';
-  if (s === 'low') return '●';
-  return '○';
+  if (s === 'critical') return '!!';
+  if (s === 'high') return '!';
+  if (s === 'moderate' || s === 'medium') return '~';
+  if (s === 'low') return '';
+  return '';
 };
 
 const getRiskColor = (score) => {
@@ -48,17 +48,18 @@ const getRiskColor = (score) => {
 };
 
 const MiniRiskBar = memo(({ score }) => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 90 }}>
-    <div style={{ flex: 1, height: 6, background: 'rgba(15,23,42,0.08)', borderRadius: 99, minWidth: 50 }}>
+  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: 110 }}>
+    <div style={{ width: 60, height: 5, background: 'rgba(15,23,42,0.06)', borderRadius: 99, flexShrink: 0 }}>
       <div style={{
         width: `${Math.min(100, score ?? 0)}%`, height: '100%', borderRadius: 99,
         background: getRiskColor(score), transition: 'width 0.4s ease',
       }} />
     </div>
-    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: getRiskColor(score), minWidth: 28 }}>
+    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: getRiskColor(score), minWidth: 24, textAlign: 'right' }}>
       {score != null ? score.toFixed(0) : '—'}
     </span>
   </div>
+));
 ));
 MiniRiskBar.displayName = 'MiniRiskBar';
 
@@ -528,8 +529,8 @@ export default function DashboardPage() {
                     <td style={{ fontWeight: 500 }}>
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.filename}>{item.filename}</div>
                     </td>
-                    <td style={{ minWidth: 120, maxWidth: 150 }}><MiniRiskBar score={item.risk_score} /></td>
-                    <td style={{ minWidth: 90 }}><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)} {item.severity || 'Unknown'}</span></td>
+                    <td><MiniRiskBar score={item.risk_score} /></td>
+                    <td><span className={`badge ${getBadgeClass(item.severity)}`} aria-label={`Severity: ${item.severity || 'Unknown'}`}>{getSeverityIcon(item.severity)}{getSeverityIcon(item.severity) ? ' ' : ''}{item.severity || 'Unknown'}</span></td>
                     <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                       {item.created_at ? new Date(item.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                     </td>
