@@ -190,6 +190,20 @@ const FindingCard = memo(({ finding, index }) => {
             </div>
           )}
 
+          {/* Matched Sentences — actual lines from transcript */}
+          {finding.matched_sentences && finding.matched_sentences.length > 0 && (
+            <div className="debug-section">
+              <div className="debug-section-title"><Code size={13} /> Triggering Lines</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                {finding.matched_sentences.map((line, li) => (
+                  <div key={li} style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', padding: '0.4rem 0.7rem', borderLeft: `2px solid ${color}`, background: 'var(--surface-subtle)', borderRadius: '0 var(--radius-sm) var(--radius-sm) 0' }}>
+                    &quot;{line}&quot;
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Context Info */}
           <div className="debug-section">
             <div className="debug-section-title"><Eye size={13} /> Context Analysis</div>
@@ -872,6 +886,26 @@ export default function ReportPage() {
                           </div>
                         </div>
                         <blockquote className="evidence-quote">&quot;{ev.evidence || ev.text || ''}&quot;</blockquote>
+                        {/* Matched sentences — lines that triggered this detection */}
+                        {ev.matched_sentences && ev.matched_sentences.length > 0 && (
+                          <div className="evidence-matched-lines" style={{ margin: '0.75rem 0', padding: '0.75rem', background: 'var(--surface-subtle)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                            <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <Code size={12} /> Matched Lines
+                            </div>
+                            {ev.matched_sentences.map((line, li) => (
+                              <div key={li} style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', padding: '0.35rem 0.6rem', marginBottom: '0.3rem', borderLeft: `2px solid ${sColor}`, background: 'var(--bg-secondary)', borderRadius: '0 var(--radius-sm) var(--radius-sm) 0' }}>
+                                &quot;{line}&quot;
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Matched pattern text */}
+                        {ev.matched_text && (
+                          <div style={{ marginBottom: '0.5rem' }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pattern: </span>
+                            <code style={{ fontSize: '0.78rem', background: 'var(--bg-tertiary)', padding: '0.15rem 0.5rem', borderRadius: 4, color: 'var(--accent-primary)' }}>{ev.matched_text}</code>
+                          </div>
+                        )}
                         <div className="evidence-details-grid">
                           {ev.context_type && (
                             <div className="evidence-detail"><span>Context</span><strong style={{ color: 'var(--accent-primary)' }}>{ev.context_type}</strong></div>

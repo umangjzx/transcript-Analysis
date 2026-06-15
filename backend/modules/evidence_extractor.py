@@ -80,6 +80,8 @@ def extract_evidence(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             # Rich detail fields for the frontend Evidence Log
             "speaker":            item.get("speaker"),
             "context_type":       item.get("context_type"),
+            "matched_text":       item.get("matched_text"),
+            "matched_sentences":  item.get("matched_sentences"),
             "base_confidence":    scoring.get("base_confidence", item.get("base_confidence")),
             "context_multiplier": scoring.get("context_multiplier", item.get("context_multiplier")),
             "is_joke":            filters.get("is_joke", item.get("is_joke")),

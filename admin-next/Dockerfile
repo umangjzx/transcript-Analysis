@@ -12,6 +12,8 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG BACKEND_URL=http://backend:8000
 ENV BACKEND_URL=${BACKEND_URL}
+ARG NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws/progress
+ENV NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
 RUN npm run build
 
 # ── Production stage ──────────────────────────────────────────────────────────

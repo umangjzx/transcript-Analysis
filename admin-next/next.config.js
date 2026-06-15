@@ -9,8 +9,13 @@ const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
 
-  // Allow plain .js/.jsx alongside any .ts/.tsx in the host project.
-  // (Next.js compiles JS and TS together out of the box.)
+  // Allow large file uploads through rewrites proxy (audio 300MB, video 500MB)
+  experimental: {
+    middlewareClientMaxBodySize: '500mb',
+    serverActions: {
+      bodySizeLimit: '500mb',
+    },
+  },
 
   async rewrites() {
     return [
