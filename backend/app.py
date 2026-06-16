@@ -357,6 +357,7 @@ from api.notification_routes import router as notify_router  # noqa: E402
 from api.analytics_routes import router as analytics_router  # noqa: E402
 from api.upload_routes import router as upload_router  # noqa: E402
 from api.report_routes import router as report_router  # noqa: E402
+from api.webhook_routes import router as webhook_router  # noqa: E402
 
 app.include_router(v1_router)
 app.include_router(gdrive_router)
@@ -365,6 +366,7 @@ app.include_router(notify_router)
 app.include_router(analytics_router)
 app.include_router(upload_router)
 app.include_router(report_router)
+app.include_router(webhook_router)
 
 # -- WebSocket endpoint for real-time progress ---------------------------------
 
