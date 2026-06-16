@@ -19,7 +19,7 @@ const Navigation = () => {
   const isActive = (path) => (pathname === path ? 'active' : '');
   const user = getStoredUser();
 
-  // Hide navigation when embedded in iframe (MW admin panel)
+  // Detect when embedded in iframe (MW admin panel)
   const [isEmbedded, setIsEmbedded] = useState(false);
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -28,7 +28,30 @@ const Navigation = () => {
     }
   }, []);
 
-  if (isEmbedded) return null;
+  // Compact embedded nav — just the page links, no branding/auth
+  if (isEmbedded) {
+    return (
+      <nav className="navbar glass-panel" style={{ padding: '0.5rem 1.5rem', minHeight: 'auto' }}>
+        <div className="navbar-links" style={{ gap: '0.25rem' }}>
+          <Link href="/" className={`nav-link ${isActive('/')}`}>
+            <Home size={16} /> Dashboard
+          </Link>
+          <Link href="/upload" className={`nav-link ${isActive('/upload')}`}>
+            <UploadCloud size={16} /> Analyze
+          </Link>
+          <Link href="/google-drive" className={`nav-link ${isActive('/google-drive')}`}>
+            <HardDrive size={16} /> Drive
+          </Link>
+          <Link href="/analytics" className={`nav-link ${isActive('/analytics')}`}>
+            <BarChart2 size={16} /> Analytics
+          </Link>
+          <Link href="/compare" className={`nav-link ${isActive('/compare')}`}>
+            <GitCompare size={16} /> Compare
+          </Link>
+        </div>
+      </nav>
+    );
+  }
 
   const handleLogout = async () => {
     await logout();
