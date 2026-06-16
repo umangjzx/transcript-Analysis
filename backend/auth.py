@@ -257,8 +257,9 @@ async def get_current_user(
     FastAPI dependency — validates the Bearer JWT on every protected route.
 
     Token resolution order:
-    1. Authorization: Bearer <token> header
-    2. access_token httpOnly cookie
+    1. X-API-Key header (service-to-service auth)
+    2. Authorization: Bearer <token> header
+    3. access_token httpOnly cookie
 
     Falls back gracefully:
     - If JWT_SECRET is not set, auth is disabled (dev mode).
@@ -269,6 +270,13 @@ async def get_current_user(
     # Dev mode: no JWT_SECRET configured → skip auth entirely
     if not JWT_SECRET:
         return {"username": "dev", "role": "admin"}
+
+    # Service-to-service: valid X-API-Key header bypasses JWT requirement
+    if request is not None:
+        api_key = request.headers.get("X-API-Key", "")
+        configured_key = os.getenv("API_KEY", "")
+        if configured_key and api_key == configured_key:
+            return {"username": "service", "role": "admin"}
 
     token = None
 

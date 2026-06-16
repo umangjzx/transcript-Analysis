@@ -247,6 +247,18 @@ def run_analysis_pipeline(
         notify_progress(record_id, "completed", 100, "Analysis complete",
                        severity=severity, risk_score=risk_score)
 
+        # ── Step 10: Notify MW backend via webhook ────────────────────────────
+        try:
+            from api.webhook_routes import notify_mw_backend_sync
+            notify_mw_backend_sync(
+                meeting_id=record_id,
+                status="COMPLETED",
+                severity=severity,
+                risk_score=risk_score,
+            )
+        except Exception as e:
+            logger.warning(f"[#{record_id}] MW webhook notification failed: {e}")
+
     except Exception as e:
         save_processing_status(record_id, "FAILED", "error",
                                started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(e))
@@ -254,3 +266,14 @@ def run_analysis_pipeline(
         audit_log(f"{source}_analysis_failed", meeting_id=record_id, details={"error": str(e)})
         logger.error(f"[#{record_id}] Pipeline FAILED ({source}): {e}", exc_info=True)
         notify_progress(record_id, "failed", 0, str(e), error=str(e))
+
+        # Notify MW backend of failure
+        try:
+            from api.webhook_routes import notify_mw_backend_sync
+            notify_mw_backend_sync(
+                meeting_id=record_id,
+                status="FAILED",
+                error=str(e),
+            )
+        except Exception:
+            pass

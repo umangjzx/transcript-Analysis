@@ -126,25 +126,39 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # -- API Key auth middleware ----------------------------------------------------
 
-_PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+_PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/auth/login", "/auth/logout", "/collect"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
     """
     Enforce X-API-Key header when API_KEY is set in .env.
     Leave API_KEY blank to disable (local dev).
+
+    Requests are allowed through if ANY of these are true:
+    1. Path is in _PUBLIC_PATHS
+    2. Valid X-API-Key header is present (service-to-service)
+    3. Authorization: Bearer header is present (will be validated by route handler)
+    4. access_token cookie is present (will be validated by route handler)
     """
     async def dispatch(self, request: Request, call_next):
         if not API_KEY:
             return await call_next(request)
         if request.url.path in _PUBLIC_PATHS or request.url.path.startswith("/docs"):
             return await call_next(request)
-        if request.headers.get("X-API-Key", "") != API_KEY:
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"error": "Unauthorized", "detail": "Missing or invalid X-API-Key header."},
-            )
-        return await call_next(request)
+        # Allow if valid API key
+        if request.headers.get("X-API-Key", "") == API_KEY:
+            return await call_next(request)
+        # Allow if Bearer token present (route handler validates it)
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            return await call_next(request)
+        # Allow if JWT cookie present (route handler validates it)
+        if request.cookies.get("access_token"):
+            return await call_next(request)
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"error": "Unauthorized", "detail": "Missing or invalid X-API-Key header."},
+        )
 
 app.add_middleware(APIKeyMiddleware)
 
@@ -357,6 +371,7 @@ from api.notification_routes import router as notify_router  # noqa: E402
 from api.analytics_routes import router as analytics_router  # noqa: E402
 from api.upload_routes import router as upload_router  # noqa: E402
 from api.report_routes import router as report_router  # noqa: E402
+from api.webhook_routes import router as webhook_router  # noqa: E402
 
 app.include_router(v1_router)
 app.include_router(gdrive_router)
@@ -365,6 +380,7 @@ app.include_router(notify_router)
 app.include_router(analytics_router)
 app.include_router(upload_router)
 app.include_router(report_router)
+app.include_router(webhook_router)
 
 # -- WebSocket endpoint for real-time progress ---------------------------------
 
