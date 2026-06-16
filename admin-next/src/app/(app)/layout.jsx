@@ -19,6 +19,17 @@ const Navigation = () => {
   const isActive = (path) => (pathname === path ? 'active' : '');
   const user = getStoredUser();
 
+  // Hide navigation when embedded in iframe (MW admin panel)
+  const [isEmbedded, setIsEmbedded] = useState(false);
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      setIsEmbedded(params.get('embed') === 'true' || window.self !== window.top);
+    }
+  }, []);
+
+  if (isEmbedded) return null;
+
   const handleLogout = async () => {
     await logout();
     router.replace('/login');
