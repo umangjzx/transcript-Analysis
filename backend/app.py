@@ -126,7 +126,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # -- API Key auth middleware ----------------------------------------------------
 
-_PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/auth/login", "/auth/logout"}
+_PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/auth/login", "/auth/logout", "/collect"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
