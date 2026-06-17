@@ -73,7 +73,7 @@ def get_mongo_db():
         _client = MongoClient(
             uri,
             server_api=ServerApi("1"),
-            serverSelectionTimeoutMS=5000,
+            serverSelectionTimeoutMS=15000,
             # Connection pooling
             minPoolSize=pool_min,
             maxPoolSize=pool_max,
@@ -82,8 +82,11 @@ def get_mongo_db():
             # Connection resilience
             retryWrites=True,
             retryReads=True,
-            connectTimeoutMS=10000,
+            connectTimeoutMS=15000,
             socketTimeoutMS=30000,
+            # TLS — needed for Atlas connections in containerized environments
+            tls=True,
+            tlsAllowInvalidCertificates=True,
         )
         _client.admin.command("ping")
         _db = _client[name]
@@ -520,29 +523,12 @@ def save_full_analysis(
         ]}
 
     # Attempt transactional write (requires replica set)
-    try:
-        with _client.start_session() as session:
-            with session.start_transaction():
-                _save_full_analysis_in_session(
-                    db, session, meeting_id, filename, transcript, timeline,
-                    findings, risk_score, severity, llm_summary, rule_summary,
-                    stats, started_at, now, s3_url, evidence, pdf_path, s3_pdf_url,
-                )
-        logger.info(f"MongoDB: all 7 collections saved (transactional) for meeting #{meeting_id}")
-        return {col: True for col in [
-            "meeting_metadata", "transcripts", "analysis_results",
-            "safety_findings", "action_items", "processing_status", "audit_logs"
-        ]}
-    except Exception as tx_err:
-        # Transaction not supported (standalone MongoDB) — fall back to non-transactional
-        logger.warning(
-            f"MongoDB transaction failed (falling back to non-transactional): {tx_err}"
-        )
-        return _save_full_analysis_no_transaction(
-            meeting_id, filename, transcript, timeline, findings, risk_score,
-            severity, llm_summary, rule_summary, stats, started_at, now,
-            s3_url, evidence, pdf_path, s3_pdf_url,
-        )
+    # Skip transactions for better compatibility with connection pools in worker processes
+    return _save_full_analysis_no_transaction(
+        meeting_id, filename, transcript, timeline, findings, risk_score,
+        severity, llm_summary, rule_summary, stats, started_at, now,
+        s3_url, evidence, pdf_path, s3_pdf_url,
+    )
 
 
 def _save_full_analysis_in_session(

@@ -36,10 +36,15 @@ def _get_redis():
     try:
         import redis
         url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        _redis_client = redis.Redis.from_url(url, decode_responses=True, socket_timeout=2)
+        # For rediss:// (TLS) URLs, configure SSL cert requirements
+        kwargs = {"decode_responses": True, "socket_timeout": 2}
+        if url.startswith("rediss://"):
+            import ssl
+            kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+        _redis_client = redis.Redis.from_url(url, **kwargs)
         _redis_client.ping()
         _redis_available = True
-        logger.info(f"Redis cache connected: {url}")
+        logger.info(f"Redis cache connected")
         return _redis_client
     except Exception as e:
         logger.warning(f"Redis unavailable, falling back to in-memory cache: {e}")

@@ -35,6 +35,7 @@ COPY . .
 
 # Create required directories and set ownership
 RUN mkdir -p uploads logs reports static && \
+    chmod +x start.sh && \
     chown -R appuser:appuser /app
 
 # Fix model path for Linux (backslash in .env won't work)
@@ -50,5 +51,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command: run the FastAPI server (no --reload in production)
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Default command: run FastAPI + Celery worker via start script
+CMD ["bash", "start.sh"]
