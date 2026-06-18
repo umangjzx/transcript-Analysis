@@ -275,10 +275,21 @@ async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Re
         except Exception:
             raise HTTPException(status_code=400, detail="Request body must be valid JSON.")
 
-        transcript_text = body.get("transcript", "").strip()
+        transcript_text = body.get("transcript", "")
+        # Handle case where transcript is not a string (e.g. nested JSON parsing)
+        if not isinstance(transcript_text, str):
+            if isinstance(transcript_text, (list, dict)):
+                import json as _json
+                transcript_text = _json.dumps(transcript_text)
+            else:
+                transcript_text = str(transcript_text) if transcript_text else ""
+        transcript_text = transcript_text.strip()
         if not transcript_text:
             raise HTTPException(status_code=400, detail="'transcript' field is required and must not be empty.")
-        original_filename = body.get("filename", "transcript_input.txt").strip() or "transcript_input.txt"
+        original_filename = body.get("filename", "transcript_input.txt")
+        if not isinstance(original_filename, str):
+            original_filename = "transcript_input.txt"
+        original_filename = original_filename.strip() or "transcript_input.txt"
 
     if len(transcript_text) > 500_000:
         raise HTTPException(status_code=413, detail="Transcript too large. Maximum 500,000 characters.")
