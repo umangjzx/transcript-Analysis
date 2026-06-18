@@ -259,6 +259,33 @@ ul {
   background: #b0b6c0;
 }
 
+/* ── Touch-friendly tap targets ─────────────────────────────────── */
+@media (max-width: 768px) {
+  button, a, [role="button"], select, input[type="checkbox"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  select {
+    font-size: 16px; /* prevents iOS zoom on focus */
+  }
+
+  input[type="text"], input[type="date"], textarea {
+    font-size: 16px; /* prevents iOS zoom on focus */
+  }
+
+  /* Hide scrollbar on mobile for cleaner look */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.15);
+    border: none;
+  }
+}
+
 /* ── Animations (calm) ──────────────────────────────────────────── */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
