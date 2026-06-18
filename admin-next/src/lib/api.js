@@ -69,10 +69,11 @@ const _isTokenValid = (token) => {
 
 export const getToken = () => {
   if (!isBrowser) return null;
-  // Token lives in httpOnly cookie (not accessible via JS).
-  // We check if a user session exists in localStorage as a proxy for "logged in".
-  // The actual auth is enforced by the cookie sent automatically with withCredentials.
-  return getStoredUser() ? '__httponly__' : null;
+  const token = localStorage.getItem('auth_token');
+  if (token && _isTokenValid(token)) return token;
+  // Token expired or missing — clear auth
+  if (token) clearAuth();
+  return null;
 };
 
 export const getStoredUser = () => {
@@ -83,8 +84,7 @@ export const getStoredUser = () => {
 
 export const saveAuth = (token, user) => {
   if (!isBrowser) return;
-  // Token is stored in httpOnly cookie by the server — don't store it in JS.
-  // Only persist non-sensitive user info for UI display.
+  localStorage.setItem('auth_token', token);
   localStorage.setItem('auth_user', JSON.stringify(user));
 };
 
@@ -114,8 +114,12 @@ if (isBrowser) {
 // ── Attach credentials to every request ───────────────────────────────────────
 
 api.interceptors.request.use((config) => {
-  // JWT is in httpOnly cookie — sent automatically via withCredentials: true.
-  // API key auth is handled server-side only (not exposed to browser).
+  // Send JWT as Bearer token in Authorization header.
+  // This works through Vercel rewrites (unlike httpOnly cookies which get stripped).
+  const token = getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
 

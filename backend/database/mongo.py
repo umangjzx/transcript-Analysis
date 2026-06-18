@@ -38,7 +38,7 @@ _db     = None
 
 # ── Connection ────────────────────────────────────────────────────────────────
 
-def get_mongo_db():
+def get_mongo_db(force_reconnect: bool = False):
     """Lazy singleton — returns None gracefully if MongoDB is unavailable.
 
     Connection pooling is configured via environment variables:
@@ -46,9 +46,25 @@ def get_mongo_db():
     - MONGO_POOL_MAX_SIZE: Maximum connections in pool (default: 50)
     - MONGO_MAX_IDLE_TIME_MS: Max idle time before connection is closed (default: 30000)
     - MONGO_WAIT_QUEUE_TIMEOUT_MS: Max wait for a connection from pool (default: 5000)
+
+    force_reconnect:
+        Discards the cached client and establishes a brand-new connection.
+        Used by the Celery worker to recover from sockets that Atlas drops
+        after the long-lived worker process has been idle — the root cause
+        of analysis results not persisting from the background worker.
     """
     global _client, _db
-    if _db is not None:
+
+    if force_reconnect and _client is not None:
+        logger.warning("MongoDB: forcing reconnect (discarding cached client)")
+        try:
+            _client.close()
+        except Exception:
+            pass
+        _client = None
+        _db = None
+
+    if _db is not None and not force_reconnect:
         return _db
     try:
         from dotenv import load_dotenv
@@ -102,6 +118,29 @@ def get_mongo_db():
     except Exception as e:
         logger.warning(f"MongoDB unavailable: {e}")
         return None
+
+
+def ensure_live_connection():
+    """Ping the cached connection and reconnect if it is stale.
+
+    Long-lived Celery worker processes can hold a MongoClient whose
+    underlying sockets were dropped by Atlas during idle periods. A plain
+    write then fails (often silently caught), which is why analysis results
+    computed in the worker never reached MongoDB. Calling this before a
+    batch of writes guarantees we operate on a live connection.
+
+    Returns the live db handle, or None if MongoDB is genuinely unavailable.
+    """
+    global _client
+    db = get_mongo_db()
+    if db is None:
+        return None
+    try:
+        _client.admin.command("ping")
+        return db
+    except Exception as e:
+        logger.warning(f"MongoDB ping failed ({e}); reconnecting...")
+        return get_mongo_db(force_reconnect=True)
 
 
 def _ensure_indexes(db) -> None:
@@ -515,20 +554,41 @@ def save_full_analysis(
     Returns a dict of {collection: success} for observability.
     """
     now = _now()
-    db = get_mongo_db()
+    # Guarantee a live connection before the 7-collection batch. The Celery
+    # worker is long-lived, so its cached socket may have been dropped by
+    # Atlas — that stale connection was the root cause of results computed in
+    # the worker never persisting to MongoDB.
+    db = ensure_live_connection()
     if db is None:
         return {col: False for col in [
             "meeting_metadata", "transcripts", "analysis_results",
             "safety_findings", "action_items", "processing_status", "audit_logs"
         ]}
 
-    # Attempt transactional write (requires replica set)
-    # Skip transactions for better compatibility with connection pools in worker processes
-    return _save_full_analysis_no_transaction(
+    # First attempt (non-transactional for connection-pool compatibility).
+    results = _save_full_analysis_no_transaction(
         meeting_id, filename, transcript, timeline, findings, risk_score,
         severity, llm_summary, rule_summary, stats, started_at, now,
         s3_url, evidence, pdf_path, s3_pdf_url,
     )
+
+    # If any collection failed, the connection may have gone stale mid-batch.
+    # Force a fresh connection and retry the failed write set exactly once.
+    failed = [k for k, v in results.items() if not v]
+    if failed:
+        logger.warning(
+            f"MongoDB: retrying failed collections {failed} for meeting "
+            f"#{meeting_id} after forced reconnect"
+        )
+        get_mongo_db(force_reconnect=True)
+        retry = _save_full_analysis_no_transaction(
+            meeting_id, filename, transcript, timeline, findings, risk_score,
+            severity, llm_summary, rule_summary, stats, started_at, now,
+            s3_url, evidence, pdf_path, s3_pdf_url,
+        )
+        results.update({k: (results.get(k) or retry.get(k)) for k in retry})
+
+    return results
 
 
 def _save_full_analysis_in_session(
@@ -738,7 +798,10 @@ def _save_full_analysis_no_transaction(
 
     failed = [k for k, v in results.items() if not v]
     if failed:
-        logger.warning(f"MongoDB: some collections failed for #{meeting_id}: {failed}")
+        logger.warning(
+            f"MongoDB: some collections failed for #{meeting_id}: {failed} "
+            f"(succeeded: {[k for k, v in results.items() if v]})"
+        )
     else:
         logger.info(f"MongoDB: all 7 collections saved for meeting #{meeting_id}")
 
