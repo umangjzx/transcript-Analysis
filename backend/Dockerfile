@@ -27,6 +27,19 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ── Application stage ─────────────────────────────────────────────────────────
 FROM deps AS app
 
+# Cache HuggingFace / SentenceTransformer models inside the image so containers
+# don't download them on every cold start (~5 min) and don't hit the
+# "1_Pooling/config.json not found" partial-download error at runtime.
+ENV HF_HOME=/app/.cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers \
+    TRANSFORMERS_OFFLINE=0
+
+# Pre-download the models used by the detection pipeline + chatbot RAG.
+# Failures here are non-fatal (build still succeeds) but normally bake the
+# weights into the image layer for instant warm starts.
+RUN python -c "from transformers import pipeline; pipeline('zero-shot-classification', model='typeform/distilbert-base-uncased-mnli')" && \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 # Create a non-root user for security
 RUN adduser --disabled-password --gecos '' --uid 1001 appuser
 
@@ -34,7 +47,7 @@ RUN adduser --disabled-password --gecos '' --uid 1001 appuser
 COPY . .
 
 # Create required directories and set ownership
-RUN mkdir -p uploads logs reports static && \
+RUN mkdir -p uploads logs reports static .cache && \
     chmod +x start.sh && \
     chown -R appuser:appuser /app
 

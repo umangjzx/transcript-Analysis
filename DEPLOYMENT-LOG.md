@@ -1,6 +1,35 @@
-# Cloud Run Deployment Log — June 17, 2026
+# Cloud Run Deployment Log
 
-## What Was Done Today
+## June 18, 2026 — Pipeline Persistence Fixes
+
+Fixed the critical issues that were causing the detection pipeline to fail on
+Cloud Run. All changes are code-level; redeploy with the deploy command below.
+
+### Fixed: analysis results not persisting from the Celery worker (Issue #1)
+- **Root cause**: the long-lived Celery worker process held a cached `MongoClient`
+  singleton whose socket was dropped by Atlas after idle periods. The first
+  write of the 7-collection batch then failed and was silently swallowed, so
+  `findings`, `severity`, `risk_score`, and `status=COMPLETED` never landed.
+- **Fix** (`database/mongo.py`):
+  - `get_mongo_db(force_reconnect=...)` can now discard and rebuild the client.
+  - New `ensure_live_connection()` pings and transparently reconnects.
+  - `save_full_analysis()` now pings before the batch and **retries the whole
+    write once with a fresh connection** if any collection fails, with explicit
+    per-collection success/failure logging.
+- **Fix** (`modules/analysis_pipeline.py`): Step 7 now **checks the save result**.
+  If the critical collections (`analysis_results`, `processing_status`,
+  `meeting_metadata`) don't persist, the record is marked `FAILED` instead of
+  being silently left in `PROCESSING`.
+
+### Fixed: model cold-start + SentenceTransformer download error (Issues #2 & #3)
+- **Fix** (`Dockerfile`): pre-download `typeform/distilbert-base-uncased-mnli`
+  and `all-MiniLM-L6-v2` at build time into a baked-in `HF_HOME` cache. This
+  removes the ~5 min cold-start model download and the `1_Pooling/config.json`
+  partial-download error.
+
+---
+
+## June 17, 2026 — Initial Cloud Run Deployment
 
 ### 1. Backend Deployed to Google Cloud Run ✅
 - **Service URL**: `https://audio-safety-backend-781782361175.us-central1.run.app`
