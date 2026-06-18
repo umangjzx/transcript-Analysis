@@ -21,6 +21,9 @@ reports/
 
 # Models — keep fine-tuned model in image; HuggingFace cache uses a volume
 # models/
+models/grooming-nli-finetuned/checkpoint-*/
+models/grooming-nli-finetuned/optimizer.pt
+models/grooming-nli-finetuned/training_args.bin
 
 # Git
 .git/

@@ -35,10 +35,9 @@ ENV HF_HOME=/app/.cache/huggingface \
     TRANSFORMERS_OFFLINE=0
 
 # Pre-download the models used by the detection pipeline + chatbot RAG.
-# Failures here are non-fatal (build still succeeds) but normally bake the
-# weights into the image layer for instant warm starts.
-RUN python -c "from transformers import pipeline; pipeline('zero-shot-classification', model='typeform/distilbert-base-uncased-mnli')" && \
-    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# The fine-tuned grooming model is COPY'd from models/grooming-nli-finetuned/
+# so we only need to download the SentenceTransformer for the chatbot.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # Create a non-root user for security
 RUN adduser --disabled-password --gecos '' --uid 1001 appuser
