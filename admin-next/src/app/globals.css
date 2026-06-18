@@ -261,11 +261,6 @@ ul {
 
 /* ── Touch-friendly tap targets ─────────────────────────────────── */
 @media (max-width: 768px) {
-  button, a, [role="button"], select, input[type="checkbox"] {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
   select {
     font-size: 16px; /* prevents iOS zoom on focus */
   }

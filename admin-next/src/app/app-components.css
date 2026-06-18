@@ -598,7 +598,7 @@
     font-size: 0.7rem;
   }
 
-  /* Data grid — card-style on mobile */
+  /* Data grid — hidden on mobile (we render cards in JS instead) */
   .data-grid {
     min-width: unset;
     width: 100%;
@@ -609,28 +609,11 @@
   }
 
   .data-grid-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: var(--spacing-md) !important;
-    margin-bottom: var(--spacing-sm);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    border-bottom: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-  }
-
-  .data-grid-row > div {
-    padding: 0;
-    overflow: visible;
+    display: none;
   }
 
   .data-grid-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-sm);
-    height: auto !important;
-    position: static !important;
+    display: none;
   }
 
   /* Table container */

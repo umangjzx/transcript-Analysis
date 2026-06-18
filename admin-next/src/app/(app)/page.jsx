@@ -94,6 +94,15 @@ export default function DashboardPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [focusedRow, setFocusedRow] = useState(-1);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile for disabling virtualization and switching to card layout
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   // ── Filtering + sorting ──────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -138,8 +147,8 @@ export default function DashboardPage() {
     [filtered, page, pageSize],
   );
 
-  // ── Table virtualization for large datasets (200+) ───────────────────────
-  const useVirtual = filtered.length >= 200;
+  // ── Table virtualization for large datasets (200+) — disabled on mobile ──
+  const useVirtual = !isMobile && filtered.length >= 200;
   const tableContainerRef = useRef(null);
   const rowVirtualizer = useVirtualizer({
     count: useVirtual ? filtered.length : 0,
@@ -454,9 +463,65 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Table — CSS Grid for guaranteed column alignment */}
+        {/* Table — CSS Grid on desktop, card layout on mobile */}
         <div className="table-container" ref={tableContainerRef} style={useVirtual ? { maxHeight: '70vh', overflow: 'auto' } : undefined}>
-          <div className="data-grid" role="table">
+          {isMobile ? (
+            /* ── Mobile Card Layout ─────────────────────────────────── */
+            <div style={{ padding: 'var(--spacing-md)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {loading ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="glass-panel" style={{ padding: '1rem', opacity: 1 - i * 0.2 }}>
+                    <div className="skeleton" style={{ height: 14, width: '60%', borderRadius: 6, marginBottom: '0.5rem' }} />
+                    <div className="skeleton" style={{ height: 10, width: '40%', borderRadius: 6 }} />
+                  </div>
+                ))
+              ) : paginated.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '3rem 1rem', gap: '0.75rem', textAlign: 'center' }}>
+                  <FileAudio size={28} style={{ color: 'var(--accent-primary)' }} />
+                  <div style={{ fontWeight: 700, fontSize: '1rem' }}>
+                    {search ? 'No Matches Found' : 'No Analyses Yet'}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)' }}>
+                    {search ? `No files match "${search}".` : 'Upload a transcript to get started.'}
+                  </div>
+                </div>
+              ) : paginated.map((item) => (
+                <div
+                  key={item.id}
+                  className="glass-panel"
+                  style={{ padding: '1rem', cursor: 'pointer', opacity: deleting === item.id ? 0.4 : 1, transition: 'opacity 0.2s' }}
+                  onClick={() => router.push(`/report/${item.id}`)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: '0.5rem' }}>
+                      {item.filename}
+                    </span>
+                    <span className={`badge ${getBadgeClass(item.severity)}`} style={{ flexShrink: 0 }}>
+                      {item.severity || 'Unknown'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>#{item.id}</span>
+                      <MiniRiskBar score={item.risk_score} />
+                    </div>
+                    <span style={{
+                      fontSize: '0.72rem', fontWeight: 600,
+                      color: (item.status || '').toUpperCase() === 'COMPLETED' ? 'var(--status-safe)' :
+                        (item.status || '').toUpperCase() === 'PROCESSING' ? 'var(--status-moderate)' : 'var(--status-high)',
+                    }}>
+                      {item.status || 'Unknown'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.4rem' }}>
+                    {item.created_at ? new Date(item.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* ── Desktop Grid Layout ───────────────────────────────── */
+            <div className="data-grid" role="table">
             {/* Header */}
             <div className="data-grid-header" role="row">
               <div role="columnheader">
@@ -560,6 +625,7 @@ export default function DashboardPage() {
               })}
             </div>
           </div>
+          )}
         </div>
 
         {/* Pagination (hidden when using virtualization) */}
