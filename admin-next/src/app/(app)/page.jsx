@@ -252,12 +252,12 @@ export default function DashboardPage() {
   return (
     <div className="animate-fade-in" style={{ padding: 'var(--spacing-xl)', maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--spacing-2xl)' }}>
+      <div className="dashboard-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--spacing-2xl)', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h1 className="heading-1 page-title">Dashboard</h1>
           <p className="page-subtitle">All audio analyses — click any row to open the full report.</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {refreshing && (
             <span style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
               <RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Syncing…

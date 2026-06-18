@@ -21,6 +21,12 @@ load_dotenv(override=True)
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Ensure SSL cert requirements are set for rediss:// URLs (Upstash, etc.)
+if REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
+    separator = "&" if "?" in REDIS_URL else "?"
+    REDIS_URL = f"{REDIS_URL}{separator}ssl_cert_reqs=CERT_NONE"
+
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 
@@ -82,12 +88,14 @@ if USE_CELERY:
             import sys
             if "/app" not in sys.path:
                 sys.path.insert(0, "/app")
-            try:
-                logger.info("[Worker] Warming up ML classifier...")
-                from modules.ml_classifier import _get_pipeline
-                _get_pipeline()
-            except Exception as e:
-                logger.warning(f"[Worker] ML classifier warm-up failed: {e}")
+            _enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
+            if _enable_ml:
+                try:
+                    logger.info("[Worker] Warming up ML classifier...")
+                    from modules.ml_classifier import _get_pipeline
+                    _get_pipeline()
+                except Exception as e:
+                    logger.warning(f"[Worker] ML classifier warm-up failed: {e}")
             try:
                 logger.info("[Worker] Warming up SentenceTransformer...")
                 from modules.chatbot import _get_embedding_model, _get_collection

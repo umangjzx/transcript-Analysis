@@ -189,15 +189,27 @@ def run_analysis_pipeline(
 
         # ── Step 7: MongoDB save ──────────────────────────────────────────────
         try:
-            save_full_analysis(
+            save_results = save_full_analysis(
                 meeting_id=record_id, filename=filename, transcript=transcript,
                 timeline=timeline, findings=findings, risk_score=risk_score,
                 severity=severity, llm_summary=llm_summary, rule_summary=summary,
                 stats=stats, started_at=started_at, s3_url=s3_url,
                 evidence=evidence, pdf_path=pdf_path, s3_pdf_url=s3_pdf_url,
             )
+            # Treat persistence of the core result + status as mandatory. If
+            # these did not land, the record would be stuck in PROCESSING
+            # forever, so surface it as FAILED instead of silently "completing".
+            critical = ("analysis_results", "processing_status", "meeting_metadata")
+            critical_failed = [c for c in critical if not save_results.get(c)]
+            if critical_failed:
+                raise RuntimeError(
+                    f"critical MongoDB writes failed: {critical_failed}"
+                )
+            logger.info(f"[#{record_id}] Analysis persisted to MongoDB.")
         except Exception as e:
-            logger.warning(f"[#{record_id}] MongoDB save failed: {e}")
+            logger.error(
+                f"[#{record_id}] MongoDB save failed: {e}", exc_info=True
+            )
             try:
                 save_processing_status(
                     record_id, "FAILED", "error",
