@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Rate limit configuration: (max_requests, window_seconds)
 RATE_LIMITS: Dict[str, Tuple[int, int]] = {
     "login":        (5,   60),   # 5 requests per minute
-    "upload":       (10,  60),   # 10 requests per minute
+    "upload":       (60,  60),   # 60 requests per minute (generous for batch analysis)
     "chat":         (30,  60),   # 30 requests per minute
     "google_drive": (60,  120),  # 60 req/2min — actual Drive API calls (/files, /import)
     "drive_meta":   (120, 60),   # 120 req/min — auth-url, status, watcher control (cheap)

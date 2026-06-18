@@ -275,10 +275,21 @@ async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Re
         except Exception:
             raise HTTPException(status_code=400, detail="Request body must be valid JSON.")
 
-        transcript_text = body.get("transcript", "").strip()
+        transcript_text = body.get("transcript", "")
+        # Handle case where transcript is not a string (e.g. nested JSON parsing)
+        if not isinstance(transcript_text, str):
+            if isinstance(transcript_text, (list, dict)):
+                import json as _json
+                transcript_text = _json.dumps(transcript_text)
+            else:
+                transcript_text = str(transcript_text) if transcript_text else ""
+        transcript_text = transcript_text.strip()
         if not transcript_text:
             raise HTTPException(status_code=400, detail="'transcript' field is required and must not be empty.")
-        original_filename = body.get("filename", "transcript_input.txt").strip() or "transcript_input.txt"
+        original_filename = body.get("filename", "transcript_input.txt")
+        if not isinstance(original_filename, str):
+            original_filename = "transcript_input.txt"
+        original_filename = original_filename.strip() or "transcript_input.txt"
 
     if len(transcript_text) > 500_000:
         raise HTTPException(status_code=413, detail="Transcript too large. Maximum 500,000 characters.")
@@ -291,12 +302,12 @@ async def analyze_transcript_text(background_tasks: BackgroundTasks, request: Re
     if _non_printable > len(transcript_text[:10000]) * 0.05:
         raise HTTPException(status_code=422, detail="Input appears to be binary data, not text.")
 
-    # Reject overly long lines
+    # Reject overly long lines (generous limit — some transcripts are auto-generated paragraphs)
     for i, line in enumerate(transcript_text.split('\n')[:100], 1):
-        if len(line) > 10_000:
+        if len(line) > 50_000:
             raise HTTPException(
                 status_code=422,
-                detail=f"Line {i} exceeds maximum length of 10,000 characters.",
+                detail=f"Line {i} exceeds maximum length of 50,000 characters.",
             )
 
     record_id = next_meeting_id()

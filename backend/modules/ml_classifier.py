@@ -158,9 +158,19 @@ def _get_pipeline():
                 model_path = os.path.join(base_dir, finetuned_path)
                 if os.path.isdir(model_path):
                     logger.info(f"Loading fine-tuned model from: {model_path}")
+                    from transformers import AutoTokenizer
+                    tokenizer = AutoTokenizer.from_pretrained(model_path)
+                    # DistilBERT doesn't use token_type_ids — configure the
+                    # tokenizer to stop emitting them so the pipeline doesn't
+                    # pass them to forward() and crash in batch mode.
+                    tokenizer.model_input_names = [
+                        n for n in tokenizer.model_input_names
+                        if n != "token_type_ids"
+                    ]
                     _pipeline = hf_pipeline(
                         "zero-shot-classification",
                         model=model_path,
+                        tokenizer=tokenizer,
                         multi_label=False,
                     )
                     logger.info("Fine-tuned ML classifier loaded successfully.")

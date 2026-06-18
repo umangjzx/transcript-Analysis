@@ -21,10 +21,10 @@ tests/
 Thumbs.db
 node_modules/
 vectors/
-models/
-data/
-*.bin
-*.safetensors
-*.onnx
-*.pt
-*.pth
+
+# Exclude training checkpoints but KEEP the final model weights
+models/grooming-nli-finetuned/checkpoint-*/
+models/grooming-nli-finetuned/optimizer.pt
+
+# Exclude large training data (not needed at runtime)
+# data/

@@ -35,10 +35,19 @@ ENV HF_HOME=/app/.cache/huggingface \
     TRANSFORMERS_OFFLINE=0
 
 # Pre-download the models used by the detection pipeline + chatbot RAG.
-# Failures here are non-fatal (build still succeeds) but normally bake the
-# weights into the image layer for instant warm starts.
-RUN python -c "from transformers import pipeline; pipeline('zero-shot-classification', model='typeform/distilbert-base-uncased-mnli')" && \
+# The fine-tuned grooming model is downloaded from GCS (too large for source upload).
+# SentenceTransformer is fetched from HuggingFace.
+RUN pip install --no-cache-dir gcloud-aio-storage 2>/dev/null || true && \
     python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# Download fine-tuned grooming NLI model from GCS bucket
+RUN mkdir -p models/grooming-nli-finetuned && \
+    for f in model.safetensors config.json tokenizer.json tokenizer_config.json special_tokens_map.json vocab.txt; do \
+      curl -sL "https://storage.googleapis.com/melodywings-ml-models/grooming-nli-finetuned/$f" \
+        -o "models/grooming-nli-finetuned/$f"; \
+    done && \
+    ls -la models/grooming-nli-finetuned/model.safetensors && \
+    echo "Fine-tuned model downloaded from GCS"
 
 # Create a non-root user for security
 RUN adduser --disabled-password --gecos '' --uid 1001 appuser
