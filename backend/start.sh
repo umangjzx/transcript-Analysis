@@ -6,7 +6,7 @@
 set -e
 
 echo "Starting Celery worker in background..."
-celery -A celery_app worker --loglevel=info --concurrency=2 --pool=threads &
+celery -A celery_app worker --loglevel=info --concurrency=6 --pool=threads &
 CELERY_PID=$!
 
 echo "Starting FastAPI server..."
