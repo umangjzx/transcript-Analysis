@@ -28,3 +28,8 @@ models/grooming-nli-finetuned/optimizer.pt
 
 # Exclude large training data (not needed at runtime)
 # data/
+
+# Exclude env files (secrets are set via Cloud Run env vars)
+.env
+.env.*
+env.yaml

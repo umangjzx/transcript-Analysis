@@ -55,8 +55,9 @@ RUN adduser --disabled-password --gecos '' --uid 1001 appuser
 # Copy application code
 COPY . .
 
-# Create required directories and set ownership
-RUN mkdir -p uploads logs reports static .cache && \
+# Fix Windows line endings in shell scripts (CRLF -> LF)
+RUN sed -i 's/\r$//' start.sh && \
+    mkdir -p uploads logs reports static .cache && \
     chmod +x start.sh && \
     chown -R appuser:appuser /app
 
