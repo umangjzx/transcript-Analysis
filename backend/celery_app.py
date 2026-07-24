@@ -63,11 +63,15 @@ if USE_CELERY:
             result_serializer="json",
             timezone="UTC",
             enable_utc=True,
-            task_track_started=True,
             task_acks_late=True,
             worker_prefetch_multiplier=1,
             broker_connection_retry_on_startup=True,
-            result_expires=86400,
+            # Nothing in this codebase ever queries a task's result (no
+            # AsyncResult, no Flower — status is tracked via MongoDB instead).
+            # Without this, every enqueue/start/finish writes to the Redis
+            # result backend for no reason, adding to what fills Redis up and
+            # giving Redis outages an extra way to break task submission.
+            task_ignore_result=True,
         )
 
         # Explicitly include task modules (autodiscover looks for <pkg>.tasks

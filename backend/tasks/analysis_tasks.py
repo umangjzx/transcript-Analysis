@@ -141,6 +141,40 @@ def _run_drive_import(record_id: int, transcript: str, filename: str):
 
 # ── Register as Celery tasks if available, otherwise provide .delay() shim ────
 
+class _CeleryTaskWithFallback:
+    """Wraps a Celery task's .delay(), falling back to an in-process background
+    thread if the broker rejects the enqueue (e.g. Redis is over its memory or
+    connection limit). Without this, a broker error at enqueue time is raised
+    from inside a FastAPI BackgroundTask *after* the response has already been
+    sent — the client sees "PROCESSING" but the job was never queued and the
+    record is stuck forever. Falling back keeps analysis working even when
+    Redis is unavailable, the same way the rate limiter and cache already do."""
+
+    def __init__(self, celery_task, func):
+        self._task = celery_task
+        self._func = func
+        self.__name__ = func.__name__
+
+    def delay(self, *args, **kwargs):
+        try:
+            return self._task.delay(*args, **kwargs)
+        except Exception as exc:
+            logger.error(
+                f"[{self._func.__name__}] Celery enqueue failed ({exc}) — "
+                f"running via threading fallback instead of dropping the job.",
+                exc_info=True,
+            )
+            t = threading.Thread(
+                target=self._func, args=args, kwargs=kwargs,
+                daemon=True, name=f"task-fallback-{self._func.__name__}",
+            )
+            t.start()
+            return t
+
+    def __call__(self, *args, **kwargs):
+        return self._func(*args, **kwargs)
+
+
 try:
     from celery_app import celery_app, USE_CELERY
 
@@ -166,6 +200,11 @@ try:
                          soft_time_limit=300, time_limit=360)
         def run_drive_import_analysis(self, record_id, transcript, filename):
             return _run_drive_import(record_id, transcript, filename)
+
+        run_audio_analysis = _CeleryTaskWithFallback(run_audio_analysis, _run_audio)
+        run_video_analysis = _CeleryTaskWithFallback(run_video_analysis, _run_video)
+        run_transcript_analysis = _CeleryTaskWithFallback(run_transcript_analysis, _run_transcript)
+        run_drive_import_analysis = _CeleryTaskWithFallback(run_drive_import_analysis, _run_drive_import)
 
     else:
         raise ImportError("Celery disabled")
