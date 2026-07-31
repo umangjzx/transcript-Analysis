@@ -40,7 +40,7 @@ def _get_redis():
         kwargs = {"decode_responses": True, "socket_timeout": 2}
         if url.startswith("rediss://"):
             import ssl
-            kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+            kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
         _redis_client = redis.Redis.from_url(url, **kwargs)
         _redis_client.ping()
         _redis_available = True

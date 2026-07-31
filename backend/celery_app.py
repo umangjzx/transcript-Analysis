@@ -25,7 +25,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # Ensure SSL cert requirements are set for rediss:// URLs (Upstash, etc.)
 if REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
     separator = "&" if "?" in REDIS_URL else "?"
-    REDIS_URL = f"{REDIS_URL}{separator}ssl_cert_reqs=CERT_NONE"
+    REDIS_URL = f"{REDIS_URL}{separator}ssl_cert_reqs=CERT_REQUIRED"
 
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
