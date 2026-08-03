@@ -106,10 +106,11 @@ class CircuitBreaker:
         Execute func through the circuit breaker.
 
         Args:
-            func: Callable to execute (should be a zero-arg lambda or partial).
+            func: Callable to execute.
+            *args, **kwargs: Forwarded to func.
 
         Returns:
-            Result of func() on success.
+            Result of func(*args, **kwargs) on success.
 
         Raises:
             CircuitBreakerError: If circuit is OPEN.
@@ -122,7 +123,7 @@ class CircuitBreaker:
             raise CircuitBreakerError(self.name, max(0, time_until_retry))
 
         try:
-            result = func()
+            result = func(*args, **kwargs)
             self._on_success()
             return result
         except Exception as e:

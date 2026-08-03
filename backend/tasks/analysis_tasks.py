@@ -26,6 +26,77 @@ if _APP_ROOT not in sys.path:
 logger = logging.getLogger(__name__)
 
 
+def _is_transient(exc: Exception) -> bool:
+    """Whether this failure is worth another attempt rather than the DLQ."""
+    from modules.analysis_pipeline import TRANSIENT_DB_ERRORS, CriticalPersistenceError
+
+    if isinstance(exc, CriticalPersistenceError):
+        return exc.transient
+    return isinstance(exc, TRANSIENT_DB_ERRORS)
+
+
+def _mark_record_failed(record_id: int, error: str) -> None:
+    """Mark a record FAILED after retries are exhausted.
+
+    run_analysis_pipeline() deliberately leaves transient failures PROCESSING so
+    a retry can still finish the job. Once we stop retrying, someone has to
+    close the record out or it stays PROCESSING until the 30-minute stuck-job
+    sweep in app.py picks it up.
+    """
+    try:
+        from database.mongo import save_processing_status, update_meeting_status
+        save_processing_status(
+            record_id, "FAILED", "error",
+            completed_at=datetime.now(timezone.utc),
+            error=error[:2000],
+        )
+        update_meeting_status(record_id, "FAILED")
+    except Exception as exc:
+        logger.error(
+            f"[#{record_id}] Could not mark record FAILED after retry "
+            f"exhaustion: {exc}"
+        )
+
+
+def _run_with_retry(task, core_fn, task_name, record_id, filename, dlq_args, *call_args):
+    """Run a pipeline task, retrying transient infrastructure failures.
+
+    Previously every task carried max_retries=2 but nothing ever called
+    self.retry(), because run_analysis_pipeline() caught its own exceptions and
+    returned normally — Celery never saw a failure, so the retry budget was
+    dead config. The pipeline now re-raises transient errors; this is what
+    actually spends that budget, with backoff so a reconnecting Atlas cluster
+    isn't hammered.
+    """
+    from modules.analysis_pipeline import TRANSIENT_DB_ERRORS, CriticalPersistenceError
+
+    try:
+        core_fn(*call_args)
+    except (TRANSIENT_DB_ERRORS + (CriticalPersistenceError,)) as exc:
+        if isinstance(exc, CriticalPersistenceError) and not exc.transient:
+            logger.error(f"[#{record_id}] {task_name} failed permanently: {exc}")
+            _mark_record_failed(record_id, str(exc))
+            _save_to_dead_letter_queue(task_name, record_id, filename, str(exc), dlq_args)
+            return
+
+        attempt = task.request.retries + 1
+        countdown = min(30 * (2 ** task.request.retries), 240)  # 30s, 60s, 120s…
+        try:
+            logger.warning(
+                f"[#{record_id}] {task_name} hit a transient failure "
+                f"(attempt {attempt}/{task.max_retries + 1}), retrying in "
+                f"{countdown}s: {exc}"
+            )
+            raise task.retry(exc=exc, countdown=countdown)
+        except task.MaxRetriesExceededError:
+            logger.error(
+                f"[#{record_id}] {task_name} still failing after "
+                f"{task.max_retries + 1} attempts — giving up: {exc}"
+            )
+            _mark_record_failed(record_id, str(exc))
+            _save_to_dead_letter_queue(task_name, record_id, filename, str(exc), dlq_args)
+
+
 def _save_to_dead_letter_queue(
     task_name: str,
     record_id: int,
@@ -76,6 +147,8 @@ def _run_audio(record_id: int, filepath: str, filename: str):
             source="upload",
         )
     except Exception as exc:
+        if _is_transient(exc):
+            raise
         logger.error(f"[#{record_id}] Audio analysis failed: {exc}", exc_info=True)
         _save_to_dead_letter_queue(
             "run_audio_analysis", record_id, filename, str(exc),
@@ -96,6 +169,8 @@ def _run_video(record_id: int, audio_filepath: str, filename: str):
             source="video",
         )
     except Exception as exc:
+        if _is_transient(exc):
+            raise
         logger.error(f"[#{record_id}] Video analysis failed: {exc}", exc_info=True)
         _save_to_dead_letter_queue(
             "run_video_analysis", record_id, filename, str(exc),
@@ -114,6 +189,8 @@ def _run_transcript(record_id: int, transcript: str, filename: str):
             source="transcript",
         )
     except Exception as exc:
+        if _is_transient(exc):
+            raise
         logger.error(f"[#{record_id}] Transcript analysis failed: {exc}", exc_info=True)
         _save_to_dead_letter_queue(
             "run_transcript_analysis", record_id, filename, str(exc),
@@ -132,6 +209,8 @@ def _run_drive_import(record_id: int, transcript: str, filename: str):
             source="google_drive",
         )
     except Exception as exc:
+        if _is_transient(exc):
+            raise
         logger.error(f"[#{record_id}] Drive import analysis failed: {exc}", exc_info=True)
         _save_to_dead_letter_queue(
             "run_drive_import_analysis", record_id, filename, str(exc),
@@ -165,11 +244,36 @@ class _CeleryTaskWithFallback:
                 exc_info=True,
             )
             t = threading.Thread(
-                target=self._func, args=args, kwargs=kwargs,
+                target=self._run_in_thread, args=args, kwargs=kwargs,
                 daemon=True, name=f"task-fallback-{self._func.__name__}",
             )
             t.start()
             return t
+
+    def _run_in_thread(self, *args, **kwargs):
+        """Fallback execution with no Celery underneath it.
+
+        The pipeline re-raises transient failures so Celery can retry them, but
+        there is no retry here — an exception would just kill the thread and
+        leave the record PROCESSING with nothing in the DLQ. Close it out
+        explicitly instead.
+        """
+        try:
+            self._func(*args, **kwargs)
+        except Exception as exc:
+            record_id = args[0] if args else None
+            logger.error(
+                f"[#{record_id}] {self._func.__name__} failed in threading "
+                f"fallback (no retry available): {exc}",
+                exc_info=True,
+            )
+            if record_id is not None:
+                _mark_record_failed(record_id, str(exc))
+                _save_to_dead_letter_queue(
+                    self._func.__name__, record_id,
+                    args[2] if len(args) > 2 else "unknown",
+                    str(exc), {"via": "threading_fallback"},
+                )
 
     def __call__(self, *args, **kwargs):
         return self._func(*args, **kwargs)
@@ -184,22 +288,38 @@ try:
         @celery_app.task(bind=True, name="tasks.run_audio_analysis", max_retries=2,
                          soft_time_limit=600, time_limit=660)
         def run_audio_analysis(self, record_id, filepath, filename):
-            return _run_audio(record_id, filepath, filename)
+            return _run_with_retry(
+                self, _run_audio, "run_audio_analysis", record_id, filename,
+                {"filepath": filepath},
+                record_id, filepath, filename,
+            )
 
         @celery_app.task(bind=True, name="tasks.run_video_analysis", max_retries=2,
                          soft_time_limit=600, time_limit=660)
         def run_video_analysis(self, record_id, audio_filepath, filename):
-            return _run_video(record_id, audio_filepath, filename)
+            return _run_with_retry(
+                self, _run_video, "run_video_analysis", record_id, filename,
+                {"audio_filepath": audio_filepath},
+                record_id, audio_filepath, filename,
+            )
 
         @celery_app.task(bind=True, name="tasks.run_transcript_analysis", max_retries=2,
                          soft_time_limit=300, time_limit=360)
         def run_transcript_analysis(self, record_id, transcript, filename):
-            return _run_transcript(record_id, transcript, filename)
+            return _run_with_retry(
+                self, _run_transcript, "run_transcript_analysis", record_id, filename,
+                {"transcript_length": len(transcript)},
+                record_id, transcript, filename,
+            )
 
         @celery_app.task(bind=True, name="tasks.run_drive_import_analysis", max_retries=2,
                          soft_time_limit=300, time_limit=360)
         def run_drive_import_analysis(self, record_id, transcript, filename):
-            return _run_drive_import(record_id, transcript, filename)
+            return _run_with_retry(
+                self, _run_drive_import, "run_drive_import_analysis", record_id, filename,
+                {"transcript_length": len(transcript)},
+                record_id, transcript, filename,
+            )
 
         run_audio_analysis = _CeleryTaskWithFallback(run_audio_analysis, _run_audio)
         run_video_analysis = _CeleryTaskWithFallback(run_video_analysis, _run_video)

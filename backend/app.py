@@ -197,6 +197,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 _enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
 
+# Whether the Celery worker owns pipeline execution. Mirrors celery_app.py's
+# own parsing so importing it here can't pull Celery in as a side effect.
+_use_celery = os.getenv("USE_CELERY", "true").strip().lower() == "true"
+
 # -- Startup / shutdown --------------------------------------------------------
 
 @app.on_event("startup")
@@ -246,8 +250,20 @@ async def startup_event():
     except Exception as _e:
         logger.warning(f"Stuck-job recovery failed: {_e}")
 
-    # ML warm-up — load model into memory before first real request
-    if _enable_ml:
+    # ML warm-up — load model into memory before first real request.
+    #
+    # Only worth doing in a process that actually runs the pipeline. When
+    # USE_CELERY is on, analysis runs in the Celery worker, which does its own
+    # warm-up in celery_app.py. start.sh runs uvicorn and the worker as two
+    # separate OS processes that share no memory, so warming up here loaded a
+    # second full copy of the ~255 MiB classifier into the API process for
+    # nothing — that duplicate is what pushed the container past its memory
+    # limit and OOM-killed both processes together.
+    #
+    # The threading fallback in tasks/analysis_tasks.py can still run the
+    # pipeline in this process if the broker is down; there the model loads
+    # lazily on first use (slower first job, but only when Redis is broken).
+    if _enable_ml and not _use_celery:
         import threading as _threading
         def _warmup():
             try:
@@ -259,6 +275,12 @@ async def startup_event():
             except Exception as _e:
                 logger.warning(f"ML warm-up failed (non-fatal): {_e}")
         _threading.Thread(target=_warmup, daemon=True).start()
+    elif _enable_ml:
+        logger.info(
+            "ML classifier warm-up skipped — analysis runs in the Celery "
+            "worker, which warms up its own copy (avoids a duplicate model "
+            "in the API process)."
+        )
 
     # Chatbot warm-up — pre-load SentenceTransformer + ChromaDB so the first
     # import doesn't pay the cold-start cost mid-request (~4s on CPU).
@@ -531,7 +553,76 @@ def health(request: Request):
         "ollama": ollama_status,
         "redis": redis_status,
         "disk": {"ok": disk_ok, "free_gb": disk_free_gb, "total_gb": disk_total_gb},
+        "memory": _memory_status(),
+        "queue": _queue_status(),
+        "circuit_breakers": _breaker_status(),
     }
+
+
+# -- Health helpers ------------------------------------------------------------
+#
+# The July 2026 OOM outage was invisible to /health: the container was being
+# killed for exceeding its memory limit and tasks were piling up unconsumed in
+# Redis, while every dependency below still reported "available". These three
+# helpers expose the signals that actually failed.
+
+def _memory_status() -> dict:
+    """Process RSS vs the container's cgroup memory limit."""
+    status: dict = {}
+    try:
+        import psutil
+        status["rss_mb"] = round(psutil.Process().memory_info().rss / (1024**2), 1)
+        status["system_percent"] = psutil.virtual_memory().percent
+    except ImportError:
+        status["error"] = "psutil not installed"
+    except Exception as e:
+        status["error"] = str(e)
+
+    # Cloud Run enforces the limit via cgroup, not via the values psutil reports
+    # for the host, so read it directly. cgroup v2 first, then v1.
+    for path in ("/sys/fs/cgroup/memory.max",
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                raw = fh.read().strip()
+            if raw and raw != "max":
+                limit_mb = round(int(raw) / (1024**2), 1)
+                # cgroup v1 reports an enormous sentinel when unlimited.
+                if limit_mb < 1024 * 1024:
+                    status["limit_mb"] = limit_mb
+                    if "rss_mb" in status:
+                        status["used_percent"] = round(
+                            status["rss_mb"] / limit_mb * 100, 1
+                        )
+                break
+        except Exception:
+            continue
+    return status
+
+
+def _queue_status() -> dict:
+    """Depth of the Celery queue — a backlog here means workers aren't keeping up."""
+    try:
+        from modules.cache import _get_redis
+        r = _get_redis()
+        if r is None:
+            return {"available": False}
+        depth = r.llen("celery")
+        return {"available": True, "depth": depth, "backlogged": depth > 20}
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+def _breaker_status() -> dict:
+    """Circuit breaker states, so a tripped breaker is visible rather than silent."""
+    try:
+        from modules.circuit_breaker import ollama_breaker, s3_breaker
+        return {
+            b.get_status()["name"]: b.get_status()["state"]
+            for b in (ollama_breaker, s3_breaker)
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/collect")

@@ -50,6 +50,15 @@ models/
 .env.*
 !.env.example
 
+# gcloud --env-vars-file payloads. These carry the full production secret set
+# (MONGO_URI, AWS keys, JWT_SECRET, SMTP password, API_KEY) in plaintext and
+# are easy to sweep up with `git add -A`. This repo is public.
+env.yaml
+env.yml
+env.*.yaml
+env.*.yml
+!env.example.yaml
+
 # Any encrypted credential files
 *.enc
 

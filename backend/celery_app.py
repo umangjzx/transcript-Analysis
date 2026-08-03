@@ -66,6 +66,14 @@ if USE_CELERY:
             task_acks_late=True,
             worker_prefetch_multiplier=1,
             broker_connection_retry_on_startup=True,
+            # With acks_late, a task whose worker dies mid-run (e.g. the
+            # container gets OOM-killed) stays unacked in Redis until the
+            # broker's visibility timeout expires and redelivers it. Kombu's
+            # default is 3600s, so a killed job sat invisible for an hour.
+            # 900s is comfortably above the longest hard time_limit (660s for
+            # audio), so a still-running task is never redelivered underneath
+            # itself, but a genuinely lost one comes back in 15 minutes.
+            broker_transport_options={"visibility_timeout": 900},
             # Nothing in this codebase ever queries a task's result (no
             # AsyncResult, no Flower — status is tracked via MongoDB instead).
             # Without this, every enqueue/start/finish writes to the Redis

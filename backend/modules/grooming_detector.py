@@ -33,6 +33,7 @@ Output per finding
     }
 """
 
+import logging
 import re
 import unicodedata
 from typing import List, Dict, Any, Optional
@@ -46,6 +47,8 @@ from .evidence_grouping import EvidenceGroupingEngine
 from .ml_classifier import classify_text as ml_classify_text, fuse_with_regex as ml_fuse, classify_batch as ml_classify_batch
 from .leetspeak_normalizer import normalize_leetspeak, is_likely_obfuscated
 from .safe_phrases import is_safe_phrase
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_unicode(text: str) -> str:

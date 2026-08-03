@@ -64,5 +64,8 @@ redis==5.2.1
 # Consider migrating to clamd (https://pypi.org/project/clamd/) if issues arise.
 pyclamd==0.4.0
 
+# ── Process/memory metrics for /health ───────────────────────────────────────
+psutil==6.1.1
+
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest==8.3.4

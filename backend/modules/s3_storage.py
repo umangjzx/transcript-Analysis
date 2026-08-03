@@ -123,26 +123,36 @@ def _upload(local_path: str, key: str, content_type: str) -> Optional[str]:
     file_size = os.path.getsize(local_path)
     multipart_threshold = 100 * 1024 * 1024  # 100 MB
 
-    try:
+    def _do_upload() -> str:
         if file_size > multipart_threshold:
             # Use multipart upload for large files
-            url = _multipart_upload(s3, bucket, region, local_path, key, content_type, file_size)
-        else:
-            # Standard upload for smaller files
-            s3.upload_file(
-                local_path, bucket, key,
-                ExtraArgs={
-                    "ContentType": content_type,
-                    "ServerSideEncryption": "AES256",
-                },
-            )
-            url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+            return _multipart_upload(s3, bucket, region, local_path, key, content_type, file_size)
+        # Standard upload for smaller files
+        s3.upload_file(
+            local_path, bucket, key,
+            ExtraArgs={
+                "ContentType": content_type,
+                "ServerSideEncryption": "AES256",
+            },
+        )
+        return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
 
-        logger.info(f"S3 uploaded: {url} ({file_size / (1024*1024):.1f} MB)")
-        return url
+    # Routed through the circuit breaker so a broken S3 (credentials revoked,
+    # bucket gone, region unreachable) stops costing every analysis a full
+    # upload timeout. Uploads are best-effort — an open circuit degrades to the
+    # same None this function already returns on failure.
+    try:
+        from modules.circuit_breaker import s3_breaker, CircuitBreakerError
+        url = s3_breaker.call(_do_upload)
+    except CircuitBreakerError as e:
+        logger.warning(f"S3 upload skipped [{key}] — circuit open: {e}")
+        return None
     except Exception as e:
         logger.error(f"S3 upload failed [{key}]: {e}")
         return None
+
+    logger.info(f"S3 uploaded: {url} ({file_size / (1024*1024):.1f} MB)")
+    return url
 
 
 def _multipart_upload(

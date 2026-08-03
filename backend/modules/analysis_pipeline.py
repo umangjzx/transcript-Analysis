@@ -11,7 +11,41 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
 
+from pymongo.errors import (
+    AutoReconnect,
+    ConnectionFailure,
+    NetworkTimeout,
+    ServerSelectionTimeoutError,
+    WriteConcernError,
+)
+
 logger = logging.getLogger(__name__)
+
+# Infrastructure failures that are worth retrying rather than burning a real
+# user's analysis on. Atlas drops idle pooled sockets routinely, so a write can
+# fail purely because the connection went stale between operations — the work
+# itself is fine and the same job succeeds on a second attempt. Anything not
+# listed here (bad data, a bug, a permission error) is permanent: retrying it
+# would just fail the same way three more times.
+TRANSIENT_DB_ERRORS = (
+    AutoReconnect,
+    ConnectionFailure,
+    NetworkTimeout,
+    ServerSelectionTimeoutError,
+    WriteConcernError,
+)
+
+
+class CriticalPersistenceError(Exception):
+    """Raised when a write the record cannot be correct without did not land.
+
+    Carries `transient` so the Celery layer knows whether retrying is worth
+    anything, without having to re-inspect the original exception.
+    """
+
+    def __init__(self, message: str, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 def run_analysis_pipeline(
@@ -202,24 +236,20 @@ def run_analysis_pipeline(
             critical = ("analysis_results", "processing_status", "meeting_metadata")
             critical_failed = [c for c in critical if not save_results.get(c)]
             if critical_failed:
-                raise RuntimeError(
-                    f"critical MongoDB writes failed: {critical_failed}"
+                # save_full_analysis() swallows the driver exception and reports
+                # per-collection booleans, so there is no exception left to
+                # inspect here. Losing several collections at once is what a
+                # dropped connection looks like from this side, so treat it as
+                # transient and let the retry decide.
+                raise CriticalPersistenceError(
+                    f"critical MongoDB writes failed: {critical_failed}",
+                    transient=True,
                 )
             logger.info(f"[#{record_id}] Analysis persisted to MongoDB.")
-        except Exception as e:
-            logger.error(
-                f"[#{record_id}] MongoDB save failed: {e}", exc_info=True
-            )
-            try:
-                save_processing_status(
-                    record_id, "FAILED", "error",
-                    started_at=started_at,
-                    completed_at=datetime.now(timezone.utc),
-                    error=str(e),
-                )
-                update_meeting_status(record_id, "FAILED")
-            except Exception:
-                pass
+        except TRANSIENT_DB_ERRORS as e:
+            raise CriticalPersistenceError(
+                f"MongoDB save failed: {e}", transient=True
+            ) from e
 
         # ── Step 8: Invalidate caches ─────────────────────────────────────────
         history_cache.invalidate()
@@ -272,6 +302,20 @@ def run_analysis_pipeline(
             logger.warning(f"[#{record_id}] MW webhook notification failed: {e}")
 
     except Exception as e:
+        # Transient infrastructure failures are the caller's to retry. Leave the
+        # record PROCESSING and re-raise: marking it FAILED here would both lie
+        # about a job that is about to be retried and race the retry's own
+        # status writes. tasks/analysis_tasks.py decides how many attempts to
+        # spend before giving up and marking it FAILED for real.
+        if isinstance(e, TRANSIENT_DB_ERRORS) or (
+            isinstance(e, CriticalPersistenceError) and e.transient
+        ):
+            logger.warning(
+                f"[#{record_id}] Pipeline hit a transient failure ({source}): {e} "
+                f"— leaving PROCESSING for retry."
+            )
+            raise
+
         save_processing_status(record_id, "FAILED", "error",
                                started_at=started_at, completed_at=datetime.now(timezone.utc), error=str(e))
         update_meeting_status(record_id, "FAILED")

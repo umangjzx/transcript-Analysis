@@ -59,7 +59,8 @@ Output (MLResult dict)
 import hashlib
 import logging
 import os
-from functools import lru_cache
+import threading
+from collections import OrderedDict
 from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
@@ -218,21 +219,58 @@ def _cache_key(text: str) -> str:
     return hashlib.md5(text.strip().lower().encode()).hexdigest()
 
 
-@lru_cache(maxsize=1024)
-def _cached_inference(text_hash: str, text: str) -> tuple:
-    """
-    Run BART-MNLI comparative inference.
-    Returns raw scores as a tuple (one per hypothesis, in CATEGORY_KEYS order).
-    Cached by text hash.
-    """
+# Explicit LRU rather than @lru_cache so the cache can be *peeked* without
+# running inference. classify_batch() needs to know which sentences are already
+# cached before deciding what to batch; with @lru_cache the only way to ask was
+# to call the function, which computes on a miss — so every sentence was being
+# inferred one at a time and the batch path below was effectively dead code.
+_CACHE_MAXSIZE = 1024
+_cache: "OrderedDict[str, tuple]" = OrderedDict()
+_cache_lock = threading.Lock()
+_cache_hits = 0
+_cache_misses = 0
+
+
+def _cache_peek(text_hash: str) -> Optional[tuple]:
+    """Return cached scores, or None — never runs the model."""
+    global _cache_hits, _cache_misses
+    with _cache_lock:
+        if text_hash in _cache:
+            _cache.move_to_end(text_hash)
+            _cache_hits += 1
+            return _cache[text_hash]
+        _cache_misses += 1
+        return None
+
+
+def _cache_put(text_hash: str, scores: tuple) -> None:
+    with _cache_lock:
+        _cache[text_hash] = scores
+        _cache.move_to_end(text_hash)
+        while len(_cache) > _CACHE_MAXSIZE:
+            _cache.popitem(last=False)
+
+
+def _run_inference(text: str) -> tuple:
+    """Single-sentence inference, re-aligned to CATEGORY_KEYS order."""
     clf = _get_pipeline()
     result = clf(text, HYPOTHESES, multi_label=False)
     # result["labels"] are the hypothesis strings in score-descending order.
     # We need to re-align them to CATEGORY_KEYS order.
     label_to_score = dict(zip(result["labels"], result["scores"]))
-    ordered_scores = tuple(
-        label_to_score.get(hyp, 0.0) for hyp in HYPOTHESES
-    )
+    return tuple(label_to_score.get(hyp, 0.0) for hyp in HYPOTHESES)
+
+
+def _cached_inference(text_hash: str, text: str) -> tuple:
+    """
+    Run comparative NLI inference, memoised by text hash.
+    Returns raw scores as a tuple (one per hypothesis, in CATEGORY_KEYS order).
+    """
+    hit = _cache_peek(text_hash)
+    if hit is not None:
+        return hit
+    ordered_scores = _run_inference(text)
+    _cache_put(text_hash, ordered_scores)
     return ordered_scores
 
 
@@ -448,22 +486,27 @@ def classify_batch(
     if not valid_entries:
         return [_empty_result() for _ in texts]
 
-    # Check cache for already-seen texts
-    uncached_entries = []
+    # Check cache for already-seen texts. Misses are grouped by cache key so a
+    # sentence repeated within the same transcript ("Okay.", "Yes.") is inferred
+    # once and fanned back out, rather than occupying several batch slots.
+    pending: "OrderedDict[str, tuple]" = OrderedDict()  # key -> (text, [indices])
     cached_results: Dict[int, tuple] = {}
 
     for orig_idx, text_clean in valid_entries:
         key = _cache_key(text_clean)
-        cached = _cached_inference.cache_info()
-        # Try to get from cache without calling the model
-        try:
-            result = _cached_inference(key, text_clean)
-            cached_results[orig_idx] = result
-        except Exception:
-            uncached_entries.append((orig_idx, text_clean))
+        # Peek only — a miss must fall through to the batched call below rather
+        # than quietly running single-sentence inference here.
+        hit = _cache_peek(key)
+        if hit is not None:
+            cached_results[orig_idx] = hit
+        elif key in pending:
+            pending[key][1].append(orig_idx)
+        else:
+            pending[key] = (text_clean, [orig_idx])
 
     # Batch-infer all uncached texts at once
-    if uncached_entries:
+    if pending:
+        uncached_entries = [(key, text) for key, (text, _) in pending.items()]
         try:
             clf = _get_pipeline()
             batch_texts = [t for _, t in uncached_entries]
@@ -474,24 +517,25 @@ def classify_batch(
             if isinstance(batch_results, dict):
                 batch_results = [batch_results]
 
-            for (orig_idx, text_clean), result in zip(uncached_entries, batch_results):
+            for (key, text_clean), result in zip(uncached_entries, batch_results):
                 label_to_score = dict(zip(result["labels"], result["scores"]))
                 ordered_scores = tuple(
                     label_to_score.get(hyp, 0.0) for hyp in HYPOTHESES
                 )
-                # Populate cache manually
-                key = _cache_key(text_clean)
-                # Store in the LRU cache by calling it (it will compute but we already have result)
-                # Instead, directly store the scores
-                cached_results[orig_idx] = ordered_scores
+                # Store the batch result so a repeat sentence is a cache hit
+                # instead of another inference.
+                _cache_put(key, ordered_scores)
+                for orig_idx in pending[key][1]:
+                    cached_results[orig_idx] = ordered_scores
         except Exception as e:
             logger.warning(f"Batch inference failed, falling back to sequential: {e}")
-            for orig_idx, text_clean in uncached_entries:
+            for key, text_clean in uncached_entries:
                 try:
-                    key = _cache_key(text_clean)
-                    cached_results[orig_idx] = _cached_inference(key, text_clean)
+                    scores = _cached_inference(key, text_clean)
                 except Exception:
-                    cached_results[orig_idx] = tuple(0.0 for _ in HYPOTHESES)
+                    scores = tuple(0.0 for _ in HYPOTHESES)
+                for orig_idx in pending[key][1]:
+                    cached_results[orig_idx] = scores
 
     # Now build full classify_text results from raw scores
     final_results: List[Dict[str, Any]] = []
@@ -569,19 +613,23 @@ def classify_batch(
 
 def clear_cache() -> None:
     """Clear the inference LRU cache."""
-    _cached_inference.cache_clear()
+    global _cache_hits, _cache_misses
+    with _cache_lock:
+        _cache.clear()
+        _cache_hits = 0
+        _cache_misses = 0
     logger.info("ML classifier cache cleared.")
 
 
 def cache_info() -> Dict[str, int]:
     """Return LRU cache statistics."""
-    info = _cached_inference.cache_info()
-    return {
-        "hits":      info.hits,
-        "misses":    info.misses,
-        "maxsize":   info.maxsize,
-        "currsize":  info.currsize,
-    }
+    with _cache_lock:
+        return {
+            "hits":      _cache_hits,
+            "misses":    _cache_misses,
+            "maxsize":   _CACHE_MAXSIZE,
+            "currsize":  len(_cache),
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,17 @@
+# API key comes from the environment — never hardcode it here. This repo is
+# public, so a literal key in this file is a published credential.
+#   PowerShell:  $env:API_KEY = "<key>"; .\run_examples.ps1
+if (-not $env:API_KEY) {
+    Write-Host "API_KEY is not set. Set it before running:" -ForegroundColor Red
+    Write-Host '  $env:API_KEY = "<your-key>"' -ForegroundColor Yellow
+    exit 1
+}
+$apiKey = $env:API_KEY
+
 $baseUrl = "https://audio-safety-backend-781782361175.us-central1.run.app/analyze/transcript"
 $statusUrl = "https://audio-safety-backend-781782361175.us-central1.run.app/report"
-$headers = @{ "Content-Type" = "application/json"; "X-API-Key" = "mw-safety-integration-key-2024" }
-$statusHeaders = @{ "X-API-Key" = "mw-safety-integration-key-2024" }
+$headers = @{ "Content-Type" = "application/json"; "X-API-Key" = $apiKey }
+$statusHeaders = @{ "X-API-Key" = $apiKey }
 
 # Get all .txt example files
 $files = Get-ChildItem "examples\*.txt" | Sort-Object Name

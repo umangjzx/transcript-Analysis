@@ -159,8 +159,15 @@ Be factual and concise. Do not invent information not present in the transcript 
 When quoting the transcript, use exact text from the conversation.
 """
 
+    from modules.circuit_breaker import ollama_breaker, CircuitBreakerError
+
     try:
-        response = ollama.chat(
+        # Through the circuit breaker: when Ollama is down, every analysis was
+        # paying the full connect timeout before falling back to the rule-based
+        # summary. After enough consecutive failures the circuit opens and the
+        # fallback is immediate, until a probe shows Ollama is back.
+        response = ollama_breaker.call(
+            ollama.chat,
             model="llama3.1",
             messages=[{"role": "user", "content": prompt}],
         )
@@ -178,6 +185,10 @@ When quoting the transcript, use exact text from the conversation.
             )
 
         return validation["output"]
+
+    except CircuitBreakerError as e:
+        logger.warning(f"LLM summary skipped — Ollama circuit open: {e}")
+        return "LLM Summary unavailable — Ollama is currently unreachable."
 
     except Exception as e:
         logger.warning(f"LLM summary failed (Ollama may not be running or llama3.1 model not pulled): {e}")

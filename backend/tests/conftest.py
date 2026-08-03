@@ -14,6 +14,22 @@ import sys
 import pytest
 from unittest.mock import MagicMock, patch
 
+# Neutralise .env loading before anything imports it.
+#
+# Production modules call load_dotenv(override=True), which by design lets the
+# .env file win over the process environment. That is fine in the container
+# (.dockerignore keeps .env out of the image, so Cloud Run's env vars apply),
+# but on a developer machine that has a real backend/.env it silently overrode
+# every setting below — pointing tests at the production MongoDB and restoring
+# the real API_KEY, so 11 upload tests failed locally while passing in CI.
+# Tests must not depend on whether a .env happens to exist next to them.
+import dotenv as _dotenv
+
+_dotenv.load_dotenv = lambda *a, **kw: False
+for _mod in ("dotenv.main",):
+    if _mod in sys.modules:
+        sys.modules[_mod].load_dotenv = _dotenv.load_dotenv
+
 # Force test environment before any app imports
 os.environ["ENV"] = "test"
 os.environ["JWT_SECRET"] = "test-secret-key-for-unit-tests-only"
