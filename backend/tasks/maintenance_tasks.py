@@ -54,6 +54,43 @@ def cleanup_old_uploads():
     return {"deleted": deleted, "ttl_hours": ttl_hours}
 
 
+@celery_app.task(name="tasks.reap_stuck_processing_jobs")
+def reap_stuck_processing_jobs():
+    """
+    Mark records that have sat at PROCESSING for too long as FAILED.
+
+    Previously this only ran once, in app.py at container cold-start — fine
+    for "server restarted mid-analysis", but if a Cloud Run instance stays
+    warm (or a job stalls after the last cold start), nothing ever revisited
+    it and the record stayed PROCESSING in Mongo forever. Beat now runs this
+    periodically so a stuck job gets closed out within ~40 minutes regardless
+    of restarts.
+    """
+    from database.mongo import get_mongo_db, save_processing_status, update_meeting_status
+
+    db = get_mongo_db()
+    if db is None:
+        return {"reaped": 0, "reason": "mongo_unavailable"}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    stuck_cursor = db["processing_status"].find(
+        {"status": "PROCESSING", "started_at": {"$lt": cutoff}},
+        {"meeting_id": 1, "_id": 0},
+    )
+    stuck_ids = [d["meeting_id"] for d in stuck_cursor]
+
+    for mid in stuck_ids:
+        save_processing_status(
+            mid, "FAILED", "error",
+            completed_at=datetime.now(timezone.utc),
+            error="Processing timed out — no progress for over 30 minutes.",
+        )
+        update_meeting_status(mid, "FAILED")
+        logger.warning(f"Stuck-job reaper: marked meeting #{mid} as FAILED")
+
+    return {"reaped": len(stuck_ids)}
+
+
 @celery_app.task(name="tasks.poll_google_drive")
 def poll_google_drive():
     """

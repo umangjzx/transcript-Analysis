@@ -90,6 +90,16 @@ if USE_CELERY:
         ]
         logger.info("Celery configured (broker=%s)", CELERY_BROKER_URL)
 
+        # celery_beat_schedule.py sets celery_app.conf.beat_schedule as an
+        # import-time side effect — it was never actually imported anywhere,
+        # so `celery beat` ran (when it ran at all) with an empty schedule.
+        # Importing it here means it's registered regardless of which of
+        # worker/beat/API process loads this module.
+        try:
+            import celery_beat_schedule  # noqa: F401
+        except Exception as e:
+            logger.warning(f"Failed to load celery_beat_schedule: {e}")
+
         # ── Warm up ML models when each worker process starts ──────────────
         # This prevents cold-start delays on the first task.
         from celery.signals import worker_process_init, celeryd_after_setup
@@ -100,6 +110,15 @@ if USE_CELERY:
             import sys
             if "/app" not in sys.path:
                 sys.path.insert(0, "/app")
+            # NOTE: this fires for the worker regardless of how it was started —
+            # including when it's running combined with the API in start.sh,
+            # where uvicorn already owns $PORT. Starting a second listener on
+            # $PORT here previously won that bind race and silently took over
+            # the port from uvicorn (the health stub even satisfied the
+            # container healthcheck, masking a dead API entirely). The
+            # standalone worker deployment (worker_start.sh) already starts
+            # its own health listener explicitly before celery is exec'd — do
+            # not duplicate it here.
             _enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
             if _enable_ml:
                 try:
@@ -123,6 +142,10 @@ if USE_CELERY:
             import sys
             if "/app" not in sys.path:
                 sys.path.insert(0, "/app")
+            # See the note in _warmup_models_main above — the health listener
+            # is intentionally NOT started here; worker_start.sh owns that for
+            # the standalone deployment, and starting it in-process here would
+            # race uvicorn for $PORT when running combined via start.sh.
             try:
                 from modules.ml_classifier import _get_pipeline
                 _get_pipeline()

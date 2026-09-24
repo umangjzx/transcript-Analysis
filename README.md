@@ -390,23 +390,44 @@ If Ollama is not running, the system falls back to the rule-based summary. All o
 Run the full stack with Docker Compose:
 
 ```bash
-# Core services (Redis, Backend, Celery Worker, Celery Beat, Frontend)
+# Core services — Redis, Backend (which runs the API + Celery worker + Celery
+# beat together, same as production), Frontend
 docker compose up -d
 
 # Full stack including ClamAV and Ollama
 docker compose --profile full up -d
+
+# Only if you're testing the split-service path (see Cloud Run section below)
+# — do NOT combine this with the default `backend`, or beat runs twice
+docker compose --profile split-worker up -d
 ```
 
 Services:
 | Service | Port | Description |
 |---|---|---|
 | `rmsi-redis` | 6379 | Redis — cache + Celery broker |
-| `rmsi-backend` | 8000 | FastAPI application |
-| `rmsi-celery-worker` | — | Background task processing |
-| `rmsi-celery-beat` | — | Periodic task scheduler |
+| `rmsi-backend` | 8000 | FastAPI application + Celery worker + Celery beat, combined |
 | `rmsi-frontend` | 3000 | Next.js app |
 | `rmsi-clamav` | 3310 | Virus scanning (profile: full) |
 | `rmsi-ollama` | 11434 | LLM summaries (profile: full) |
+| `rmsi-celery-worker` | — | Standalone worker, for testing the split-service path only (profile: split-worker) |
+| `rmsi-celery-beat` | — | Standalone beat, for testing the split-service path only (profile: split-worker) |
+
+### Cloud Run
+
+The backend deploys as **one Cloud Run service** running the API, the Celery worker, and Celery beat together (`start.sh`, same as `docker compose`'s `backend` service). This only works safely with two non-default flags:
+
+- **`--no-cpu-throttling`** — Cloud Run only allocates real CPU to a container while it's handling an inbound request by default. A worker thread with no request in flight got starved of CPU the moment the triggering upload request returned (or killed outright if the instance scaled down), so analyses stalled or died mid-run with nothing left to mark them `FAILED`. This flag keeps CPU available continuously.
+- **`--min-instances=1 --max-instances=1`** — pins the service to exactly one instance, always running. Two things depend on this: the worker/beat threads need an instance that never gets torn down between requests, and beat specifically **must never run as more than one instance at a time** or scheduled tasks (including the stuck-job reaper) fire multiple times — pinning to exactly one instance is what makes it safe to run beat embedded here at all.
+
+The tradeoff: the API no longer autoscales with traffic — it's capped at whatever this one instance can handle, since API requests now permanently share that instance's CPU/memory with the worker and beat. If API load later outgrows a single instance, the alternative is splitting the worker (and beat) out into their own dedicated Cloud Run service(s) — `worker_start.sh` / `beat_start.sh` already exist for exactly that (they're also what `docker compose`'s separate `celery-worker`/`celery-beat` containers use locally) — or moving off Celery entirely onto Cloud Tasks hitting this same autoscaling service.
+
+```bash
+gcloud run deploy audio-safety-backend --source ./backend --region us-central1 \
+  --env-vars-file ./backend/env.yaml \
+  --no-cpu-throttling --min-instances=1 --max-instances=1 \
+  --memory 6Gi --cpu 2
+```
 
 ---
 

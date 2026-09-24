@@ -66,16 +66,22 @@ services:
       retries: 5
       start_period: 60s
 
-  # ── Celery Worker ───────────────────────────────────────────────────────────
+  # ── Celery Worker (standalone — only for testing the split-service path) ────
+  # `backend` already runs its own worker+beat combined (start.sh), matching
+  # the single-service Cloud Run deployment. Don't run this alongside it with
+  # a plain `docker compose up` — two beats would double-fire every scheduled
+  # task. Only starts with: docker compose --profile split-worker up
   celery-worker:
+    profiles:
+      - split-worker
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rmsi-celery-worker
     restart: unless-stopped
     <<: *dns
-    # Fix: use module:attribute syntax so Celery finds the app object correctly
-    command: celery -A celery_app:celery_app worker --loglevel=info --pool=threads --concurrency=4
+    # Same entrypoint script used by the standalone Cloud Run worker service.
+    command: bash worker_start.sh
     env_file:
       - ./backend/.env
     environment:
@@ -85,6 +91,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - CLAMAV_HOST=clamav
       - CLAMAV_PORT=3310
+      - CELERY_CONCURRENCY=4
     volumes:
       - backend_uploads:/app/uploads
       - backend_reports:/app/reports
@@ -101,16 +108,19 @@ services:
       redis:
         condition: service_healthy
 
-  # ── Celery Beat (scheduler) ─────────────────────────────────────────────────
+  # ── Celery Beat (standalone — only for testing the split-service path) ──────
+  # See the note on celery-worker above — same reason, same profile gate.
   celery-beat:
+    profiles:
+      - split-worker
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rmsi-celery-beat
     restart: unless-stopped
     <<: *dns
-    # Fix: same module:attribute fix as celery-worker
-    command: celery -A celery_app:celery_app beat --loglevel=info
+    # Same entrypoint script used by the standalone Cloud Run beat service.
+    command: bash beat_start.sh
     env_file:
       - ./backend/.env
     environment:

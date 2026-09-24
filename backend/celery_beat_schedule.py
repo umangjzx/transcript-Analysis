@@ -18,13 +18,24 @@ _drive_poll = int(os.getenv("DRIVE_POLL_INTERVAL_SECONDS", "120"))
 _auto_watch = os.getenv("DRIVE_AUTO_WATCH", "false").lower() == "true"
 
 beat_schedule = {
-    # Cleanup old uploads every hour
-    "cleanup-old-uploads": {
-        "task": "tasks.cleanup_old_uploads",
-        "schedule": 3600.0,  # every hour
-        "enabled": _upload_ttl > 0,
+    # Close out anything that's been PROCESSING for >30 min. Previously the
+    # only sweep for this ran once at container cold-start (app.py); this
+    # catches jobs that stall on a long-lived instance too.
+    "reap-stuck-processing-jobs": {
+        "task": "tasks.reap_stuck_processing_jobs",
+        "schedule": 600.0,  # every 10 minutes
     },
 }
+
+# Cleanup old uploads every hour — only if a TTL is actually configured.
+# ("enabled": False as a dict key is NOT a thing Celery's ScheduleEntry
+# understands — it raised `TypeError: unexpected keyword argument 'enabled'`
+# and crash-looped beat the moment this schedule was ever actually loaded.)
+if _upload_ttl > 0:
+    beat_schedule["cleanup-old-uploads"] = {
+        "task": "tasks.cleanup_old_uploads",
+        "schedule": 3600.0,  # every hour
+    }
 
 # Add Drive polling only if auto-watch is enabled
 if _auto_watch:

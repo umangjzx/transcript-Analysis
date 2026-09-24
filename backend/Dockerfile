@@ -56,9 +56,9 @@ RUN adduser --disabled-password --gecos '' --uid 1001 appuser
 COPY . .
 
 # Fix Windows line endings in shell scripts (CRLF -> LF)
-RUN sed -i 's/\r$//' start.sh && \
+RUN sed -i 's/\r$//' start.sh worker_start.sh beat_start.sh && \
     mkdir -p uploads logs reports static .cache && \
-    chmod +x start.sh && \
+    chmod +x start.sh worker_start.sh beat_start.sh && \
     chown -R appuser:appuser /app
 
 # Fix model path for Linux (backslash in .env won't work)
@@ -74,5 +74,11 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command: run FastAPI + Celery worker via start script
+# Default command: API + Celery worker + Celery beat together (start.sh).
+# Deploy the Cloud Run service with --no-cpu-throttling --min-instances=1
+# --max-instances=1 — see README's Cloud Run section for why.
+#
+# worker_start.sh / beat_start.sh (running the worker/beat alone) exist for
+# docker-compose's separate local-dev containers, not for this image's
+# default Cloud Run deploy.
 CMD ["bash", "start.sh"]
