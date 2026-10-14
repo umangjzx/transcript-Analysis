@@ -17,6 +17,8 @@ import logging
 from collections import deque
 from typing import Any, Dict, List, Optional
 
+from modules.ml_lock import serialized
+
 logger = logging.getLogger(__name__)
 
 # Resolve vector store path relative to this file so it works regardless of CWD
@@ -35,6 +37,7 @@ _collection      = None
 
 # ── Lazy loaders ──────────────────────────────────────────────────────────────
 
+@serialized
 def _get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
@@ -45,6 +48,7 @@ def _get_embedding_model():
     return _embedding_model
 
 
+@serialized
 def _get_collection():
     global _chroma_client, _collection
     if _collection is None:
@@ -73,6 +77,7 @@ def chunk_text(text: str, chunk_size: int = 5) -> List[str]:
 
 # ── Store / delete transcript ─────────────────────────────────────────────────
 
+@serialized
 def store_transcript(report_id: int, transcript: str) -> bool:
     """Embed and store transcript chunks in ChromaDB."""
     try:
@@ -110,6 +115,7 @@ def store_transcript(report_id: int, transcript: str) -> bool:
         return False
 
 
+@serialized
 def delete_transcript(report_id: int) -> bool:
     """Delete all transcript chunks from ChromaDB for a given report."""
     try:
@@ -124,6 +130,7 @@ def delete_transcript(report_id: int) -> bool:
 
 # ── Context retrieval ─────────────────────────────────────────────────────────
 
+@serialized
 def retrieve_context(
     report_id: int,
     question: str,

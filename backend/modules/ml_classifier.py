@@ -63,6 +63,8 @@ import threading
 from collections import OrderedDict
 from typing import Dict, List, Optional, Any
 
+from modules.ml_lock import ML_LOCK, serialized
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -144,6 +146,7 @@ _RISK_WEIGHTS: Dict[str, float] = {
 _pipeline = None
 
 
+@serialized
 def _get_pipeline():
     """Lazy-load the zero-shot classification pipeline (singleton)."""
     global _pipeline
@@ -251,6 +254,7 @@ def _cache_put(text_hash: str, scores: tuple) -> None:
             _cache.popitem(last=False)
 
 
+@serialized
 def _run_inference(text: str) -> tuple:
     """Single-sentence inference, re-aligned to CATEGORY_KEYS order."""
     clf = _get_pipeline()
@@ -511,7 +515,8 @@ def classify_batch(
             clf = _get_pipeline()
             batch_texts = [t for _, t in uncached_entries]
             # HuggingFace pipeline supports list input with batch_size
-            batch_results = clf(batch_texts, HYPOTHESES, multi_label=False, batch_size=8)
+            with ML_LOCK:
+                batch_results = clf(batch_texts, HYPOTHESES, multi_label=False, batch_size=8)
 
             # If single text, pipeline returns a dict not a list
             if isinstance(batch_results, dict):
