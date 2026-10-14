@@ -17,6 +17,10 @@ _upload_ttl = int(os.getenv("UPLOAD_TTL_HOURS", "24"))
 _drive_poll = int(os.getenv("DRIVE_POLL_INTERVAL_SECONDS", "120"))
 _auto_watch = os.getenv("DRIVE_AUTO_WATCH", "false").lower() == "true"
 
+# Every entry carries `expires` = its own interval. Beat keeps enqueueing while
+# the worker is down; without an expiry those periodic tasks pile up in Redis
+# and, once the worker is back, sit ahead of real analysis jobs in the FIFO
+# queue (a dead worker left a backlog that delayed new uploads by many minutes).
 beat_schedule = {
     # Close out anything that's been PROCESSING for >30 min. Previously the
     # only sweep for this ran once at container cold-start (app.py); this
@@ -24,6 +28,7 @@ beat_schedule = {
     "reap-stuck-processing-jobs": {
         "task": "tasks.reap_stuck_processing_jobs",
         "schedule": 600.0,  # every 10 minutes
+        "options": {"expires": 600},
     },
 }
 
@@ -35,6 +40,7 @@ if _upload_ttl > 0:
     beat_schedule["cleanup-old-uploads"] = {
         "task": "tasks.cleanup_old_uploads",
         "schedule": 3600.0,  # every hour
+        "options": {"expires": 3600},
     }
 
 # Add Drive polling only if auto-watch is enabled
@@ -42,6 +48,7 @@ if _auto_watch:
     beat_schedule["poll-google-drive"] = {
         "task": "tasks.poll_google_drive",
         "schedule": float(_drive_poll),
+        "options": {"expires": float(_drive_poll)},
     }
 
 celery_app.conf.beat_schedule = beat_schedule
