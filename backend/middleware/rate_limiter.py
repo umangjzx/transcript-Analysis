@@ -123,9 +123,13 @@ def _get_redis():
     if _redis_checked:
         return _redis_client
     _redis_checked = True
+    url = os.getenv("REDIS_URL", "").strip()
+    if not url:
+        # Redis is optional now. The service is pinned to one instance, so the
+        # in-memory window is exact.
+        return None
     try:
         import redis
-        url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         _redis_client = redis.Redis.from_url(url, decode_responses=True, socket_timeout=2)
         _redis_client.ping()
         return _redis_client

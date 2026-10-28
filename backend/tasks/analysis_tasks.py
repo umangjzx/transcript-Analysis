@@ -1,29 +1,48 @@
 """
-Celery tasks for the analysis pipeline.
+Background tasks for the analysis pipeline.
 
-Replaces threading.Thread calls in app.py and audio_analysis_routes.py.
-When USE_CELERY=false, these functions run directly in a background thread.
+Each task is dispatched with `<task>.delay(record_id, payload, filename)`:
+  TASK_BACKEND=cloudtasks  -> a Cloud Tasks HTTP task that calls back into
+                              POST /internal/tasks/<name> (api/internal_routes.py)
+  TASK_BACKEND=thread      -> a daemon thread in this process (dev / tests)
+
+Retries: the callback endpoint answers 503 for a transient failure while retries
+remain, and Cloud Tasks re-delivers with backoff per the queue's retry config.
+Once the budget is spent the record is marked FAILED and the job is saved to the
+dead letter queue, so nothing is silently lost.
 
 Dead Letter Queue:
   Failed tasks (after max retries) are persisted to MongoDB collection
-  'dead_letter_queue' for manual inspection and replay. No analysis is
-  silently lost.
+  'dead_letter_queue' for manual inspection and replay.
 """
 
 import logging
+import os
 import sys
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 # Ensure the backend root (/app in Docker) is on sys.path so that
 # deferred imports like "from modules.analysis_pipeline import ..."
-# resolve correctly in Celery forked worker processes.
+# resolve correctly regardless of how the process was started.
 _APP_ROOT = str(Path(__file__).resolve().parent.parent)
 if _APP_ROOT not in sys.path:
     sys.path.insert(0, _APP_ROOT)
 
+import task_queue
+
 logger = logging.getLogger(__name__)
+
+# Redeliveries allowed after the first attempt. Keep in step with the Cloud Tasks
+# queue's maxAttempts (= MAX_RETRIES + 1); see CLOUD-TASKS-MIGRATION.md.
+MAX_RETRIES = int(os.getenv("TASK_MAX_RETRIES", "2"))
+
+
+class TransientTaskFailure(Exception):
+    """A failure worth retrying; the callback endpoint turns it into a 503."""
 
 
 def _is_transient(exc: Exception) -> bool:
@@ -41,7 +60,7 @@ def _mark_record_failed(record_id: int, error: str) -> None:
     run_analysis_pipeline() deliberately leaves transient failures PROCESSING so
     a retry can still finish the job. Once we stop retrying, someone has to
     close the record out or it stays PROCESSING until the 30-minute stuck-job
-    sweep in app.py picks it up.
+    sweep picks it up.
     """
     try:
         from database.mongo import save_processing_status, update_meeting_status
@@ -56,45 +75,6 @@ def _mark_record_failed(record_id: int, error: str) -> None:
             f"[#{record_id}] Could not mark record FAILED after retry "
             f"exhaustion: {exc}"
         )
-
-
-def _run_with_retry(task, core_fn, task_name, record_id, filename, dlq_args, *call_args):
-    """Run a pipeline task, retrying transient infrastructure failures.
-
-    Previously every task carried max_retries=2 but nothing ever called
-    self.retry(), because run_analysis_pipeline() caught its own exceptions and
-    returned normally — Celery never saw a failure, so the retry budget was
-    dead config. The pipeline now re-raises transient errors; this is what
-    actually spends that budget, with backoff so a reconnecting Atlas cluster
-    isn't hammered.
-    """
-    from modules.analysis_pipeline import TRANSIENT_DB_ERRORS, CriticalPersistenceError
-
-    try:
-        core_fn(*call_args)
-    except (TRANSIENT_DB_ERRORS + (CriticalPersistenceError,)) as exc:
-        if isinstance(exc, CriticalPersistenceError) and not exc.transient:
-            logger.error(f"[#{record_id}] {task_name} failed permanently: {exc}")
-            _mark_record_failed(record_id, str(exc))
-            _save_to_dead_letter_queue(task_name, record_id, filename, str(exc), dlq_args)
-            return
-
-        attempt = task.request.retries + 1
-        countdown = min(30 * (2 ** task.request.retries), 240)  # 30s, 60s, 120s…
-        try:
-            logger.warning(
-                f"[#{record_id}] {task_name} hit a transient failure "
-                f"(attempt {attempt}/{task.max_retries + 1}), retrying in "
-                f"{countdown}s: {exc}"
-            )
-            raise task.retry(exc=exc, countdown=countdown)
-        except task.MaxRetriesExceededError:
-            logger.error(
-                f"[#{record_id}] {task_name} still failing after "
-                f"{task.max_retries + 1} attempts — giving up: {exc}"
-            )
-            _mark_record_failed(record_id, str(exc))
-            _save_to_dead_letter_queue(task_name, record_id, filename, str(exc), dlq_args)
 
 
 def _save_to_dead_letter_queue(
@@ -218,138 +198,129 @@ def _run_drive_import(record_id: int, transcript: str, filename: str):
         )
 
 
-# ── Register as Celery tasks if available, otherwise provide .delay() shim ────
+# ── Task registry ─────────────────────────────────────────────────────────────
 
-class _CeleryTaskWithFallback:
-    """Wraps a Celery task's .delay(), falling back to an in-process background
-    thread if the broker rejects the enqueue (e.g. Redis is over its memory or
-    connection limit). Without this, a broker error at enqueue time is raised
-    from inside a FastAPI BackgroundTask *after* the response has already been
-    sent — the client sees "PROCESSING" but the job was never queued and the
-    record is stuck forever. Falling back keeps analysis working even when
-    Redis is unavailable, the same way the rate limiter and cache already do."""
+@dataclass(frozen=True)
+class TaskSpec:
+    """One background job. Every job takes (record_id, payload, filename)."""
 
-    def __init__(self, celery_task, func):
-        self._task = celery_task
-        self._func = func
-        self.__name__ = func.__name__
+    name: str
+    core: Callable[[int, Any, str], None]
+    dlq_args: Callable[[Any], dict]  # payload -> what to store in the DLQ entry
 
-    def delay(self, *args, **kwargs):
+    def execute(self, retry_count: int, record_id: int, payload: Any, filename: str) -> dict:
+        """Run the job once under the retry policy.
+
+        Returns a result dict when the job is finished (success, or failed for
+        good and recorded). Raises TransientTaskFailure when it should be
+        re-delivered.
+        """
+        from modules.analysis_pipeline import TRANSIENT_DB_ERRORS, CriticalPersistenceError
+
         try:
-            return self._task.delay(*args, **kwargs)
-        except Exception as exc:
+            self.core(record_id, payload, filename)
+            return {"status": "ok"}
+        except (TRANSIENT_DB_ERRORS + (CriticalPersistenceError,)) as exc:
+            if isinstance(exc, CriticalPersistenceError) and not exc.transient:
+                logger.error(f"[#{record_id}] {self.name} failed permanently: {exc}")
+                return self._give_up(record_id, filename, payload, exc, "permanent_failure")
+
+            if retry_count < MAX_RETRIES:
+                logger.warning(
+                    f"[#{record_id}] {self.name} hit a transient failure "
+                    f"(retry {retry_count}/{MAX_RETRIES}), letting Cloud Tasks "
+                    f"re-deliver: {exc}"
+                )
+                raise TransientTaskFailure(str(exc)) from exc
+
             logger.error(
-                f"[{self._func.__name__}] Celery enqueue failed ({exc}) — "
-                f"running via threading fallback instead of dropping the job.",
-                exc_info=True,
+                f"[#{record_id}] {self.name} still failing after "
+                f"{MAX_RETRIES + 1} attempts — giving up: {exc}"
             )
-            t = threading.Thread(
-                target=self._run_in_thread, args=args, kwargs=kwargs,
-                daemon=True, name=f"task-fallback-{self._func.__name__}",
-            )
-            t.start()
-            return t
+            return self._give_up(record_id, filename, payload, exc, "retries_exhausted")
 
-    def _run_in_thread(self, *args, **kwargs):
-        """Fallback execution with no Celery underneath it.
+    def _give_up(self, record_id, filename, payload, exc, reason) -> dict:
+        _mark_record_failed(record_id, str(exc))
+        _save_to_dead_letter_queue(
+            self.name, record_id, filename, str(exc), self.dlq_args(payload),
+        )
+        return {"status": "failed", "reason": reason}
 
-        The pipeline re-raises transient failures so Celery can retry them, but
+
+TASKS = {
+    spec.name: spec
+    for spec in (
+        TaskSpec("run_audio_analysis", _run_audio, lambda p: {"filepath": p}),
+        TaskSpec("run_video_analysis", _run_video, lambda p: {"audio_filepath": p}),
+        TaskSpec("run_transcript_analysis", _run_transcript,
+                 lambda p: {"transcript_length": len(p)}),
+        TaskSpec("run_drive_import_analysis", _run_drive_import,
+                 lambda p: {"transcript_length": len(p)}),
+    )
+}
+
+
+class QueuedTask:
+    """Callable with a Celery-style `.delay()` so call sites did not change.
+
+    .delay() hands the job to Cloud Tasks. If that is unavailable or rejects the
+    task it falls back to an in-process thread rather than dropping the job: a
+    broker error here would otherwise be raised from inside a FastAPI
+    BackgroundTask *after* the response was sent, leaving the record PROCESSING
+    forever. Calling the object directly runs the core function synchronously.
+    """
+
+    def __init__(self, spec: TaskSpec):
+        self.spec = spec
+        self.__name__ = spec.name
+
+    def delay(self, *args):
+        if task_queue.use_cloud_tasks():
+            try:
+                return task_queue.enqueue_http_task(self.spec.name, list(args))
+            except Exception as exc:
+                logger.error(
+                    f"[{self.spec.name}] Cloud Tasks enqueue failed ({exc}) — "
+                    f"running via threading fallback instead of dropping the job.",
+                    exc_info=True,
+                )
+        t = threading.Thread(
+            target=self._run_in_thread, args=args,
+            daemon=True, name=f"task-{self.spec.name}",
+        )
+        t.start()
+        return t
+
+    def _run_in_thread(self, *args):
+        """In-process execution with no queue underneath it.
+
+        The pipeline re-raises transient failures so a queue can retry them, but
         there is no retry here — an exception would just kill the thread and
         leave the record PROCESSING with nothing in the DLQ. Close it out
         explicitly instead.
         """
         try:
-            self._func(*args, **kwargs)
+            self.spec.core(*args)
         except Exception as exc:
             record_id = args[0] if args else None
             logger.error(
-                f"[#{record_id}] {self._func.__name__} failed in threading "
-                f"fallback (no retry available): {exc}",
+                f"[#{record_id}] {self.spec.name} failed in-process "
+                f"(no retry available): {exc}",
                 exc_info=True,
             )
             if record_id is not None:
                 _mark_record_failed(record_id, str(exc))
                 _save_to_dead_letter_queue(
-                    self._func.__name__, record_id,
+                    self.spec.name, record_id,
                     args[2] if len(args) > 2 else "unknown",
                     str(exc), {"via": "threading_fallback"},
                 )
 
     def __call__(self, *args, **kwargs):
-        return self._func(*args, **kwargs)
+        return self.spec.core(*args, **kwargs)
 
 
-try:
-    from celery_app import celery_app, USE_CELERY
-
-    if USE_CELERY and celery_app is not None:
-        # Wrap as proper Celery tasks (using named functions instead of lambdas
-        # to avoid Celery's head_from_fun SyntaxError with bound tasks)
-        @celery_app.task(bind=True, name="tasks.run_audio_analysis", max_retries=2,
-                         soft_time_limit=600, time_limit=660)
-        def run_audio_analysis(self, record_id, filepath, filename):
-            return _run_with_retry(
-                self, _run_audio, "run_audio_analysis", record_id, filename,
-                {"filepath": filepath},
-                record_id, filepath, filename,
-            )
-
-        @celery_app.task(bind=True, name="tasks.run_video_analysis", max_retries=2,
-                         soft_time_limit=600, time_limit=660)
-        def run_video_analysis(self, record_id, audio_filepath, filename):
-            return _run_with_retry(
-                self, _run_video, "run_video_analysis", record_id, filename,
-                {"audio_filepath": audio_filepath},
-                record_id, audio_filepath, filename,
-            )
-
-        @celery_app.task(bind=True, name="tasks.run_transcript_analysis", max_retries=2,
-                         soft_time_limit=300, time_limit=360)
-        def run_transcript_analysis(self, record_id, transcript, filename):
-            return _run_with_retry(
-                self, _run_transcript, "run_transcript_analysis", record_id, filename,
-                {"transcript_length": len(transcript)},
-                record_id, transcript, filename,
-            )
-
-        @celery_app.task(bind=True, name="tasks.run_drive_import_analysis", max_retries=2,
-                         soft_time_limit=300, time_limit=360)
-        def run_drive_import_analysis(self, record_id, transcript, filename):
-            return _run_with_retry(
-                self, _run_drive_import, "run_drive_import_analysis", record_id, filename,
-                {"transcript_length": len(transcript)},
-                record_id, transcript, filename,
-            )
-
-        run_audio_analysis = _CeleryTaskWithFallback(run_audio_analysis, _run_audio)
-        run_video_analysis = _CeleryTaskWithFallback(run_video_analysis, _run_video)
-        run_transcript_analysis = _CeleryTaskWithFallback(run_transcript_analysis, _run_transcript)
-        run_drive_import_analysis = _CeleryTaskWithFallback(run_drive_import_analysis, _run_drive_import)
-
-    else:
-        raise ImportError("Celery disabled")
-
-except (ImportError, Exception):
-    # Fallback: .delay() spawns a daemon thread (same as old behavior)
-    class _ThreadTask:
-        """Shim that mimics celery_task.delay() using threading."""
-        def __init__(self, func):
-            self._func = func
-            self.__name__ = func.__name__
-
-        def delay(self, *args, **kwargs):
-            t = threading.Thread(
-                target=self._func, args=args, kwargs=kwargs,
-                daemon=True, name=f"task-{self._func.__name__}",
-            )
-            t.start()
-            return t
-
-        def __call__(self, *args, **kwargs):
-            return self._func(*args, **kwargs)
-
-    run_audio_analysis = _ThreadTask(_run_audio)
-    run_video_analysis = _ThreadTask(_run_video)
-    run_transcript_analysis = _ThreadTask(_run_transcript)
-    run_drive_import_analysis = _ThreadTask(_run_drive_import)
-    logger.info("Tasks using threading fallback (Celery unavailable)")
+run_audio_analysis = QueuedTask(TASKS["run_audio_analysis"])
+run_video_analysis = QueuedTask(TASKS["run_video_analysis"])
+run_transcript_analysis = QueuedTask(TASKS["run_transcript_analysis"])
+run_drive_import_analysis = QueuedTask(TASKS["run_drive_import_analysis"])

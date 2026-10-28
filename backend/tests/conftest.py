@@ -35,11 +35,11 @@ os.environ["ENV"] = "test"
 os.environ["JWT_SECRET"] = "test-secret-key-for-unit-tests-only"
 os.environ["API_KEY"] = ""
 os.environ["MONGO_URI"] = ""  # Disable real MongoDB in tests
-os.environ["REDIS_URL"] = ""  # Disable real Redis in tests
+os.environ["REDIS_URL"] = ""  # Redis is optional; unset = in-memory cache/rate limits
 os.environ["ENABLE_ML_CLASSIFIER"] = "false"
 os.environ["ENABLE_LLM_SUMMARY"] = "false"
 os.environ["ENABLE_VIRUS_SCAN"] = "false"
-os.environ["USE_CELERY"] = "false"
+os.environ["TASK_BACKEND"] = "thread"  # run jobs in-process, never call Cloud Tasks
 
 # Mock heavy optional modules that may not be installed in all environments
 _OPTIONAL_MODULES = [

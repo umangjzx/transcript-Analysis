@@ -52,7 +52,7 @@ def _dispatch_transcript(record_id: int, transcript: str, filename: str):
 
 @router.post("/analyze")
 async def analyze_audio(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """Upload an audio file and start background analysis via Celery."""
+    """Upload an audio file and start background analysis (queued job)."""
     from modules.disk_space_checker import check_disk_space
 
     disk_check = check_disk_space()

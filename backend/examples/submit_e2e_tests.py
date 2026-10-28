@@ -110,7 +110,7 @@ def main():
             print(f"    ✗ {fn}: {err}")
 
     # Wait for processing
-    print(f"\n  Waiting for Celery workers to process...")
+    print(f"\n  Waiting for the analysis jobs to finish...")
     print(f"  (This may take 30-120 seconds depending on ML model loading)")
     print(f"\n  Checking status every 10 seconds...\n")
 

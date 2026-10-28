@@ -70,7 +70,7 @@ flowchart TD
 | Layer | Technology |
 |---|---|
 | API Framework | FastAPI 0.136 + Uvicorn 0.47 |
-| Task Queue | Celery 5.4 + Redis (threading fallback when `USE_CELERY=false`) |
+| Task Queue | Google Cloud Tasks + Cloud Scheduler (in-process thread fallback when `TASK_BACKEND=thread`) |
 | Audio Transcription | faster-whisper 1.2 (Whisper Base, CPU, int8) |
 | Video Audio Extraction | PyAV (streamed, 1 MB chunks) |
 | Text Normalization | Leetspeak normalizer (character substitution, separator removal) |
@@ -80,7 +80,7 @@ flowchart TD
 | Vector Store | ChromaDB (persistent) |
 | Embeddings | SentenceTransformers `all-MiniLM-L6-v2` |
 | Primary Database | MongoDB Atlas — 7 collections + versioned migrations |
-| Caching | Redis-backed TTL cache (in-memory fallback) |
+| Caching | In-memory TTL cache (optional Redis via `REDIS_URL`) |
 | File Storage | AWS S3 — 5 storage types, AES-256 encrypted |
 | Virus Scanning | ClamAV via pyclamd |
 | Email | SMTP — HTML alert + summary templates |
@@ -135,8 +135,7 @@ backend/
 ├── app.py                          # FastAPI application — middleware, startup/shutdown, health
 ├── config.py                       # Paths, SMTP, S3, MongoDB, Google Drive config
 ├── auth.py                         # JWT + bcrypt authentication helpers
-├── celery_app.py                   # Celery configuration — Redis broker, threading fallback
-├── celery_beat_schedule.py         # Periodic task schedule (cleanup, watcher)
+├── task_queue.py                   # Cloud Tasks dispatch (thread fallback for dev)
 ├── create_admin.py                 # CLI script to create/reset admin user
 ├── finetune_model.py               # Fine-tune the NLI model on custom data
 ├── requirements.txt                # Python dependencies
@@ -153,7 +152,7 @@ backend/
 │   ├── notification_routes.py      # /api/v1/notify/* — alert + summary emails
 │   └── analytics_routes.py         # /api/v1/analytics/* — cross-report aggregation
 │
-├── tasks/                          # Celery task definitions
+├── tasks/                          # Background job definitions
 │   ├── analysis_tasks.py           # Audio, video, transcript, Drive import pipelines
 │   └── maintenance_tasks.py        # Cleanup, watcher polling, stuck-job recovery
 │
@@ -179,7 +178,7 @@ backend/
 │   ├── severity_classifier.py      # Score → Safe/Low/Moderate/High/Critical
 │   ├── temporal_weighting.py       # Position + clustering + escalation scoring
 │   ├── leetspeak_normalizer.py     # Obfuscation normalization
-│   ├── analysis_pipeline.py        # Unified pipeline (Celery entry point)
+│   ├── analysis_pipeline.py        # Unified pipeline (job entry point)
 │   ├── summarizer.py               # Rule-based summary generator
 │   ├── llm_summarizer.py           # Ollama Llama 3.1 summary
 │   ├── llm_output_validator.py     # LLM output validation
@@ -191,7 +190,7 @@ backend/
 │   ├── email_notifier.py           # SMTP alert + summary HTML emails
 │   ├── s3_storage.py               # AWS S3 upload / presign / delete
 │   ├── drive_watcher.py            # Google Drive background auto-import
-│   ├── cache.py                    # Redis-backed TTL cache with in-memory fallback
+│   ├── cache.py                    # TTL cache, in-memory (optional Redis)
 │   ├── circuit_breaker.py          # Circuit breaker for Ollama + S3
 │   ├── credential_encryption.py    # Fernet encryption for OAuth credentials
 │   ├── virus_scanner.py            # ClamAV virus scanning
@@ -342,23 +341,24 @@ Configuration:
 
 ---
 
-## Celery Task Queue
+## Background Jobs (Cloud Tasks)
 
-Background processing uses Celery with Redis as broker and result backend. Falls back to threading when `USE_CELERY=false`.
+Analysis runs as background jobs. In production each job is a Cloud Tasks HTTP task that
+calls back into this service at `POST /internal/tasks/<name>` (authenticated with a
+Google-signed OIDC token); periodic jobs are Cloud Scheduler calls to
+`POST /internal/maintenance/<job>`. With the default `TASK_BACKEND=thread` (local dev and
+tests) the same jobs run in a thread of the API process. Call sites use
+`run_audio_analysis.delay(...)` either way. Setup, configuration, deploy and rollback:
+[`../CLOUD-TASKS-MIGRATION.md`](../CLOUD-TASKS-MIGRATION.md).
 
 ### Task Modules
 
-| Module | Tasks |
+| Module | Jobs |
 |---|---|
 | `tasks/analysis_tasks.py` | `run_audio_analysis`, `run_video_analysis`, `run_transcript_analysis`, `run_drive_import_analysis` |
-| `tasks/maintenance_tasks.py` | `cleanup_old_uploads`, `drive_watcher_poll`, `recover_stuck_jobs` |
+| `tasks/maintenance_tasks.py` | `cleanup_old_uploads`, `poll_google_drive`, `reap_stuck_processing_jobs` |
 
-### Running Workers
-
-```bash
-celery -A celery_app worker --loglevel=info --pool=solo
-celery -A celery_app beat --loglevel=info
-```
+There is no separate worker to start.
 
 ---
 
@@ -423,7 +423,7 @@ Versioned, tracked MongoDB schema changes run automatically on startup:
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check — basic public, full topology with JWT auth |
-| `POST` | `/analyze` | Upload audio — background pipeline via Celery |
+| `POST` | `/analyze` | Upload audio — background pipeline (queued job) |
 | `POST` | `/analyze/video` | Upload video — audio extracted, then analyzed |
 | `POST` | `/analyze/transcript` | Submit transcript (JSON or multipart .txt) |
 | `GET` | `/report/{id}/status` | Poll: PROCESSING / COMPLETED / FAILED |
@@ -494,7 +494,7 @@ Versioned, tracked MongoDB schema changes run automatically on startup:
 - **Secrets scanning** — Gitleaks CI job prevents accidental commits
 - **Health endpoint gating** — full topology only exposed to authenticated requests
 - **Stuck-job recovery** — PROCESSING jobs older than 30 min marked FAILED on startup
-- **Graceful shutdown** — closes MongoDB pool, Redis connections, resets circuit breakers
+- **Graceful shutdown** — closes MongoDB pool, resets circuit breakers (and Redis, if configured)
 - **Structured logging** — JSON format in production with configurable log rotation
 
 ---
@@ -506,9 +506,6 @@ Versioned, tracked MongoDB schema changes run automatically on startup:
 ```bash
 pip install -r requirements.txt
 
-# Redis (optional — for Celery + caching)
-# Install from https://redis.io or use Docker: docker run -p 6379:6379 redis
-
 # Ollama (optional — for LLM summaries and chatbot)
 ollama pull llama3.1
 ```
@@ -518,12 +515,6 @@ ollama pull llama3.1
 ```bash
 # Server
 uvicorn app:app --host 0.0.0.0 --port 8000 --reload
-
-# Celery worker (optional, recommended)
-celery -A celery_app worker --loglevel=info --pool=solo
-
-# Celery Beat (optional — periodic tasks)
-celery -A celery_app beat --loglevel=info
 ```
 
 Or on Windows: `start.bat`
@@ -554,7 +545,7 @@ See `.env.example` for the full documented list. Key sections:
 
 - **Authentication** — JWT_SECRET, JWT_EXPIRE_MINUTES, API_KEY, COOKIE_SECURE, LOCKOUT_MAX_ATTEMPTS, LOCKOUT_DURATION_MINUTES
 - **MongoDB** — MONGO_URI, MONGO_DB_NAME, pool settings (min/max size, idle time, wait queue timeout)
-- **Redis/Celery** — REDIS_URL, CELERY_BROKER_URL, USE_CELERY
+- **Background jobs** — TASK_BACKEND, TASKS_PROJECT/LOCATION/QUEUE/TARGET_URL/INVOKER_SA; REDIS_URL is optional
 - **AWS S3** — credentials, region, bucket name
 - **SMTP** — host, port, user, password, recipients, severity threshold
 - **Feature flags** — ENABLE_ML_CLASSIFIER, ENABLE_LLM_SUMMARY, upload limits
@@ -594,6 +585,6 @@ Runs any text through the full detection pipeline interactively with a lower con
 - **Temporal weighting** — late-conversation findings score higher (escalation phase)
 - **Diminishing returns** — repeated categories progressively down-weighted
 - **Circuit breaker** — external service failures don't cascade
-- **Graceful degradation** — MongoDB, S3, SMTP, Ollama, Redis all optional
-- **Background processing** — all analysis via Celery tasks with WebSocket progress
+- **Graceful degradation** — MongoDB, S3, SMTP, Ollama all optional (Redis is no longer used unless REDIS_URL is set)
+- **Background processing** — all analysis via queued background jobs with WebSocket progress
 - **Video privacy** — video files streamed, deleted immediately after audio extraction

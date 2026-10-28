@@ -94,7 +94,7 @@ class TestTranscriptValidation:
                 "filename": "test_conversation.txt",
             },
         )
-        # Should get past validation (may fail in pipeline without Celery)
+        # Should get past validation (may fail in the pipeline without a job backend)
         assert response.status_code in (200, 201, 500)
 
     @pytest.mark.skipif(

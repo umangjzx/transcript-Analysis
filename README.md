@@ -9,8 +9,7 @@
 ![Next.js](https://img.shields.io/badge/Next.js-15-000000)
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248)
 ![AWS S3](https://img.shields.io/badge/AWS-S3-FF9900)
-![Celery](https://img.shields.io/badge/Celery-5.4-37814A)
-![Redis](https://img.shields.io/badge/Redis-Cache%20%2B%20Broker-DC382D)
+![Cloud Tasks](https://img.shields.io/badge/Cloud%20Tasks-Background%20Jobs-4285F4)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
@@ -21,7 +20,7 @@ Melody Wings Safety accepts audio files, video files, plain-text transcripts, or
 
 Every finding is scored, grouped, and surfaced in a Next.js dashboard with confidence breakdowns, ML analysis, temporal weighting, a timeline view, cross-report analytics, side-by-side comparison, and a downloadable PDF report. High-severity results trigger automatic email alerts. Real-time WebSocket progress updates keep the dashboard informed during analysis.
 
-All data is persisted to MongoDB (7 core collections, plus `users` and `counters` for auth and IDs) and AWS S3. Background processing is handled by Celery + Redis with a threading fallback for local dev.
+All data is persisted to MongoDB (7 core collections, plus `users` and `counters` for auth and IDs) and AWS S3. Background processing runs on Google Cloud Tasks (Cloud Scheduler for periodic jobs), with an in-process thread fallback for local dev. See [CLOUD-TASKS-MIGRATION.md](CLOUD-TASKS-MIGRATION.md).
 
 ---
 
@@ -33,7 +32,7 @@ All data is persisted to MongoDB (7 core collections, plus `users` and `counters
 - **Temporal weighting** — Late-conversation findings score higher; clustering and escalation detection
 - **Leetspeak normalization** — Catches obfuscated text (m33t, s3cr3t, separator insertion)
 - **Circuit breaker pattern** — Graceful degradation for Ollama and S3 failures
-- **Celery task queue** — Redis-backed background processing with threading fallback
+- **Cloud Tasks job queue** — background analysis as HTTP-callback tasks, in-process fallback for dev
 - **Real-time WebSocket progress** — Live analysis stage updates pushed to the frontend
 - **Virus scanning** — ClamAV integration for uploaded file safety
 - **Disk space pre-check** — Rejects uploads when disk is low
@@ -223,8 +222,7 @@ Melody Wings Safety/
 │   ├── app.py                      # FastAPI application — middleware, startup/shutdown, health
 │   ├── auth.py                     # JWT authentication — login, token validation, get_current_user
 │   ├── config.py                   # Paths, SMTP, S3, MongoDB, Google Drive config
-│   ├── celery_app.py               # Celery configuration — Redis broker, threading fallback
-│   ├── celery_beat_schedule.py     # Periodic task schedule (cleanup, watcher)
+│   ├── task_queue.py               # Cloud Tasks dispatch (thread fallback for dev)
 │   ├── create_admin.py             # CLI script to create/reset admin user in MongoDB
 │   ├── finetune_model.py           # Fine-tune the NLI model on custom grooming data
 │   ├── requirements.txt            # Python dependencies
@@ -241,7 +239,7 @@ Melody Wings Safety/
 │   │   ├── notification_routes.py     # /api/v1/notify/* — alert + summary emails
 │   │   └── analytics_routes.py        # /api/v1/analytics/* — cross-report aggregation
 │   │
-│   ├── tasks/                      # Celery task definitions
+│   ├── tasks/                      # Background job definitions
 │   │   ├── analysis_tasks.py       # Audio, video, transcript, Drive import pipelines
 │   │   └── maintenance_tasks.py    # Cleanup, watcher polling, stuck-job recovery
 │   │
@@ -259,9 +257,9 @@ Melody Wings Safety/
 │   │   ├── patterns.py             # 20-category compiled regex library
 │   │   ├── grooming_detector.py    # Main pipeline orchestrator
 │   │   ├── ml_classifier.py        # Zero-shot NLI (DistilBERT-MNLI)
-│   │   ├── analysis_pipeline.py    # Unified pipeline (Celery entry point)
+│   │   ├── analysis_pipeline.py    # Unified pipeline (job entry point)
 │   │   ├── temporal_weighting.py   # Position + clustering + escalation scoring
-│   │   ├── cache.py                # Redis-backed TTL cache
+│   │   ├── cache.py                # TTL cache (Redis optional)
 │   │   ├── circuit_breaker.py      # Circuit breaker for external services
 │   │   ├── websocket_manager.py    # Real-time WebSocket progress
 │   │   └── ...                     # See backend/README.md for full list
@@ -298,7 +296,7 @@ Melody Wings Safety/
 │   ├── src/store/dataStore.js      # Zustand global state (history + analytics)
 │   └── next.config.js              # API rewrites /api/v1/* → :8000
 │
-└── docker-compose.yml              # Full stack: Redis, Backend, Celery, Frontend, ClamAV, Ollama
+└── docker-compose.yml              # Full stack: Backend, Frontend, ClamAV, Ollama
 ```
 
 ---
@@ -309,7 +307,7 @@ Melody Wings Safety/
 
 - Python 3.10+
 - Node.js 18+
-- Redis *(optional — for Celery task queue and caching; falls back to threading + in-memory)*
+- Redis *(optional — only for a cache / rate limits shared across instances; in-memory otherwise)*
 - [Ollama](https://ollama.com) *(optional — for LLM summaries and chatbot)*
 
 ### 1. Clone
@@ -353,17 +351,13 @@ Backend runs at **http://localhost:8000**
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-### 3. Celery Workers (optional, recommended)
+### 3. Background jobs
 
-```bash
-# Start a Celery worker (processes analysis tasks in background)
-celery -A celery_app worker --loglevel=info --pool=solo
-
-# Start Celery Beat (periodic tasks: cleanup, watcher)
-celery -A celery_app beat --loglevel=info
-```
-
-If Redis is not available, set `USE_CELERY=false` in `.env` — tasks will run synchronously via threading.
+Locally there is nothing extra to start: with the default `TASK_BACKEND=thread`, analysis
+jobs run in a thread of the API process. In production they are Cloud Tasks HTTP tasks that
+call back into `POST /internal/tasks/<name>`, and periodic maintenance is driven by Cloud
+Scheduler (`POST /internal/maintenance/<job>`). See
+[CLOUD-TASKS-MIGRATION.md](CLOUD-TASKS-MIGRATION.md).
 
 ### 4. Frontend
 
@@ -390,44 +384,41 @@ If Ollama is not running, the system falls back to the rule-based summary. All o
 Run the full stack with Docker Compose:
 
 ```bash
-# Core services — Redis, Backend (which runs the API + Celery worker + Celery
-# beat together, same as production), Frontend
+# Core services — Backend (analysis jobs run in-process), Frontend
 docker compose up -d
 
 # Full stack including ClamAV and Ollama
 docker compose --profile full up -d
 
-# Only if you're testing the split-service path (see Cloud Run section below)
-# — do NOT combine this with the default `backend`, or beat runs twice
-docker compose --profile split-worker up -d
 ```
 
 Services:
 | Service | Port | Description |
 |---|---|---|
-| `rmsi-redis` | 6379 | Redis — cache + Celery broker |
-| `rmsi-backend` | 8000 | FastAPI application + Celery worker + Celery beat, combined |
+| `rmsi-backend` | 8000 | FastAPI application (analysis jobs run in-process locally) |
 | `rmsi-frontend` | 3000 | Next.js app |
 | `rmsi-clamav` | 3310 | Virus scanning (profile: full) |
 | `rmsi-ollama` | 11434 | LLM summaries (profile: full) |
-| `rmsi-celery-worker` | — | Standalone worker, for testing the split-service path only (profile: split-worker) |
-| `rmsi-celery-beat` | — | Standalone beat, for testing the split-service path only (profile: split-worker) |
 
 ### Cloud Run
 
-The backend deploys as **one Cloud Run service** running the API, the Celery worker, and Celery beat together (`start.sh`, same as `docker compose`'s `backend` service). This only works safely with two non-default flags:
+The backend deploys as **one Cloud Run service** running only the API (`start.sh`).
+Analysis jobs arrive as Cloud Tasks HTTP calls and periodic jobs as Cloud Scheduler calls,
+so no worker or beat process runs and nothing needs CPU between requests.
 
-- **`--no-cpu-throttling`** — Cloud Run only allocates real CPU to a container while it's handling an inbound request by default. A worker thread with no request in flight got starved of CPU the moment the triggering upload request returned (or killed outright if the instance scaled down), so analyses stalled or died mid-run with nothing left to mark them `FAILED`. This flag keeps CPU available continuously.
-- **`--min-instances=1 --max-instances=1`** — pins the service to exactly one instance, always running. Two things depend on this: the worker/beat threads need an instance that never gets torn down between requests, and beat specifically **must never run as more than one instance at a time** or scheduled tasks (including the stuck-job reaper) fire multiple times — pinning to exactly one instance is what makes it safe to run beat embedded here at all.
-
-The tradeoff: the API no longer autoscales with traffic — it's capped at whatever this one instance can handle, since API requests now permanently share that instance's CPU/memory with the worker and beat. If API load later outgrows a single instance, the alternative is splitting the worker (and beat) out into their own dedicated Cloud Run service(s) — `worker_start.sh` / `beat_start.sh` already exist for exactly that (they're also what `docker compose`'s separate `celery-worker`/`celery-beat` containers use locally) — or moving off Celery entirely onto Cloud Tasks hitting this same autoscaling service.
+- **`--max-instances=1`** is required: uploads are written to the instance's local disk and
+  the queued job reads them back, so the job must run on the same instance.
+- The default **CPU throttling stays on**; the job runs inside the request Cloud Tasks holds
+  open, so CPU is allocated for exactly as long as the analysis runs.
+- Set `--timeout=900` so a long analysis is not cut off, and `--concurrency` around 8.
 
 ```bash
-gcloud run deploy audio-safety-backend --source ./backend --region us-central1 \
-  --env-vars-file ./backend/env.yaml \
-  --no-cpu-throttling --min-instances=1 --max-instances=1 \
-  --memory 6Gi --cpu 2
+gcloud run deploy audio-safety-backend --source ./backend --region us-central1   --env-vars-file ./backend/env.yaml   --max-instances=1 --concurrency=8 --timeout=900 --cpu 2 --memory 4Gi
 ```
+
+GCP resources to create first (queue, service account, scheduler jobs), the environment
+variables, verification steps and rollback are in
+[CLOUD-TASKS-MIGRATION.md](CLOUD-TASKS-MIGRATION.md).
 
 ---
 
@@ -438,7 +429,7 @@ Copy `backend/.env.example` to `backend/.env`. All integrations are optional —
 Key sections:
 - **Authentication** — JWT_SECRET, JWT_EXPIRE_MINUTES, API_KEY, COOKIE_SECURE, LOCKOUT_MAX_ATTEMPTS
 - **MongoDB** — MONGO_URI, MONGO_DB_NAME, connection pool settings
-- **Redis/Celery** — REDIS_URL, CELERY_BROKER_URL, USE_CELERY
+- **Background jobs** — TASK_BACKEND, TASKS_PROJECT/LOCATION/QUEUE/TARGET_URL/INVOKER_SA; REDIS_URL is optional
 - **AWS S3** — credentials, region, bucket name
 - **SMTP Email** — host, port, user, password, recipients, severity threshold
 - **Feature flags** — ENABLE_ML_CLASSIFIER, ENABLE_LLM_SUMMARY, upload limits
@@ -518,7 +509,7 @@ total_score     = Σ effective_scores, capped at 100
 | Layer | Technology |
 |---|---|
 | API | FastAPI 0.136 + Uvicorn 0.47 |
-| Task Queue | Celery 5.4 + Redis (threading fallback) |
+| Task Queue | Google Cloud Tasks + Cloud Scheduler (thread fallback for dev) |
 | Transcription | Faster-Whisper 1.2 (base model, CPU, int8) |
 | Video Extraction | PyAV (streamed, 1 MB chunks) |
 | Pattern Detection | Python `re` — 20 compiled regex categories |
@@ -528,7 +519,7 @@ total_score     = Σ effective_scores, capped at 100
 | Vector Store | ChromaDB (persistent) |
 | Embeddings | SentenceTransformers `all-MiniLM-L6-v2` |
 | Primary Database | MongoDB Atlas — 7 collections + versioned migrations |
-| Caching | Redis-backed TTL cache (in-memory fallback) |
+| Caching | In-memory TTL cache (optional Redis) |
 | File Storage | AWS S3 — AES-256 encrypted |
 | Virus Scanning | ClamAV via pyclamd |
 | Email | SMTP — HTML alert + summary templates |
@@ -552,7 +543,7 @@ total_score     = Σ effective_scores, capped at 100
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check — basic status (full topology requires auth) |
-| `POST` | `/analyze` | Upload audio — background pipeline via Celery |
+| `POST` | `/analyze` | Upload audio — background pipeline (queued job) |
 | `POST` | `/analyze/video` | Upload video — audio extracted, then analyzed |
 | `POST` | `/analyze/transcript` | Submit plain-text transcript (JSON or multipart) |
 | `GET` | `/report/{id}/status` | Poll: `PROCESSING` / `COMPLETED` / `FAILED` |

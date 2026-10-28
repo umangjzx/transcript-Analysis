@@ -26,16 +26,25 @@ _DEFAULT_TTL = 60  # seconds
 
 _redis_client = None
 _redis_available = False
+_redis_checked = False
 
 
 def _get_redis():
-    """Lazy Redis connection — returns None if unavailable."""
-    global _redis_client, _redis_available
-    if _redis_client is not None:
+    """Lazy Redis connection — returns None if unavailable or not configured.
+
+    Redis is optional: with REDIS_URL unset the caches are in-memory (the service
+    runs as a single instance). The connection is attempted once, not on every
+    cache call.
+    """
+    global _redis_client, _redis_available, _redis_checked
+    if _redis_checked:
         return _redis_client if _redis_available else None
+    _redis_checked = True
+    url = os.getenv("REDIS_URL", "").strip()
+    if not url:
+        return None
     try:
         import redis
-        url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         # For rediss:// (TLS) URLs, configure SSL cert requirements
         kwargs = {"decode_responses": True, "socket_timeout": 2}
         if url.startswith("rediss://"):

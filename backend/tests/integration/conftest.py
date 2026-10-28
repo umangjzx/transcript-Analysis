@@ -2,7 +2,7 @@
 Integration test fixtures.
 
 These tests exercise multi-component flows (API → pipeline → WebSocket)
-with real Redis (when available) but mocked MongoDB/ML services.
+with in-process job dispatch (TASK_BACKEND=thread) and mocked MongoDB/ML services.
 """
 
 import os
@@ -18,7 +18,7 @@ os.environ.setdefault("MONGO_URI", "")
 os.environ.setdefault("ENABLE_ML_CLASSIFIER", "false")
 os.environ.setdefault("ENABLE_LLM_SUMMARY", "false")
 os.environ.setdefault("ENABLE_VIRUS_SCAN", "false")
-os.environ.setdefault("USE_CELERY", "false")
+os.environ.setdefault("TASK_BACKEND", "thread")
 
 # Mock heavy optional modules
 _OPTIONAL_MODULES = [

@@ -106,7 +106,7 @@ def notify_mw_backend_sync(
     error: Optional[str] = None,
 ) -> bool:
     """
-    Synchronous version of notify_mw_backend for use in Celery tasks
+    Synchronous version of notify_mw_backend for use in background jobs
     and background threads where asyncio isn't available.
     """
     if not MW_BACKEND_URL:

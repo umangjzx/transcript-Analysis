@@ -100,8 +100,8 @@ class TestUploadPipeline:
 class TestHealthCheckIntegration:
     """Health endpoint integration — verifies it reports service states."""
 
-    def test_health_reflects_redis_state(self, client, auth_headers):
-        """Health check should report Redis connectivity."""
+    def test_health_authenticated_reports_status(self, client, auth_headers):
+        """Authenticated health check returns a status."""
         response = client.get("/health", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()

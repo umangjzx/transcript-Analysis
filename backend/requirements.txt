@@ -5,9 +5,8 @@ python-multipart==0.0.29
 starlette==1.0.1
 websockets==15.0.1
 
-# ── Task queue (replaces threading.Thread) ────────────────────────────────────
-celery==5.4.0
-celery[redis]==5.4.0
+# ── Background jobs: Cloud Tasks (replaces Celery + Redis) ────────────────────
+google-cloud-tasks==2.20.0
 
 # ── Authentication ────────────────────────────────────────────────────────────
 bcrypt==4.2.1
@@ -55,9 +54,6 @@ watchtower==3.3.1
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
 google-api-python-client==2.131.0
-
-# ── Caching & message broker (Redis) ─────────────────────────────────────────
-redis==5.2.1
 
 # ── Virus scanning (ClamAV) ──────────────────────────────────────────────────
 # NOTE: pyclamd 0.4.0 is unmaintained (last release 2015) but functional with no CVEs.

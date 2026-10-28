@@ -172,7 +172,7 @@ def _poll_once() -> None:
                 status="PROCESSING",
             )
 
-            # Run analysis via Celery task instead of a thread
+            # Queue the analysis as a background job instead of a thread
             from tasks.analysis_tasks import run_drive_import_analysis
             run_drive_import_analysis.delay(record_id, transcript_text, filename)
 
