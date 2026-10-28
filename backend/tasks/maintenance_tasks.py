@@ -1,8 +1,9 @@
 """
-Celery tasks for maintenance operations.
+Maintenance jobs: upload cleanup, stuck-job reaper, Google Drive poll.
 
-Replaces the threading-based cleanup daemon and drive watcher loop.
-Schedule these with Celery Beat or call them periodically.
+Plain functions. In production Cloud Scheduler calls them through
+POST /internal/maintenance/<job> (api/internal_routes.py); see
+CLOUD-TASKS-MIGRATION.md for the schedules.
 """
 
 import os
@@ -13,21 +14,18 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # Ensure the backend root (/app in Docker) is on sys.path so that
-# deferred imports resolve correctly in Celery forked worker processes.
+# deferred imports resolve correctly regardless of how the process started.
 _APP_ROOT = str(Path(__file__).resolve().parent.parent)
 if _APP_ROOT not in sys.path:
     sys.path.insert(0, _APP_ROOT)
 
-from celery_app import celery_app
-
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(name="tasks.cleanup_old_uploads")
 def cleanup_old_uploads():
     """
     Delete uploaded audio files older than UPLOAD_TTL_HOURS.
-    Schedule this with Celery Beat (e.g. every hour).
+    Schedule this hourly.
     """
     from config import UPLOAD_FOLDER
 
@@ -54,7 +52,6 @@ def cleanup_old_uploads():
     return {"deleted": deleted, "ttl_hours": ttl_hours}
 
 
-@celery_app.task(name="tasks.reap_stuck_processing_jobs")
 def reap_stuck_processing_jobs():
     """
     Mark records that have sat at PROCESSING for too long as FAILED.
@@ -62,9 +59,10 @@ def reap_stuck_processing_jobs():
     Previously this only ran once, in app.py at container cold-start — fine
     for "server restarted mid-analysis", but if a Cloud Run instance stays
     warm (or a job stalls after the last cold start), nothing ever revisited
-    it and the record stayed PROCESSING in Mongo forever. Beat now runs this
-    periodically so a stuck job gets closed out within ~40 minutes regardless
-    of restarts.
+    it and the record stayed PROCESSING in Mongo forever. It is scheduled
+    every 10 minutes so a stuck job gets closed out within ~40 minutes
+    regardless of restarts. It is also what finally closes out a job whose
+    Cloud Tasks attempts were all lost to an instance crash.
     """
     from database.mongo import get_mongo_db, save_processing_status, update_meeting_status
 
@@ -91,11 +89,11 @@ def reap_stuck_processing_jobs():
     return {"reaped": len(stuck_ids)}
 
 
-@celery_app.task(name="tasks.poll_google_drive")
 def poll_google_drive():
     """
     Single poll cycle for Google Drive auto-import.
-    Schedule this with Celery Beat at DRIVE_POLL_INTERVAL_SECONDS.
+    Schedule this every DRIVE_POLL_INTERVAL_SECONDS (only if DRIVE_AUTO_WATCH
+    is on and the in-process watcher in modules/drive_watcher.py is not used).
     """
     from services.google_drive_service import list_drive_files, read_drive_file, is_authenticated
     from database.mongo import next_meeting_id, save_meeting_metadata
@@ -167,7 +165,7 @@ def poll_google_drive():
                 status="PROCESSING",
             )
 
-            # Dispatch as a Celery task instead of a thread
+            # Queue the analysis (Cloud Tasks) instead of running it inline
             from tasks.analysis_tasks import run_drive_import_analysis
             run_drive_import_analysis.delay(record_id, transcript_text, filename)
 

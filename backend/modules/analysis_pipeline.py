@@ -39,7 +39,7 @@ TRANSIENT_DB_ERRORS = (
 class CriticalPersistenceError(Exception):
     """Raised when a write the record cannot be correct without did not land.
 
-    Carries `transient` so the Celery layer knows whether retrying is worth
+    Carries `transient` so the job runner knows whether retrying is worth
     anything, without having to re-inspect the original exception.
     """
 

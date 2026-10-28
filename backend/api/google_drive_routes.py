@@ -294,7 +294,7 @@ def import_drive_file(
         status="PROCESSING",
     )
 
-    # Run the transcript analysis pipeline via Celery
+    # Queue the transcript analysis as a background job
     _run_transcript_pipeline(record_id, transcript_text, filename)
 
     logger.info(
@@ -311,11 +311,11 @@ def import_drive_file(
     )
 
 
-# ── Background pipeline (Celery task) ─────────────────────────────────────────
+# ── Background pipeline (queued job) ─────────────────────────────────────────
 
 def _run_transcript_pipeline(record_id: int, transcript: str, filename: str):
     """
-    Dispatches the transcript analysis to a Celery worker.
+    Queues the transcript analysis as a background job.
     Kept as a function for backward compatibility with drive_watcher imports.
     """
     from tasks.analysis_tasks import run_drive_import_analysis

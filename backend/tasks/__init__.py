@@ -1,4 +1,4 @@
-"""Celery task definitions — replaces all threading.Thread background work."""
+"""Background job definitions (Cloud Tasks / Cloud Scheduler) — see task_queue.py."""
 
 from .analysis_tasks import (
     run_audio_analysis,

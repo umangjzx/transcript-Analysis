@@ -1,5 +1,5 @@
 """
-Batch benchmark: Queue all 29 test transcripts through the Celery pipeline
+Batch benchmark: Queue all 29 test transcripts through the analysis pipeline
 simultaneously and measure total wall-clock time + per-task results.
 
 Usage (run from backend container):
@@ -43,7 +43,7 @@ def main():
             status="PROCESSING",
         )
 
-        # Queue task via Celery
+        # Queue the analysis job
         result = run_drive_import_analysis.delay(record_id, transcript, filename)
         tasks.append({
             "record_id": record_id,

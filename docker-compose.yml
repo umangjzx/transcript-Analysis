@@ -9,23 +9,10 @@ x-dns: &dns
     - 1.1.1.1
 
 services:
-  # ── Redis ───────────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: rmsi-redis
-    restart: unless-stopped
-    <<: *dns
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # ── Backend (FastAPI) ───────────────────────────────────────────────────────
+  # Background analysis jobs run in-process (TASK_BACKEND=thread, the default),
+  # so there is no Redis, worker or beat container. In production the same jobs
+  # arrive from Cloud Tasks / Cloud Scheduler — see CLOUD-TASKS-MIGRATION.md.
   backend:
     build:
       context: ./backend
@@ -38,9 +25,6 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - CLAMAV_HOST=clamav
       - CLAMAV_PORT=3310
     volumes:
@@ -48,9 +32,6 @@ services:
       - backend_reports:/app/reports
       - backend_logs:/app/logs
       - model_cache:/root/.cache/huggingface
-    depends_on:
-      redis:
-        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -65,72 +46,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-
-  # ── Celery Worker (standalone — only for testing the split-service path) ────
-  # `backend` already runs its own worker+beat combined (start.sh), matching
-  # the single-service Cloud Run deployment. Don't run this alongside it with
-  # a plain `docker compose up` — two beats would double-fire every scheduled
-  # task. Only starts with: docker compose --profile split-worker up
-  celery-worker:
-    profiles:
-      - split-worker
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: rmsi-celery-worker
-    restart: unless-stopped
-    <<: *dns
-    # Same entrypoint script used by the standalone Cloud Run worker service.
-    command: bash worker_start.sh
-    env_file:
-      - ./backend/.env
-    environment:
-      - PYTHONPATH=/app
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - CLAMAV_HOST=clamav
-      - CLAMAV_PORT=3310
-      - CELERY_CONCURRENCY=4
-    volumes:
-      - backend_uploads:/app/uploads
-      - backend_reports:/app/reports
-      - backend_logs:/app/logs
-      - model_cache:/root/.cache/huggingface
-    deploy:
-      resources:
-        limits:
-          memory: 6G
-          cpus: '2'
-        reservations:
-          memory: 2G
-    depends_on:
-      redis:
-        condition: service_healthy
-
-  # ── Celery Beat (standalone — only for testing the split-service path) ──────
-  # See the note on celery-worker above — same reason, same profile gate.
-  celery-beat:
-    profiles:
-      - split-worker
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: rmsi-celery-beat
-    restart: unless-stopped
-    <<: *dns
-    # Same entrypoint script used by the standalone Cloud Run beat service.
-    command: bash beat_start.sh
-    env_file:
-      - ./backend/.env
-    environment:
-      - PYTHONPATH=/app
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
 
   # ── Frontend (Next.js) ────────────────────────────────────────────────────────
   frontend:
@@ -175,7 +90,6 @@ services:
       - full  # Only starts with: docker compose --profile full up
 
 volumes:
-  redis_data:
   backend_uploads:
   backend_reports:
   backend_logs:

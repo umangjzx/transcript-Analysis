@@ -348,7 +348,7 @@ async def analyze_audio_batch(
             ))
             continue
 
-        # Dispatch the pipeline as a Celery task (replaces threading.Thread)
+        # Queue the pipeline as a background job (Cloud Tasks)
         from tasks.analysis_tasks import run_audio_analysis
         run_audio_analysis.delay(record_id, filepath, original_filename)
 

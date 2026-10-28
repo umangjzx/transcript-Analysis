@@ -49,7 +49,7 @@ def get_mongo_db(force_reconnect: bool = False):
 
     force_reconnect:
         Discards the cached client and establishes a brand-new connection.
-        Used by the Celery worker to recover from sockets that Atlas drops
+        Used by background jobs to recover from sockets that Atlas drops
         after the long-lived worker process has been idle — the root cause
         of analysis results not persisting from the background worker.
     """
@@ -123,7 +123,7 @@ def get_mongo_db(force_reconnect: bool = False):
 def ensure_live_connection():
     """Ping the cached connection and reconnect if it is stale.
 
-    Long-lived Celery worker processes can hold a MongoClient whose
+    Long-lived server processes can hold a MongoClient whose
     underlying sockets were dropped by Atlas during idle periods. A plain
     write then fails (often silently caught), which is why analysis results
     computed in the worker never reached MongoDB. Calling this before a
@@ -554,7 +554,7 @@ def save_full_analysis(
     Returns a dict of {collection: success} for observability.
     """
     now = _now()
-    # Guarantee a live connection before the 7-collection batch. The Celery
+    # Guarantee a live connection before the 7-collection batch. The job
     # worker is long-lived, so its cached socket may have been dropped by
     # Atlas — that stale connection was the root cause of results computed in
     # the worker never persisting to MongoDB.

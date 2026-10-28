@@ -197,10 +197,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 _enable_ml = os.getenv("ENABLE_ML_CLASSIFIER", "true").lower() == "true"
 
-# Whether the Celery worker owns pipeline execution. Mirrors celery_app.py's
-# own parsing so importing it here can't pull Celery in as a side effect.
-_use_celery = os.getenv("USE_CELERY", "true").strip().lower() == "true"
-
 # -- Startup / shutdown --------------------------------------------------------
 
 @app.on_event("startup")
@@ -252,18 +248,10 @@ async def startup_event():
 
     # ML warm-up — load model into memory before first real request.
     #
-    # Only worth doing in a process that actually runs the pipeline. When
-    # USE_CELERY is on, analysis runs in the Celery worker, which does its own
-    # warm-up in celery_app.py. start.sh runs uvicorn and the worker as two
-    # separate OS processes that share no memory, so warming up here loaded a
-    # second full copy of the ~255 MiB classifier into the API process for
-    # nothing — that duplicate is what pushed the container past its memory
-    # limit and OOM-killed both processes together.
-    #
-    # The threading fallback in tasks/analysis_tasks.py can still run the
-    # pipeline in this process if the broker is down; there the model loads
-    # lazily on first use (slower first job, but only when Redis is broken).
-    if _enable_ml and not _use_celery:
+    # Analysis jobs run inside this process (Cloud Tasks calls back into
+    # /internal/tasks/*), so this is the one copy of the ~255 MiB classifier.
+    # There is no separate worker process holding a second one.
+    if _enable_ml:
         import threading as _threading
         def _warmup():
             try:
@@ -275,12 +263,6 @@ async def startup_event():
             except Exception as _e:
                 logger.warning(f"ML warm-up failed (non-fatal): {_e}")
         _threading.Thread(target=_warmup, daemon=True).start()
-    elif _enable_ml:
-        logger.info(
-            "ML classifier warm-up skipped — analysis runs in the Celery "
-            "worker, which warms up its own copy (avoids a duplicate model "
-            "in the API process)."
-        )
 
     # Chatbot warm-up — pre-load SentenceTransformer + ChromaDB so the first
     # import doesn't pay the cold-start cost mid-request (~4s on CPU).
@@ -297,12 +279,10 @@ async def startup_event():
     import threading as _threading_chatbot
     _threading_chatbot.Thread(target=_warmup_chatbot, daemon=True).start()
 
-    # Upload cleanup — scheduled via Celery Beat (see celery_app.py)
-    # The old threading daemon is removed; use:
-    #   celery -A celery_app beat --loglevel=info
-    # with a schedule entry for tasks.cleanup_old_uploads every hour.
+    # Upload cleanup runs from Cloud Scheduler (POST /internal/maintenance/
+    # cleanup-old-uploads, hourly); see CLOUD-TASKS-MIGRATION.md.
     if UPLOAD_TTL_HOURS > 0:
-        logger.info(f"Upload cleanup configured (TTL={UPLOAD_TTL_HOURS}h) — run via Celery Beat")
+        logger.info(f"Upload cleanup configured (TTL={UPLOAD_TTL_HOURS}h) — run via Cloud Scheduler")
 
     logger.info("Service initialized successfully")
 
@@ -317,8 +297,8 @@ async def startup_event():
     except Exception as _e:
         logger.warning(f"Database migration check failed (non-fatal): {_e}")
 
-    # Auto-start Drive watcher — start directly in-process for development
-    # In production, use Celery Beat (celery -A celery_app worker --beat --loglevel=info)
+    # Auto-start Drive watcher — polls in a thread of this process. Use this OR
+    # the Cloud Scheduler poll-google-drive job, not both.
     from modules.drive_watcher import AUTO_WATCH as _auto_watch, start_watcher as _start_watcher
     if _auto_watch:
         _started = _start_watcher()
@@ -394,6 +374,7 @@ from api.analytics_routes import router as analytics_router  # noqa: E402
 from api.upload_routes import router as upload_router  # noqa: E402
 from api.report_routes import router as report_router  # noqa: E402
 from api.webhook_routes import router as webhook_router  # noqa: E402
+from api.internal_routes import router as internal_router  # noqa: E402
 
 app.include_router(v1_router)
 app.include_router(gdrive_router)
@@ -403,6 +384,7 @@ app.include_router(analytics_router)
 app.include_router(upload_router)
 app.include_router(report_router)
 app.include_router(webhook_router)
+app.include_router(internal_router)
 
 # -- WebSocket endpoint for real-time progress ---------------------------------
 
@@ -535,14 +517,6 @@ def health(request: Request):
     except Exception as e:
         ollama_status = {"available": False, "error": str(e)}
 
-    redis_status = {"available": False}
-    try:
-        from modules.cache import _get_redis
-        r = _get_redis()
-        redis_status = {"available": r is not None}
-    except Exception as e:
-        redis_status = {"available": False, "error": str(e)}
-
     return {
         **basic_response,
         "ml_classifier": {"enabled": _enable_ml},
@@ -551,7 +525,6 @@ def health(request: Request):
         "whisper": whisper_status,
         "chromadb": chromadb_status,
         "ollama": ollama_status,
-        "redis": redis_status,
         "disk": {"ok": disk_ok, "free_gb": disk_free_gb, "total_gb": disk_total_gb},
         "memory": _memory_status(),
         "queue": _queue_status(),
@@ -601,14 +574,15 @@ def _memory_status() -> dict:
 
 
 def _queue_status() -> dict:
-    """Depth of the Celery queue — a backlog here means workers aren't keeping up."""
+    """Jobs still PROCESSING. A count that keeps growing means jobs aren't completing
+    (Cloud Tasks holds the queue itself, so Mongo is the place to see backlog)."""
     try:
-        from modules.cache import _get_redis
-        r = _get_redis()
-        if r is None:
+        from database.mongo import get_mongo_db
+        db = get_mongo_db()
+        if db is None:
             return {"available": False}
-        depth = r.llen("celery")
-        return {"available": True, "depth": depth, "backlogged": depth > 20}
+        processing = db["processing_status"].count_documents({"status": "PROCESSING"})
+        return {"available": True, "processing": processing, "backlogged": processing > 20}
     except Exception as e:
         return {"available": False, "error": str(e)}
 
