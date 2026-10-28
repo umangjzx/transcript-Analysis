@@ -27,8 +27,6 @@ tokenizers==0.21.1
 safetensors==0.5.3
 huggingface_hub==0.30.2
 sentence-transformers==3.3.1
-datasets==3.2.0
-accelerate==1.2.1
 
 # ── Vector store ──────────────────────────────────────────────────────────────
 chromadb==1.5.9
@@ -62,6 +60,3 @@ pyclamd==0.4.0
 
 # ── Process/memory metrics for /health ───────────────────────────────────────
 psutil==6.1.1
-
-# ── Testing ───────────────────────────────────────────────────────────────────
-pytest==8.3.4

@@ -1,0 +1,4 @@
+# Only needed to run finetune_model.py / generate_dataset.py — not installed in the runtime image.
+-r requirements.txt
+datasets==3.2.0
+accelerate==1.2.1
